@@ -11,14 +11,14 @@ use nocterm_connections_model::{
 use nocterm_core::persist;
 use std::{path::PathBuf, sync::Arc};
 pub struct FileConnectionRepository {
-    profiles: PathBuf,
+    profiles: persist::RevisionedFile,
     recents: PathBuf,
     facts: PathBuf,
 }
 impl FileConnectionRepository {
     pub fn new(profiles: PathBuf, recents: PathBuf, facts: PathBuf) -> Self {
         Self {
-            profiles,
+            profiles: persist::RevisionedFile::new(profiles),
             recents,
             facts,
         }
@@ -26,7 +26,7 @@ impl FileConnectionRepository {
 }
 impl ConnectionRepository for FileConnectionRepository {
     fn load(&self) -> LoadedConnections {
-        let (profiles, read_only) = match persist::load::<Profiles>(&self.profiles) {
+        let (profiles, read_only) = match self.profiles.load::<Profiles>() {
             Ok(value) => (value.unwrap_or_default(), None),
             Err(error) => {
                 tracing::error!(%error, "could not read saved connections");
@@ -60,7 +60,7 @@ impl ConnectionRepository for FileConnectionRepository {
         }
     }
     fn save_profiles(&self, profiles: &Profiles) -> Result<(), ConnectionStorageError> {
-        persist::save_preserving(&self.profiles, profiles).map_err(|error| {
+        self.profiles.save_preserving(profiles).map_err(|error| {
             ConnectionStorageError::new(
                 ConnectionDocument::Profiles,
                 StorageOperation::Write,

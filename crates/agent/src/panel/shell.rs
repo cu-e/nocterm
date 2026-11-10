@@ -14,7 +14,7 @@ use gpui_kit::{
     px,
 };
 use nocterm_ui::IconName;
-use nocterm_workspace::RightPanelEvent;
+use nocterm_workspace::PanelRequest;
 
 pub(super) struct ShellRenderer;
 impl ShellRenderer {
@@ -90,7 +90,7 @@ impl ShellRenderer {
         .on_action(cx.listener(|this, _: &crate::ToggleModelPicker, _, cx| {
             this.toggle_model_picker(cx);
         }))
-        .on_action(cx.listener(|this, _: &crate::AttachImage, _, cx| this.pick_images(cx)))
+        .on_action(cx.listener(|this, _: &crate::AttachFiles, _, cx| this.pick_files(cx)))
     }
 
     pub(super) fn header(
@@ -157,7 +157,7 @@ impl ShellRenderer {
                     } else {
                         "Expand chat"
                     })
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(RightPanelEvent::ToggleMaximized))),
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(PanelRequest::ToggleExpanded))),
             )
             .into_any_element()
     }

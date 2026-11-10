@@ -80,6 +80,7 @@ fn category_name(category: &ConfigCategory) -> String {
         ConfigCategory::Model => "model".into(),
         ConfigCategory::ModelConfig => "model_config".into(),
         ConfigCategory::ThoughtLevel => "thought_level".into(),
+        ConfigCategory::Server => "server".into(),
         ConfigCategory::Other(name) => name.clone(),
     }
 }
@@ -89,6 +90,7 @@ fn category(name: &str) -> ConfigCategory {
         "model" => ConfigCategory::Model,
         "model_config" => ConfigCategory::ModelConfig,
         "thought_level" => ConfigCategory::ThoughtLevel,
+        "server" => ConfigCategory::Server,
         other => ConfigCategory::Other(other.into()),
     }
 }

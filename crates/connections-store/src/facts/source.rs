@@ -37,6 +37,10 @@ impl ProbeSourceLease {
     pub(super) fn identity(&self) -> ProbeSourceIdentity {
         self.identity
     }
+    /// Equality of the captured lease lineage, independent of descriptive host/profile ids.
+    pub fn same_origin(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.revoked, &other.revoked)
+    }
     pub fn revoke(&self) {
         self.revoked.set(true);
     }

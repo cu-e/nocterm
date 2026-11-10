@@ -59,28 +59,44 @@ fn independent_policy_cannot_redirect_an_existing_watch_and_closed_model_is_rele
     let weak = monitor.downgrade();
     cx.update_window(window, |_, window, _| window.remove_window())
         .unwrap();
-    drop(workspace);
-    drop(monitor);
+    // Flush entity release before admitting a new consumer. Merely parking
+    // the executor does not run GPUI's deferred release callbacks.
+    cx.update(|_| {
+        drop(workspace);
+        drop(monitor);
+    });
     cx.run_until_parked();
     assert!(weak.upgrade().is_none());
+    assert!(
+        !host.reading(1),
+        "the last subscriber releases its native watch"
+    );
     let (_, new_workspace, new_monitor) = cx.update(|cx| {
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
                 cx.new(|cx| {
-                    Workspace::new(
-                        nocterm_workspace::Deps::new(nocterm_ui::LayoutHandle::in_memory(cx)),
-                        window,
-                        cx,
-                    )
+                    let deps =
+                        nocterm_workspace::test_support::deps_for(&[&crate::plugin::PLUGIN], cx);
+                    Workspace::new(deps, window, cx)
                 })
             })
             .unwrap();
-        let monitor = cx.new(|cx| HostMonitor::new(&workspace, None, &installed, cx));
+        let monitor = cx.new(|cx| {
+            HostMonitor::new(
+                &workspace,
+                workspace.read(cx).monitor_source(cx),
+                &installed,
+                cx,
+            )
+        });
         (window, workspace, monitor)
     });
     cx.run_until_parked();
-    assert!(host.reading(2));
-    assert_ne!(status(cx, &new_monitor), Status::Off);
+    assert_eq!(status(cx, &new_monitor), Status::Starting);
+    assert!(
+        host.reading(2),
+        "a new subscriber gets a fresh native watch"
+    );
     drop(new_workspace);
 }
 
@@ -120,6 +136,18 @@ fn monitor_page_native_switch_keeps_original_policy_after_unrelated_installation
     drop(page);
     cx.run_until_parked();
     assert!(weak.upgrade().is_none());
+}
+
+#[gpui_kit::test]
+fn the_monitor_page_leaves_the_status_bar_metrics_to_the_plugins_page(cx: &mut TestAppContext) {
+    let (_, handle, _) = number_page(SettingsConfig::in_memory(Default::default()), cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("monitor-status-Cpu").is_none());
+        window.find("monitor-details-Cpu");
+        window.find(("monitor-number", 0usize));
+    })
+    .unwrap();
 }
 
 fn number_page(

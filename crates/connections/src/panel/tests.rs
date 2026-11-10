@@ -2,7 +2,26 @@ use super::*;
 use futures::FutureExt as _;
 use gpui_kit::{TestAppContext, test::TestWindowExt as _};
 
+/// Registers the connections panel as the Servers contribution.
+fn add_servers(
+    workspace: &mut Workspace,
+    panel: Entity<ConnectionsPanel>,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    workspace
+        .register_panel(
+            nocterm_workspace::PanelRegistration::with_entity(&crate::plugin::SERVERS, panel),
+            window,
+            cx,
+        )
+        .unwrap();
+}
+
+mod account_state;
+mod agents;
 mod drag;
+mod list;
 mod rename;
 mod reorder;
 
@@ -55,7 +74,9 @@ fn native_drag_moves_to_collapsed_folder_root_and_remembered_empty_folder(cx: &m
         });
         let panel = cx
             .new(|cx| ConnectionsPanel::new(installed.clone(), workspace.downgrade(), window, cx));
-        workspace.update(cx, |workspace, cx| workspace.add_panel(panel, cx));
+        workspace.update(cx, |workspace, cx| {
+            add_servers(workspace, panel, window, cx)
+        });
         window.render_frame(cx);
         window.click("group-Personal", cx);
         window.render_frame(cx);
@@ -265,7 +286,9 @@ fn setup_with_writer(
             let panel = cx.new(|cx| {
                 ConnectionsPanel::new(installed.clone(), workspace.downgrade(), window, cx)
             });
-            workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
+            workspace.update(cx, |workspace, cx| {
+                add_servers(workspace, panel.clone(), window, cx)
+            });
             window.render_frame(cx);
             panel
         })
@@ -314,17 +337,21 @@ fn set_rename_value(
 
 #[gpui_kit::test]
 fn header_click_toggles_once_and_hover_buttons_do_not_double_fire(cx: &mut TestAppContext) {
-    let (handle, panel, _, _installed) = setup(cx, &[gp("a", Some("Work"))]);
+    let (handle, panel, opened, _installed) = setup(cx, &[gp("a", Some("Work"))]);
     cx.update_window(handle, |_, window, cx| {
         window.click("group-Work", cx);
         assert!(panel.read(cx).collapsed.contains("Work"));
         window.hover("group-Work", cx);
         window.render_frame(cx);
-        window.click("group-toggle-Work", cx);
-        assert!(!panel.read(cx).collapsed.contains("Work"));
+        window.click("group-open-Work", cx);
+        assert!(
+            panel.read(cx).collapsed.contains("Work"),
+            "opening the group leaves it collapsed"
+        );
         assert!(!window.has_active_dialog(cx));
     })
     .unwrap();
+    assert_eq!(opened.borrow().len(), 1);
 }
 
 fn open_group_dialog(cx: &mut TestAppContext, handle: gpui_kit::AnyWindowHandle) {
@@ -492,19 +519,35 @@ fn collapsed_of(cx: &mut TestAppContext, panel: &Entity<ConnectionsPanel>) -> Ve
 }
 
 #[gpui_kit::test]
-fn header_toggle_button_round_trips(cx: &mut TestAppContext) {
-    let (handle, panel, opened, _installed) = setup(cx, &[gp("a", Some("Work"))]);
-    for expected in [true, false, true] {
-        cx.update_window(handle, |_, window, cx| {
-            window.hover("group-Work", cx);
-            window.render_frame(cx);
-            window.click("group-toggle-Work", cx);
-            window.render_frame(cx);
-            assert_eq!(panel.read(cx).collapsed.contains("Work"), expected);
-        })
-        .unwrap();
-    }
-    assert!(opened.borrow().is_empty());
+fn the_group_button_opens_every_connection_of_the_group(cx: &mut TestAppContext) {
+    let (handle, panel, opened, _installed) = setup(
+        cx,
+        &[
+            gp("web", Some("Work")),
+            gp("home", Some("Personal")),
+            gp("db", Some("Work")),
+            gp("solo", None),
+        ],
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.hover("group-Work", cx);
+        window.render_frame(cx);
+        window.click("group-open-Work", cx);
+        window.render_frame(cx);
+        assert!(!panel.read(cx).collapsed.contains("Work"), "it stays open");
+    })
+    .unwrap();
+    let mut hosts: Vec<String> = opened
+        .borrow()
+        .iter()
+        .map(|spec| spec.target.host.clone())
+        .collect();
+    hosts.sort();
+    assert_eq!(
+        hosts,
+        ["db", "web"],
+        "every member of the group and nothing else"
+    );
 }
 
 #[gpui_kit::test]

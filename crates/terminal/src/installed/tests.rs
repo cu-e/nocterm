@@ -120,6 +120,52 @@ fn vault_availability_belongs_to_each_installed_provider(cx: &mut TestAppContext
 }
 
 #[gpui_kit::test]
+fn derived_installation_uses_the_new_credentials_and_the_original_keeps_its_own(
+    cx: &mut TestAppContext,
+) {
+    let transport = Arc::new(ScriptedTransport::default());
+    let _first_session = transport.queue(None, None);
+    let _second_session = transport.queue(None, None);
+    let original_store = Arc::new(FakeCredentialStore::default());
+    original_store.set_available(false);
+    let (original, _) = install(transport.clone(), Some(original_store), "/bin/bash", cx);
+    let derived_store = Arc::new(FakeCredentialStore::default());
+    let derived = original
+        .with_credentials(CredentialProvider::new(derived_store.clone(), |_, _, _| {
+            Task::ready(Ok(()))
+        }));
+    let with_original = remote(original, "original", cx);
+    let with_derived = remote(derived, "derived", cx);
+    cx.update(|cx| {
+        assert!(!with_original.read(cx).vault_unlocked(cx));
+        assert!(with_derived.read(cx).vault_unlocked(cx));
+    });
+    derived_store.set_available(false);
+    cx.update(|cx| assert!(!with_derived.read(cx).vault_unlocked(cx)));
+}
+
+#[gpui_kit::test]
+fn derived_installation_adds_credentials_to_one_without_and_shares_the_transport(
+    cx: &mut TestAppContext,
+) {
+    let transport = Arc::new(ScriptedTransport::default());
+    let _session = transport.queue(None, None);
+    let (bare, _) = install(transport.clone(), None, "/bin/bash", cx);
+    let derived = bare.with_credentials(CredentialProvider::new(
+        Arc::new(FakeCredentialStore::default()),
+        |_, _, _| Task::ready(Ok(())),
+    ));
+    let without = remote(bare, "bare", cx);
+    let with = remote(derived, "derived", cx);
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert!(!without.read(cx).vault_unlocked(cx));
+        assert!(with.read(cx).vault_unlocked(cx));
+    });
+    assert_eq!(transport.requests().len(), 2);
+}
+
+#[gpui_kit::test]
 fn reconnect_observes_its_published_settings_after_ui_is_reinstalled(cx: &mut TestAppContext) {
     let first = Arc::new(ScriptedTransport::default());
     let _first_session = first.queue(None, None);

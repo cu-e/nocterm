@@ -6,7 +6,7 @@ fn grouped_tokens_keep_flat_required_keys_and_optional_omission() {
     let tokens = DesignTokens::builtin();
     let table: toml::Table = toml::to_string(&tokens).unwrap().parse().unwrap();
     let layout = table["layout"].as_table().unwrap();
-    assert_eq!(layout.len(), 18);
+    assert_eq!(layout.len(), 19);
     assert!(layout.contains_key("agent_panel_min_width"));
     assert!(!layout.contains_key("agent_panel"));
     let terminal = table["dark"]["terminal"].as_table().unwrap();
@@ -97,12 +97,13 @@ fn each_ansi_override_changes_only_its_existing_index() {
 #[test]
 fn layout_generic_sequence_decode_keeps_original_field_order() {
     use serde::de::value::{Error, SeqDeserializer};
-    let values: Vec<f32> = (1..=18).map(|value| value as f32).collect();
+    let values: Vec<f32> = (1..=19).map(|value| value as f32).collect();
     let layout = Layout::deserialize(SeqDeserializer::<_, Error>::new(values.into_iter())).unwrap();
     assert_eq!(layout.agent_panel.width, 1.0);
     assert_eq!(layout.sidebar.max_width, 6.0);
     assert_eq!(layout.tab_max_width, 7.0);
     assert_eq!(layout.local_terminal_height, 18.0);
+    assert_eq!(layout.status_bar_center_max, 19.0);
     let short = SeqDeserializer::<_, Error>::new([1.0_f32].into_iter());
     assert!(Layout::deserialize(short).is_err());
 }
@@ -113,9 +114,9 @@ fn public_token_schema_keeps_flat_properties_and_required_names() {
     let layout = Layout::json_schema(&mut generator);
     assert_eq!(
         layout.as_value()["properties"].as_object().unwrap().len(),
-        18
+        19
     );
-    assert_eq!(layout.as_value()["required"].as_array().unwrap().len(), 18);
+    assert_eq!(layout.as_value()["required"].as_array().unwrap().len(), 19);
     assert_eq!(layout.as_value()["additionalProperties"], false);
     let terminal = TerminalColors::json_schema(&mut generator);
     assert_eq!(
@@ -171,12 +172,12 @@ fn generic_map_duplicate_fields_are_rejected_before_missing_fields() {
 #[test]
 fn truncated_generic_sequences_keep_native_struct_length_diagnostics() {
     use serde::de::value::{Error, SeqDeserializer};
-    for length in 0..18 {
+    for length in 0..19 {
         let values = (0..length).map(|value| value as f32);
         let error = Layout::deserialize(SeqDeserializer::<_, Error>::new(values)).unwrap_err();
         assert_eq!(
             error.to_string(),
-            format!("invalid length {length}, expected struct Layout with 18 elements")
+            format!("invalid length {length}, expected struct Layout with 19 elements")
         );
     }
     let empty = SeqDeserializer::<_, Error>::new(std::iter::empty::<f32>());
@@ -205,14 +206,14 @@ fn scalar_struct_errors_keep_the_original_generic_expectation() {
 #[test]
 fn numeric_identifiers_keep_native_out_of_range_diagnostics() {
     use serde::de::value::{Error, MapDeserializer};
-    for index in [18_u64, 19, u64::MAX] {
+    for index in [19_u64, 20, u64::MAX] {
         let error = Layout::deserialize(MapDeserializer::<_, Error>::new(
             [(index, 0_f32)].into_iter(),
         ))
         .unwrap_err();
         assert_eq!(
             error.to_string(),
-            format!("invalid value: integer `{index}`, expected field index 0 <= i < 18")
+            format!("invalid value: integer `{index}`, expected field index 0 <= i < 19")
         );
     }
     for index in [20_u64, 21, u64::MAX] {

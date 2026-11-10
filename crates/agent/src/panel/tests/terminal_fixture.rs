@@ -3,10 +3,13 @@ use super::*;
 pub(super) struct Access {
     item: std::cell::Cell<Option<gpui_kit::EntityId>>,
     executor: std::cell::RefCell<Option<Arc<dyn nocterm_session::HostExec>>>,
+    source: std::cell::RefCell<Option<nocterm_ai::local_environment::LocalEnvironmentAccess>>,
     lease: std::cell::RefCell<Option<Arc<AtomicBool>>>,
     at_prompt: std::cell::Cell<bool>,
     sent: std::cell::RefCell<Vec<String>>,
     profile: std::cell::RefCell<Option<gpui_kit::SharedString>>,
+    /// What `TerminalFiles` reports; unset means the terminal has no file access.
+    files: std::cell::RefCell<Option<nocterm_workspace::TerminalFilesystem>>,
     /// Shared by the sessions of a test.
     sign_in: Rc<SignIn>,
     link: Link,
@@ -36,15 +39,23 @@ impl Access {
         Rc::new(Self {
             item: Default::default(),
             executor: Default::default(),
+            source: Default::default(),
             lease: Default::default(),
             at_prompt: std::cell::Cell::new(true),
             sent: Default::default(),
             profile: std::cell::RefCell::new(profile),
+            files: Default::default(),
             sign_in,
             link: Default::default(),
         })
     }
 
+    pub(super) fn bind_source(
+        &self,
+        source: nocterm_ai::local_environment::LocalEnvironmentAccess,
+    ) {
+        *self.source.borrow_mut() = Some(source);
+    }
     pub(super) fn replace_connection(&self) {
         self.link.epoch.set(self.link.epoch.get() + 1);
         self.link.closed.set(false);
@@ -66,6 +77,21 @@ impl Access {
 impl TerminalState for Access {
     fn info(&self, _: &App) -> Option<TerminalInfo> {
         Some(TerminalInfo {
+            source: self
+                .source
+                .borrow()
+                .as_ref()
+                .and_then(|access| match access.environment() {
+                    nocterm_ai::local_environment::LocalEnvironment::HubAccount(partition) => {
+                        Some(partition.clone())
+                    }
+                    _ => None,
+                }),
+            source_current: self
+                .source
+                .borrow()
+                .as_ref()
+                .is_none_or(|access| access.check_current().is_ok()),
             expected: ExpectedSession::new(self.item.get()?, self.link.epoch.get()),
             title: "Terminal".into(),
             local: !self.link.remote.get(),
@@ -143,6 +169,24 @@ impl TerminalExecution for Access {
             .clone()
             .ok_or(nocterm_workspace::TerminalError::Unsupported(
                 nocterm_workspace::TerminalCapability::StructuredExecution,
+            ))
+    }
+}
+impl nocterm_workspace::TerminalFiles for Access {
+    fn filesystem(
+        &self,
+        expected: ExpectedSession,
+        _: &App,
+    ) -> Result<nocterm_workspace::TerminalFilesystem, nocterm_workspace::TerminalError> {
+        self.check(expected)?;
+        if self.link.closed.get() || self.sign_in.asks.get() || self.sign_in.vault_locked.get() {
+            return Err(nocterm_workspace::TerminalError::Unavailable);
+        }
+        self.files
+            .borrow()
+            .clone()
+            .ok_or(nocterm_workspace::TerminalError::Unsupported(
+                nocterm_workspace::TerminalCapability::Files,
             ))
     }
 }
@@ -245,7 +289,8 @@ impl Item for FakeTerminal {
                 .with_live(self.access.clone())
                 .with_execution(self.access.clone())
                 .with_prompts(self.access.clone())
-                .with_reconnect(self.access.clone()),
+                .with_reconnect(self.access.clone())
+                .with_files(self.access.clone()),
         )
     }
 }
@@ -267,6 +312,22 @@ impl Access {
     }
     pub(super) fn profile(&self) -> &std::cell::RefCell<Option<gpui_kit::SharedString>> {
         &self.profile
+    }
+    /// This computer is the terminal's filesystem.
+    pub(super) fn serve_local_files(&self) {
+        *self.files.borrow_mut() = Some(nocterm_workspace::TerminalFilesystem::Local);
+    }
+    /// A remote host with its own in-memory filesystem, returned for seeding and assertions.
+    pub(super) fn serve_remote_files(
+        &self,
+        host: nocterm_session::HostAddress,
+    ) -> Arc<nocterm_session::testing::InMemoryFs> {
+        let fs = Arc::new(nocterm_session::testing::InMemoryFs::default());
+        *self.files.borrow_mut() = Some(nocterm_workspace::TerminalFilesystem::Remote {
+            host,
+            fs: fs.clone(),
+        });
+        fs
     }
     pub(super) fn sign_in(&self) -> &Rc<SignIn> {
         &self.sign_in

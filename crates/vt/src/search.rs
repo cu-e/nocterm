@@ -18,6 +18,8 @@ use std::{
 pub const MAX_SEARCH_QUERY: usize = 2_048;
 /// Regexes operate on complete logical lines, joining soft wraps only.
 pub const MAX_REGEX_LINE_BYTES: usize = 64 * 1024;
+/// Matches retained for instant navigation of an unchanged completed search.
+pub const MAX_NAVIGATION_MATCHES: usize = 4_096;
 const MAX_REGEX_BATCH_BYTES: usize = 64 * 1024;
 const MAX_REGEX_COMPILED_BYTES: usize = 256 * 1024;
 const MAX_REGEX_WORK_TIME: Duration = Duration::from_millis(250);
@@ -92,12 +94,24 @@ pub enum SearchProgress {
     /// Run this bounded work on a background executor, then call accept_work.
     Work(RegexWork),
 }
-#[derive(Default, Debug)]
+#[derive(Debug)]
 struct Summary {
     first: Option<SearchMatch>,
     last: Option<SearchMatch>,
     best: Option<(SearchMatch, u64)>,
     count: u64,
+    matches: Option<Vec<SearchMatch>>,
+}
+impl Default for Summary {
+    fn default() -> Self {
+        Self {
+            first: None,
+            last: None,
+            best: None,
+            count: 0,
+            matches: Some(Vec::new()),
+        }
+    }
 }
 impl Summary {
     fn record(
@@ -107,6 +121,13 @@ impl Summary {
         anchor: Option<SearchPoint>,
     ) {
         self.count = self.count.saturating_add(1);
+        if let Some(matches) = &mut self.matches {
+            if matches.len() == MAX_NAVIGATION_MATCHES {
+                self.matches = None;
+            } else {
+                matches.push(found);
+            }
+        }
         self.first.get_or_insert(found);
         self.last = Some(found);
         let eligible = anchor.is_none_or(|a| match direction {
@@ -119,6 +140,12 @@ impl Summary {
         }
     }
     fn append(&mut self, batch: Self, direction: SearchDirection) {
+        match (&mut self.matches, batch.matches) {
+            (Some(current), Some(next)) if current.len() + next.len() <= MAX_NAVIGATION_MATCHES => {
+                current.extend(next)
+            }
+            _ => self.matches = None,
+        }
         if let Some((found, ordinal)) = batch.best
             && (self.best.is_none() || direction == SearchDirection::Previous)
         {
@@ -183,7 +210,7 @@ impl RegexWork {
         }
         Ok(())
     }
-    /// No terminal state is accessed here. No list of matches is retained.
+    /// No terminal state is accessed here. Only a bounded navigation list may be retained.
     pub fn run(self) -> Result<SearchBatch, SearchError> {
         let started = Instant::now();
         let mut summary = Summary::default();
@@ -375,6 +402,12 @@ impl Drop for SearchScan {
     }
 }
 impl SearchScan {
+    /// Moves out the bounded navigation list only after the complete result was produced.
+    /// An oversized match set retains no list and callers can fall back to a fresh scan.
+    pub fn take_navigation_matches(&mut self) -> Option<Vec<SearchMatch>> {
+        self.complete?;
+        self.summary.matches.take()
+    }
     pub fn provisional(&self) -> Option<SearchMatch> {
         if self.direction == SearchDirection::Previous {
             None

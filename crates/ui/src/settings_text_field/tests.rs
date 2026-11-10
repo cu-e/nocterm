@@ -56,20 +56,15 @@ fn fixture(initial: Option<&str>, cx: &mut TestAppContext) -> Fixture {
         let mut field = None;
         let supplied = settings.clone();
         let (window, view) = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-            let input = SettingsTextField::new(
+            let input = SettingsTextField::section(
                 supplied,
                 "font",
-                |document| {
-                    document
-                        .get::<TerminalSettings>()
-                        .font_family
-                        .clone()
-                        .unwrap_or_default()
-                },
-                |document, text| {
-                    document.update::<TerminalSettings>(|section| {
-                        section.font_family = Some(text.to_owned())
-                    });
+                |section: &TerminalSettings| section.font_family.clone().unwrap_or_default(),
+                |section: &mut TerminalSettings, text| {
+                    section.font_family = Some(text.to_owned());
+                    if text == "refused" {
+                        return Err(std::io::Error::other("font is refused"));
+                    }
                     Ok(())
                 },
                 window,
@@ -173,6 +168,29 @@ fn older_success_keeps_newer_draft_and_original_settings_after_another_installat
         written(&f.writes),
         vec![Some("first".into()), Some("second".into())]
     );
+}
+
+#[gpui_kit::test]
+fn typed_validation_refusal_keeps_literal_without_publishing_a_mutated_candidate(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(Some("original"), cx);
+    draft(f.window, "refused", cx);
+    enter(f.window, cx);
+    literal(f.window, "refused", cx);
+    assert_eq!(saved(&f.settings, cx).as_deref(), Some("original"));
+    assert!(written(&f.writes).is_empty());
+    cx.update_window(f.window, |_, window, cx| {
+        window.render_frame(cx);
+        assert_eq!(window.find("field-error").label(), Some("font is refused"));
+    })
+    .unwrap();
+    draft(f.window, "accepted", cx);
+    enter(f.window, cx);
+    f.release.send(Ok(())).unwrap();
+    cx.run_until_parked();
+    assert_eq!(saved(&f.settings, cx).as_deref(), Some("accepted"));
+    no_error(f.window, cx);
 }
 
 #[gpui_kit::test]

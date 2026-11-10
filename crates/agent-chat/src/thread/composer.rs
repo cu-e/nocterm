@@ -1,14 +1,16 @@
 //! What the user is composing, apart from the conversation it goes into: the
-//! unsent draft, the context and images for the next prompt, and the queue of
-//! prompts waiting their turn.
+//! unsent draft, the context, images and files for the next prompt, and the queue
+//! of prompts waiting their turn.
 pub(in crate::thread) mod prompt_preparation;
 use super::{Attachment, queue::QueuedPrompt};
 use nocterm_ai::images::PromptImage;
+use nocterm_ai::prompt_files::{MAX_PROMPT_FILES, PromptFile, PromptFileError};
 
 pub struct Composer {
     draft: Option<std::sync::Arc<String>>,
     attachments: Vec<Attachment>,
     images: Vec<PromptImage>,
+    files: Vec<PromptFile>,
     queue: Vec<QueuedPrompt>,
     queue_paused: bool,
     /// Composer edits suspend dispatch independently of stops and errors.
@@ -21,6 +23,7 @@ pub struct Composer {
 struct Defaults {
     attachments: Vec<Attachment>,
     images: Vec<PromptImage>,
+    files: Vec<PromptFile>,
 }
 
 impl Default for Composer {
@@ -29,6 +32,7 @@ impl Default for Composer {
             draft: None,
             attachments: Vec::new(),
             images: Vec::new(),
+            files: Vec::new(),
             queue: Vec::new(),
             queue_paused: false,
             queue_editing: false,
@@ -54,10 +58,11 @@ impl Composer {
         replace: Option<u64>,
         attachments: Vec<nocterm_ai::history::SavedAttachment>,
     ) -> Result<PromptCandidate, super::queue::SubmitError> {
+        // Files are small links: they are measured with the prompt itself.
         let mut saved = nocterm_ai::history::SavedPrompt {
             id: replace.unwrap_or(self.next_queue_id()),
             text,
-            images: Vec::new(),
+            images: self.files.iter().map(PromptFile::content).collect(),
             attachments,
         };
         let encoded_len = nocterm_ai::history::prompt_size(&saved)?
@@ -66,8 +71,10 @@ impl Composer {
                 .iter()
                 .map(|image| image.encoded_len())
                 .sum::<usize>()
-            + self.images().len().saturating_sub(1);
+            + self.images().len();
+        let files = std::mem::take(&mut saved.images);
         saved.images = self.images().iter().map(|image| image.content()).collect();
+        saved.images.extend(files);
         let prompt = QueuedPrompt::prepared(saved, self.attachments().to_vec(), Some(encoded_len));
         let candidate = self.prepare_prompt_change(prompt, replace)?;
         let attachment_count = candidate
@@ -93,6 +100,9 @@ impl Composer {
     }
     pub fn images(&self) -> &[PromptImage] {
         &self.images
+    }
+    pub fn files(&self) -> &[PromptFile] {
+        &self.files
     }
     pub fn queue(&self) -> &[QueuedPrompt] {
         &self.queue
@@ -137,12 +147,34 @@ impl Composer {
     pub(super) fn reset_after_disable(&mut self) {
         self.clear_context();
         self.images.clear();
+        self.files.clear();
     }
     pub(super) fn remove_image(&mut self, index: usize) -> bool {
         if index >= self.images.len() {
             return false;
         }
         self.images.remove(index);
+        true
+    }
+    /// Adds `files` the prompt does not hold yet.
+    pub(super) fn add_files(&mut self, files: Vec<PromptFile>) -> Result<(), PromptFileError> {
+        let mut next = self.files.clone();
+        for file in files {
+            if !next.contains(&file) {
+                next.push(file);
+            }
+        }
+        if next.len() > MAX_PROMPT_FILES {
+            return Err(PromptFileError::TooMany);
+        }
+        self.files = next;
+        Ok(())
+    }
+    pub(super) fn remove_file(&mut self, index: usize) -> bool {
+        if index >= self.files.len() {
+            return false;
+        }
+        self.files.remove(index);
         true
     }
     pub(super) fn replace_images(
@@ -206,6 +238,7 @@ impl Composer {
             draft: self.draft.clone(),
             attachments: self.default_attachments().to_vec(),
             images: self.images.clone(),
+            files: self.files.clone(),
             queue: self.queue.clone(),
             queue_paused: true,
             next_queue_id: self.next_queue_id,
@@ -241,6 +274,7 @@ impl Composer {
             self.next_queue_id += 1;
         }
         self.images.clear();
+        self.files.clear();
     }
 
     /// Queued prompts wait to be sent and nothing holds them back.
@@ -282,12 +316,18 @@ impl Composer {
         self.defaults.is_some()
     }
 
-    /// Shows a queued prompt's images and context for editing, keeping the
+    /// Shows a queued prompt's images, files and context for editing, keeping the
     /// composer's own to return to.
-    pub fn begin_edit(&mut self, images: Vec<PromptImage>, attachments: Vec<Attachment>) {
+    pub fn begin_edit(
+        &mut self,
+        images: Vec<PromptImage>,
+        files: Vec<PromptFile>,
+        attachments: Vec<Attachment>,
+    ) {
         debug_assert!(self.defaults.is_none());
         self.defaults = Some(Defaults {
             images: std::mem::replace(&mut self.images, images),
+            files: std::mem::replace(&mut self.files, files),
             attachments: std::mem::replace(&mut self.attachments, attachments),
         });
         self.queue_editing = true;
@@ -297,6 +337,7 @@ impl Composer {
     pub fn end_edit(&mut self) {
         if let Some(defaults) = self.defaults.take() {
             self.images = defaults.images;
+            self.files = defaults.files;
             self.attachments = defaults.attachments;
         }
         self.queue_editing = false;
@@ -356,7 +397,11 @@ mod tests {
             vec![prompt(1), prompt(2)],
         );
         composer.resume();
-        composer.begin_edit(Vec::new(), vec![Attachment::Group("queued".into())]);
+        composer.begin_edit(
+            Vec::new(),
+            Vec::new(),
+            vec![Attachment::Group("queued".into())],
+        );
         assert!(composer.editing());
         assert_eq!(
             composer.default_attachments(),
@@ -414,6 +459,7 @@ mod tests {
         composer.replace_context(vec![Attachment::Group("own".into())]);
         composer.begin_edit(
             vec![image.clone()],
+            Vec::new(),
             vec![Attachment::Group("queued".into())],
         );
         assert!(
@@ -440,5 +486,21 @@ mod tests {
             .map(|prompt| prompt.saved().id)
             .collect::<Vec<_>>();
         assert_eq!(ids, [1, 3]);
+    }
+
+    #[test]
+    fn files_go_with_the_prompt_after_its_images_and_leave_the_composer() {
+        let mut composer = Composer::default();
+        let file = PromptFile::link(std::path::Path::new("/srv/report.pdf"), 7).unwrap();
+        composer
+            .add_files(vec![file.clone(), file.clone()])
+            .unwrap();
+        assert_eq!(composer.files().len(), 1, "a file is attached once");
+        let candidate = composer
+            .prepare_submission("read it".into(), None, Vec::new())
+            .unwrap();
+        assert_eq!(candidate.queue()[0].saved().images, vec![file.content()]);
+        composer.commit_prompt_change(candidate);
+        assert!(composer.files().is_empty());
     }
 }

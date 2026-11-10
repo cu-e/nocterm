@@ -1,8 +1,8 @@
 //! Pure saved-connection formats, drafts, transitions and native capability ports.
 //!
-//! Owns: profile/recent/facts formats, jump-host references and route resolution, checked mutations, live-profile authority stamps, recent-use intents, drafts, checked OS identities/release policy, observation values and bounded immutable flag bytes.
+//! Owns: profile/recent/facts formats, jump-host references and route resolution, checked mutations, live-profile authority stamps, recent-use intents, drafts, checked OS identities/release policy, observation values, bounded immutable flag bytes, and the replica reconciliation rules with the agreed-state document.
 //! Does not own: DNS, HTTP, files, clocks, GPUI or observation lifecycle.
-//! Ports provided: ConnectionRepository, ProfileIds, ConnectionClock and country/flag/RemoteOsDetector observation ports.
+//! Ports provided: ConnectionRepository, ProfileIds, ConnectionClock, ProfileReplica and country/flag/RemoteOsDetector observation ports.
 //! Ports used: session value types. Settings section: none. Globals: none.
 //! Invariants: only checked public addresses reach country lookup; country keys
 //! are two lower-case ASCII letters; supplied raw flag bytes are bounded at 256 KiB. IDs/timestamps/defaults are supplied values;
@@ -19,6 +19,7 @@ pub mod os_observation;
 pub mod profile_authority;
 pub mod profiles;
 pub mod recents;
+pub mod replica;
 pub mod repository;
 pub mod value_ports;
 

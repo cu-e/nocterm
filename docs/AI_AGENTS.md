@@ -2,11 +2,11 @@
 
 The AI panel sits to the right of the workspace and stays available when no
 terminal tabs are open. Open it from the footer, Window → AI Agents, or
-Ctrl+Alt+B (Cmd+Alt+B on macOS). Ctrl+E (Cmd+E) moves it to the left of the
-tabs and the sidebar to the right, and back; on the left, the history column
-opens on the panel's left too. Settings remains available from Session →
-Preferences → Settings and Ctrl+, (Cmd+, on macOS). The footer no longer has a
-Settings button.
+Ctrl+Alt+B (Cmd+Alt+B on macOS). Window → Layouts → Swapped sides
+moves it to the left of the tabs and the sidebar to the right, and Default moves
+them back; on the left, the history column opens on the panel's left too. Settings remains
+available from Session → Preferences → Settings and Ctrl+, (Cmd+, on macOS).
+The footer no longer has a Settings button.
 
 Create a chat with Claude, Codex, Hermes, or a custom ACP executable; the
 built-in agents show their brand marks in the menu, the panel header, chat
@@ -19,9 +19,11 @@ starts a new chat with the agent the last chat was started with (remembered in
 shortcut beside that agent. A chat the panel shows connects at once, so its
 model and options can be chosen before the first message
 (`[ai.sessions] warm_start = false` connects on the first message instead);
-the tool listener starts only when needed. The panel can occupy the
-window's working area; its maximize control keeps the footer and does not change
-the operating system's fullscreen state. Chats are saved and come back after a
+the tool listener starts only when needed. Expanding the panel replaces the
+central workspace area while keeping navigation and the footer accessible.
+Navigation can be switched, hidden or shown while chat stays expanded. Restoring
+chat keeps its previous docked width and the navigation width. The control does
+not change the operating system's fullscreen state. Chats are saved and come back after a
 restart (see [Chats and history](#chats-and-history)). Model favorites are
 stored separately in `agents.toml` under the state directory.
 
@@ -268,7 +270,7 @@ reports and nothing it does not:
 | Percent full, used / window tokens, session cost | ACP `usage_update` | All that send it |
 | Split of the used tokens | Estimated by Nocterm | Shown with the total |
 | Session tokens: input, cache read/write, output, reasoning, total | `usage` of the prompt response (unstable ACP) | Claude, Codex, Hermes |
-| Plan limits: 5-hour, weekly, per-model weekly, extra usage | See below | Claude, Codex |
+| Plan limits: 5-hour, weekly, per-model weekly, extra usage | Agent metadata attached to ACP `usage_update` | Claude, when reported |
 
 ACP reports only the total in the context window. The split into "System
 prompt, tools & rules", "Messages", "Reasoning" and "Tool calls" is estimated
@@ -277,19 +279,25 @@ reported total is attributed to the agent's own instructions and tools. When
 the agent has compacted its context, the transcript's parts are scaled down to
 fit the total. The card says the split is an estimate.
 
-Plan limits are not part of ACP:
+Plan limits are not standardized by ACP. Nocterm displays only limits supplied by
+the agent through ACP metadata:
 
 - **Claude.** The Claude adapter attaches Claude Code's rate-limit event to
   `usage_update` as `_meta["_claude/rateLimit"]` (window, utilization, reset
   time, status). Each report updates its window. Claude sends them only after
   replies, and not every window in every reply.
-- **Codex.** The Codex adapter does not forward limits. Codex itself writes them
-  into its session logs, so Nocterm reads the newest
-  `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl` (default `~/.codex`). It
-  reads only the last 256 KiB of the newest log, read-only. It reads after each
-  Codex reply and when the card opens. Codex logs record the limits of the
-  account, not of one session.
-- **Hermes and custom agents** report no limits; the card shows none.
+- **Codex.** The pinned Codex adapter does not forward plan limits in a metadata
+  shape Nocterm supports. The card says that the agent has not reported them.
+- **Hermes and unrecognized custom agents** have no supported plan-limit metadata;
+  the card shows none. Custom launches recognized as a built-in agent use that
+  agent's metadata shape.
+
+Nocterm does not read Claude sign-in tokens, request private provider account
+endpoints or scan Codex session logs. Opening the card and finishing a prompt do
+not poll the provider. Authentication and subscription credentials stay with the
+agent; inherited configuration-directory and API-key environment variables still
+reach the agent as described in [Agent setup](#agent-setup). Agents and their
+adapters remain subject to their providers' own terms.
 
 Limits are kept per agent for the running application, so a new chat with the
 same agent shows the last known values. Each limit shows the share used, a bar
@@ -309,7 +317,12 @@ the chat:
 | `exec_command` | Separate structured-execution approval | 16 KiB program/args, 64 KiB stdin, 5 minute absolute timeout |
 | `read_command` | Reading approval | Full 64 KiB stdout snapshot plus 4 KiB stderr tail |
 | `cancel_command` | Structured-execution approval | One command owned by this chat |
+| `transfer_files` | Ask before typing or running commands, with a transfer grant for the terminal pair | 1 to 64 absolute source paths, 4 active transfers per chat |
+| `read_transfer` | None | One transfer started by this chat |
+| `cancel_transfer` | None | One transfer started by this chat |
 | `open_terminal` | Ask before typing or running commands | One attached offline server |
+| `list_files`, `read_file` | Ask before reading a terminal (off by default) | Terminals with `file_tools` only; 1000 entries, text files up to 1 MiB read 64 KiB at a time |
+| `write_file`, `edit_file`, `make_directory`, `move_path`, `delete_path` | Ask before typing or running commands, with a file-change grant for the terminal | Terminals with `file_tools` only; 512 KiB written, 64 KiB per edit text |
 
 The settings apply at once, including to running chats. An approval card shows
 the exact target and input with **Deny**, **Allow once** and **Allow for this
@@ -322,7 +335,7 @@ Connecting and authentication states refuse input; a closed remote terminal is
 reconnected first, as described above. Live `run_command`
 also rejects alternate-screen programs and unknown, busy or dirty prompts,
 including SSH shells without OSC 133 integration. Grants are separate for reading,
-live input, structured execution and opening connections. Explicit `send_input`
+live input, structured execution, file transfers and opening connections. Explicit `send_input`
 into an unknown, busy or dirty shell always needs a one-time approval, even when
 normal write approvals are disabled; it never consumes a remembered safe-input grant.
 
@@ -354,6 +367,88 @@ idle or observation timeout leave completion unknown, never invent an exit statu
 and do not stop the shell. A later Stop no longer controls that program. Use
 `exec_command` when execution needs a durable handle, cancellation and a deadline.
 
+### File transfers
+
+`transfer_files` copies files and folders between the hosts of two terminals attached
+to the chat: this computer (a local terminal) to a server, a server to this computer,
+or a server to another server. Nocterm relays the data over the SSH/SFTP connections it
+already holds, so a server needs no credentials for another and the agent has no reason
+to run `scp` or `rsync`. Two local terminals are refused; use `exec_command` there.
+
+The agent names a source terminal and absolute source paths, a destination terminal
+and an existing destination folder. Paths are absolute with no `.` or `..` components
+and `~` is not expanded. Each source is copied into the destination under its own
+name; folders copy recursively. The destination folder is never created. Existing files
+are skipped and counted as skipped unless the agent passes `overwrite`. Symbolic links
+and special files are skipped and reported, never followed. A file is published
+atomically: a cancelled or failed file leaves no partial file, and files already
+published stay.
+
+The copy runs in the background. `transfer_files` waits `yield_ms` (default 1000, at
+most 10 000) and returns a `transfer_id` with the current report; `read_transfer` returns
+a new report, optionally waiting while the transfer is active; `cancel_transfer` stops
+it. A report gives the state (`queued`, `discovering`, `running`, `completed`, `failed`
+or `cancelled`), the direction, the destination, file counts (discovered, completed,
+skipped, failed), byte totals, whether discovery finished and at most 16 failures with
+their path, operation and error. Paths and errors in a report honour the chat's
+secret filtering.
+
+Limits: 1 to 64 sources per call, each path at most 4096 bytes and all sources at most
+64 KiB; each chat has four active and sixteen retained transfers (the oldest finished
+records are evicted), and an agent can only read or cancel transfers its own chat
+started. Discovery stops at one million entries or 256 levels deep. Transfers share the
+queue and workers of the Files transfer activity, so they appear there and a long copy
+of yours can delay an agent's and the reverse; a full queue is an error to retry. The
+agent sees `queued` while it waits, and you can cancel an agent's transfer from the
+activity, after which it reports `cancelled`.
+
+Approval: `transfer_files` follows the write policy. The card names the source and
+destination terminals, lists the source paths, the destination folder and whether
+existing files are skipped or replaced. **Allow transfers between these terminals** is
+a separate grant from execution: it covers transfers between exactly that pair of
+terminals, in either direction, for the chat's session. Approving `a`/`b` and `c`/`d`
+does not approve `a`/`d`. It is dropped, like other grants, when either terminal's
+session is replaced or the chat restarts. A local endpoint reads and writes anywhere you can, as
+`exec_command` on a local terminal does, so the same approval applies.
+`read_transfer` needs no approval; `cancel_transfer` only stops a transfer the chat
+started.
+
+Lifetime: Stop, chat closure or restart and AI disable cancel the chat's transfers,
+and so does detaching either terminal or replacing its session. Transfers do not
+reconnect: if an endpoint is offline the call fails and the agent should open the
+terminal again and retry. Quitting Nocterm freezes and drains the shared transfer
+queue like Files transfers.
+
+### Files of terminals that run no programs
+
+Some terminals serve files but run no programs: a plugin's console tab opened with files,
+for example a game server panel. `exec_command` and `run_command` cannot reach such files,
+so while one is attached the chat also offers file tools for it, and `list_terminals`
+marks it with `file_tools: true`. The tools appear only then: the chat tells its bridge,
+the bridge lists them and sends `notifications/tools/list_changed` to a connected agent,
+and withdraws them when the last such terminal is detached
+([ADR 0156](adr/0156-agents-work-with-the-files-of-terminals-that-run-no-programs.md)).
+An agent that does not handle that notification sees them after it lists its tools again,
+for example in a new chat.
+
+`list_files` and `read_file` follow the read policy; `read_file` reads UTF-8 text a range of
+lines at a time. `edit_file` replaces exact text that occurs once (or every occurrence with
+`replace_all`), so the agent sends only what changes; `write_file` writes a whole file and
+refuses an existing one unless `overwrite` is set. Changes follow the write policy: the card
+shows the path and the text, and **Allow file changes on this terminal** grants them for the
+chat's session. The tools act only on terminals with `file_tools`; on any other terminal
+they are refused. With **Hide secrets in terminal output** on, `read_file` hides recognised secrets as
+`[REDACTED]`; `write_file` then refuses content with that marker, and `edit_file` matches
+the file's real text, so a hidden secret is never overwritten by its marker.
+
+Hub agents ([ADR 0148](adr/0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md))
+run on the hub, not on this computer: they reach the servers given Agent access with
+the account's agent key and use the hub's own server tools, never these terminal and
+transfer tools. A hub agent signs in only to the servers attached to its chat: the attach
+menu (**+**) of such a chat lists the account's servers instead of terminals, and the
+choice is stored with the chat on the hub, so the web panel and every other device show
+it. See [Hubs](HUBS.md#agents-of-a-hub).
+
 Agents also have their own permission prompts (for example before running a tool
 of their own or accessing files). **Agent permissions → Ask before an agent uses
 its own tools** controls those requests independently of terminal read and write
@@ -381,11 +476,11 @@ physical image validation and PNG previews through injected image ports. `nocter
 bridge transport. `nocterm-agent-chat` owns chat state, sessions and tools; `nocterm-agent`
 owns the chat UI and routing.
 Saved chats (`nocterm_ai::history`), Claude limit metadata and transcript usage
-estimates (`nocterm_ai::usage`) remain domain code. Codex session-log parsing and
-bounded native reads belong to `nocterm-agent-storage`. The panel is split into modules by part: transcript, menus, attach menu, approvals,
-composer, history and usage card (`panel/*.rs`). Account usage is injected through
-`AgentServices::usage_source`; tests supply a scripted domain port and never read
-the user's logs.
+estimates (`nocterm_ai::usage`) remain domain code. `nocterm-agent-runtime` retains
+plan-limit projections from accepted ACP events. The panel is split into modules
+by part: transcript, menus, attach menu, approvals, composer, history and usage
+card (`panel/*.rs`). Tests supply scripted agent events; neither tests nor
+production discover provider credentials or session logs for usage reporting.
 The composition root injects adapters through domain contracts. Features never
 import ACP adapters or the terminal/connections features; Workspace supplies
 neutral narrow terminal ports and `ConnectionDirectory` contracts.
@@ -455,8 +550,9 @@ group teardown; Windows process tree termination is best effort.
 
 Saved chats are plain JSON readable by your user account. They contain what the
 chat showed, including tool output that may quote terminal text. Delete a chat
-from the history to remove its file. Reading Codex logs for limits stays on the
-machine; nothing about usage is sent anywhere.
+from the history to remove its file. Usage reports arrive from the connected
+agent through ACP. Nocterm does not extract subscription tokens from provider
+files, read provider session logs, or send separate requests for plan limits.
 
 **Without isolation, local agents run as your user and may read and change any of
 your files with their own tools, including `~/.ssh`.** Nocterm's allowlisted
@@ -507,8 +603,10 @@ by the selected provider/agent, not by Nocterm.
 
 Domain tests cover stable ACP updates, environment blocks, input limits,
 metadata filtering, image decoding limits, favorites persistence, saved chat
-files (round trip, permissions, path safety, bounds, pins and names), Claude and
-Codex limit parsing and the context estimate. Panel tests cover saving,
+files (round trip, permissions, path safety, bounds, pins and names), profile-selected
+rate-limit metadata parsing and the context estimate. Runtime tests cover retained
+limit windows from agent events, missing or malformed reports, unsupported metadata
+profiles and late reports after shutdown. Panel tests cover saving,
 restoring and resuming chats, stopping and continuing a session, dropped empty
 chats, in-place restart, history search, pin, rename and fork, the usage card,
 the sections and folder tree of the attach menu, opening a server from it, and

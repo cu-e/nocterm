@@ -75,7 +75,7 @@ fn an_unreachable_server_is_reported_and_its_tab_stays(cx: &mut TestAppContext) 
         assert!(
             f.workspace
                 .read(cx)
-                .items()
+                .items(cx)
                 .any(|item| item.item_id() == f.terminal)
         );
     });
@@ -111,4 +111,49 @@ fn identical_secret_prompt_tokens_are_specific_to_the_original_request(cx: &mut 
             .unwrap();
     });
     assert_eq!(*f.access.sign_in().answers().borrow(), ["current"]);
+}
+
+#[gpui_kit::test]
+fn terminal_files_follow_the_configured_filesystem_and_the_exact_connection(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_workspace::{TerminalError, TerminalFiles as _, TerminalFilesystem};
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let expected = cx.update(|cx| f.access.info(cx).unwrap().expected);
+    cx.update(|cx| {
+        assert!(matches!(
+            f.access.filesystem(expected, cx),
+            Err(TerminalError::Unsupported(
+                nocterm_workspace::TerminalCapability::Files
+            ))
+        ));
+    });
+    f.access.serve_local_files();
+    cx.update(|cx| {
+        assert!(matches!(
+            f.access.filesystem(expected, cx),
+            Ok(TerminalFilesystem::Local)
+        ));
+    });
+    f.access.link().remote().set(true);
+    let host =
+        nocterm_session::HostAddress::direct(nocterm_session::Target::new("agent", "server", 22));
+    let remote = f.access.serve_remote_files(host.clone());
+    cx.update(|cx| {
+        let Ok(TerminalFilesystem::Remote { host: served, fs }) = f.access.filesystem(expected, cx)
+        else {
+            panic!("a remote terminal serves its configured filesystem");
+        };
+        assert_eq!(served, host);
+        let remote: Arc<dyn nocterm_session::RemoteFs> = remote;
+        assert!(Arc::ptr_eq(&fs, &remote));
+    });
+    f.access.replace_connection();
+    cx.update(|cx| {
+        assert!(matches!(
+            f.access.filesystem(expected, cx),
+            Err(TerminalError::StaleSession)
+        ));
+    });
 }

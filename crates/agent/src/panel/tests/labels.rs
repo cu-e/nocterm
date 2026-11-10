@@ -50,7 +50,7 @@ fn chat_label_heights(f: &Fixture, raw: &str, cx: &mut TestAppContext) -> [gpui_
 
 #[gpui_kit::test]
 fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 18., workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     let prompt = "смотри в чем соль\nтут";
@@ -98,8 +98,8 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
     });
     cx.run_until_parked();
     let saved = f.repository.chats();
-    assert_eq!(saved[0].name.as_deref(), Some(long.as_str()));
-    assert_eq!(saved[0].title.as_deref(), Some(agent_title));
+    assert_eq!(saved[0].header.name.as_deref(), Some(long.as_str()));
+    assert_eq!(saved[0].header.title.as_deref(), Some(agent_title));
     assert!(matches!(&saved[0].entries[0], Entry::User(parts)
         if matches!(&parts[0], Content::Text(text) if text.text == prompt)));
 
@@ -132,7 +132,7 @@ fn chat_header_and_history_keep_multiline_titles_on_one_line(cx: &mut TestAppCon
 
 #[gpui_kit::test]
 fn completed_and_live_heredoc_tool_headers_keep_one_line_and_raw_command(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 18., workspace_resolver(), image_deps());
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
     let script = "python3 - <<'PY'\nfrom pathlib import Path\nPath('/tmp/probe.txt').write_text('nocterm-ui-test-artifacts')\nPY";

@@ -2,35 +2,40 @@
 //!
 //! Every control saves as soon as it changes; text saves when typing pauses,
 //! on Enter and when the field loses focus. There is no draft and no Apply.
-//! Owns: checked ordered page catalogs, Item navigation, shared diagnostics and eager/lazy lifetimes.
+//! Owns: checked ordered page catalogs, Item navigation (pages nested under a top-level page stay
+//! out of the list, keep their parent highlighted and link back to it), opening a page at an
+//! anchor the page reveals, shared diagnostics and eager/lazy lifetimes.
 //! Does not own: page controls, schema policy, native probing or settings persistence.
-//! Ports used: Installed supplies SettingsHandle; SettingsCatalog supplies owner factories.
+//! Ports used: SettingsHandle is supplied explicitly; SettingsCatalog supplies owner factories.
 //! Ports provided: workspace settings Item. Settings section: none. Globals: none.
-//! Invariants: catalogs validate before factories run; eager construction/flush preserve order; lazy pages are reused.
+//! Invariants: catalogs validate before factories run (a nested page needs a top-level parent and
+//! cannot be the default); eager construction/flush preserve order; lazy pages are reused.
 
-mod installation;
-pub use installation::Installed;
+use nocterm_store::SettingsHandle;
 
 use gpui_kit::{
-    AnyElement, App, Context, EventEmitter, FocusHandle, Focusable, SharedString, Subscription,
+    App, Context, EventEmitter, FocusHandle, Focusable, ScrollHandle, SharedString, Subscription,
     TestSupportExt as _, Window,
-    component::{StyledExt as _, h_flex, v_flex},
+    component::{h_flex, v_flex},
     div,
     prelude::*,
-    px, rems,
 };
 use nocterm_ui::{IconName, form};
 use nocterm_ui::{SettingsPageContext, SettingsPageFeedback, SettingsPageHandle, SettingsPageSpec};
 use nocterm_workspace::{Item, ItemEvent, OpenSettings, Workspace};
 
 mod catalog;
+mod nav;
 use catalog::Lifecycle;
 pub use catalog::{SettingsCatalog, SettingsCatalogError, SettingsPageRegistration};
+use nav::PageNav;
 
 struct PageSlot {
     spec: SettingsPageSpec,
     lifecycle: Lifecycle,
     page: Option<Box<dyn SettingsPageHandle>>,
+    /// The scroll of the page, which the page can scroll to a part of itself.
+    scroll: ScrollHandle,
 }
 struct PageBook {
     slots: Vec<PageSlot>,
@@ -48,12 +53,14 @@ impl PageBook {
             .map(|registration| {
                 let spec = registration.spec().clone();
                 let lifecycle = registration.lifecycle();
+                let scroll = ScrollHandle::new();
                 let page = (lifecycle == Lifecycle::Eager)
-                    .then(|| spec.create(context.clone(), window, cx));
+                    .then(|| spec.create(context.clone().with_scroll(scroll.clone()), window, cx));
                 PageSlot {
                     spec,
                     lifecycle,
                     page,
+                    scroll,
                 }
             })
             .collect();
@@ -73,12 +80,13 @@ impl PageBook {
     ) {
         let slot = &mut self.slots[index];
         if slot.page.is_none() {
+            let context = context.with_scroll(slot.scroll.clone());
             slot.page = Some(slot.spec.create(context, window, cx));
         }
     }
 }
 /// Installs the settings Item with factories supplied by the actual feature owners.
-pub fn register(workspace: &mut Workspace, pages: SettingsCatalog, installed: Installed) {
+pub fn register(workspace: &mut Workspace, pages: SettingsCatalog, installed: SettingsHandle) {
     workspace.register_action(move |_, _: &OpenSettings, window, cx| {
         let workspace = cx.entity().downgrade();
         let pages = pages.clone();
@@ -96,11 +104,24 @@ pub fn open_page(
     workspace: &mut Workspace,
     id: &str,
     pages: &SettingsCatalog,
-    installed: Installed,
+    installed: SettingsHandle,
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let item = workspace.find_item::<SettingsView>().unwrap_or_else(|| {
+    open_page_at(workspace, id, None, pages, installed, window, cx);
+}
+/// Like [`open_page`], then asks the selected page to reveal `anchor`. A page that does not
+/// know the anchor stays as it is.
+pub fn open_page_at(
+    workspace: &mut Workspace,
+    id: &str,
+    anchor: Option<&str>,
+    pages: &SettingsCatalog,
+    installed: SettingsHandle,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let item = workspace.find_item::<SettingsView>(cx).unwrap_or_else(|| {
         let item = cx.new(|cx| SettingsView::with_pages(pages.clone(), installed, window, cx));
         workspace.add_item(item.clone(), window, cx);
         item
@@ -110,14 +131,18 @@ pub fn open_page(
             if let Some(index) = view.page_index(id) {
                 view.select_page(index, window, cx);
             }
+            if let Some(anchor) = anchor {
+                view.reveal(anchor, window, cx);
+            }
         });
     }
     workspace.activate_item_by_id(item.entity_id(), window, cx);
 }
 pub struct SettingsView {
-    installed: Installed,
+    installed: SettingsHandle,
     selected_page: usize,
     pages: PageBook,
+    nav: PageNav,
     focus: FocusHandle,
     feedback: SettingsPageFeedback,
     _subscriptions: Vec<Subscription>,
@@ -125,12 +150,12 @@ pub struct SettingsView {
 impl SettingsView {
     pub fn with_pages(
         pages: SettingsCatalog,
-        installed: Installed,
+        installed: SettingsHandle,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let feedback = SettingsPageFeedback::new(cx);
-        let context = SettingsPageContext::new(installed.settings().clone(), feedback.clone());
+        let context = SettingsPageContext::new(installed.clone(), feedback.clone());
         let weak = cx.weak_entity();
         let original_window = window.window_handle();
         let changed = feedback.observe(cx, move |cx| {
@@ -140,17 +165,19 @@ impl SettingsView {
         });
         let weak = cx.weak_entity();
         let original_window = window.window_handle();
-        let settings = installed.settings().observe(cx, move |cx| {
+        let settings = installed.observe(cx, move |cx| {
             let _ = original_window.update(cx, |_, _, cx| {
                 let _ = weak.update(cx, |_, cx| cx.notify());
             });
         });
         let selected_page = pages.default_index();
+        let nav = PageNav::new(&pages);
         let pages = PageBook::new(&pages, context, window, cx);
         Self {
             installed,
             selected_page,
             pages,
+            nav,
             focus: cx.focus_handle(),
             feedback,
             _subscriptions: vec![changed, settings],
@@ -173,8 +200,7 @@ impl SettingsView {
             page.deactivate(window, cx);
         }
         self.selected_page = index;
-        let context =
-            SettingsPageContext::new(self.installed.settings().clone(), self.feedback.clone());
+        let context = SettingsPageContext::new(self.installed.clone(), self.feedback.clone());
         self.pages.activate(index, context, window, cx);
         window.focus(&self.focus_handle(cx), cx);
         cx.notify();
@@ -188,38 +214,11 @@ impl SettingsView {
             }
         }
     }
-    fn render_nav(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .id("settings-pages")
-            .test_support()
-            .w(rems(14.))
-            .flex_shrink_0()
-            .h_full()
-            .p_2()
-            .gap(px(2.))
-            .child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .text_base()
-                    .font_semibold()
-                    .child("Settings"),
-            )
-            .children(self.pages.slots.iter().enumerate().map(|(index, slot)| {
-                self.nav_item(index, slot.spec.title.clone(), slot.spec.icon, cx)
-            }))
-    }
-    fn nav_item(
-        &self,
-        index: usize,
-        title: SharedString,
-        icon: IconName,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        form::nav_item(index, icon, title, self.selected_page == index, cx)
-            .test_support()
-            .on_click(cx.listener(move |this, _, window, cx| this.select_page(index, window, cx)))
-            .into_any_element()
+    /// Asks the selected page to bring `anchor` into view.
+    fn reveal(&mut self, anchor: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(page) = self.pages.selected(self.selected_page) {
+            page.reveal(anchor, window, cx);
+        }
     }
 }
 
@@ -254,12 +253,13 @@ impl Item for SettingsView {
 }
 impl Render for SettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let back = self.nav.back_link(&self.pages, self.selected_page, cx);
         let content = self
             .pages
             .selected(self.selected_page)
             .map(|page| page.view().into_any_element())
             .unwrap_or_else(|| div().into_any_element());
-        let section_errors: Vec<_> = self.installed.settings().section_errors(cx)
+        let section_errors: Vec<_> = self.installed.section_errors(cx)
             .iter()
             .map(|error| {
                 format!(
@@ -273,6 +273,7 @@ impl Render for SettingsView {
             .max_w(form::page_width(cx))
             .px_8()
             .py_6()
+            .children(back)
             .children(
                 section_errors
                     .into_iter()
@@ -295,15 +296,13 @@ impl Render for SettingsView {
             .min_h_0()
             .bg(nocterm_ui::hsla(
                 nocterm_ui::TerminalStyle::with_settings(
-                    self.installed
-                        .settings()
-                        .setting::<nocterm_ui::TerminalSettings>(cx),
+                    self.installed.setting::<nocterm_ui::TerminalSettings>(cx),
                     cx,
                 )
                 .background,
             ))
             .track_focus(&self.focus)
-            .child(self.render_nav(cx))
+            .child(self.nav.render(&self.pages, self.selected_page, cx))
             .child(
                 div()
                     .id(("settings-scroll", self.selected_page))
@@ -311,6 +310,7 @@ impl Render for SettingsView {
                     .min_w_0()
                     .h_full()
                     .overflow_y_scroll()
+                    .track_scroll(&self.pages.slots[self.selected_page].scroll)
                     .child(content),
             )
     }

@@ -1,0 +1,481 @@
+//! In-memory ports and a scripted runtime for tests of the host and of the application's
+//! adapters.
+
+use std::{
+    cell::{Cell, RefCell},
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    rc::Rc,
+    sync::{Arc, Mutex, MutexGuard},
+};
+
+use gpui::{App, Task};
+use nocterm_plugin_api::{
+    Cause, ContentHash, Effects, Event, HostContext, LocalId, Manifest, ManifestDto, Node,
+    NodeKind, Package, PackageError, PluginInstance, PluginPackages, PluginRuntime, RuntimeError,
+    Snapshot, View,
+};
+use nocterm_plugin_model::PluginId;
+
+use nocterm_plugin_api::{
+    PluginNet,
+    capability::net::{NetAnswer, NetCall},
+};
+
+use crate::{
+    PluginData, PluginDataChange, PluginDataDoc, PluginDataError, PluginRecords, RecordsDoc,
+    RecordsError, SessionData, SessionRecords,
+};
+
+/// A records port that keeps the last document in memory and counts the saves.
+#[derive(Default)]
+pub struct MemoryRecords {
+    inner: SessionRecords,
+    saves: Cell<usize>,
+    refusing: Cell<bool>,
+}
+
+impl MemoryRecords {
+    pub fn new() -> Rc<Self> {
+        Rc::new(Self::default())
+    }
+
+    /// Starts from a document, as if it had been saved by an earlier run.
+    pub fn seeded(doc: RecordsDoc) -> Rc<Self> {
+        Rc::new(Self {
+            inner: SessionRecords::seeded(doc),
+            saves: Cell::new(0),
+            refusing: Cell::new(false),
+        })
+    }
+
+    /// The document last saved.
+    pub fn doc(&self) -> RecordsDoc {
+        self.inner.doc()
+    }
+
+    /// How many times the host saved.
+    pub fn saves(&self) -> usize {
+        self.saves.get()
+    }
+    pub fn refuse_writes(&self) {
+        self.refusing.set(true);
+    }
+}
+
+impl PluginRecords for MemoryRecords {
+    fn load(&self, cx: &App) -> RecordsDoc {
+        self.inner.load(cx)
+    }
+
+    fn replace(&self, doc: RecordsDoc, cx: &mut App) -> Task<Result<(), RecordsError>> {
+        self.saves.set(self.saves.get() + 1);
+        if self.refusing.get() {
+            return Task::ready(Err(RecordsError::Write(Cause::new(Refused))));
+        }
+        self.inner.replace(doc, cx)
+    }
+}
+
+/// Why [`MemoryData::refuse_changes`] refuses.
+#[derive(Debug, thiserror::Error)]
+#[error("the stand-in refuses every change")]
+struct Refused;
+
+/// A data port that keeps documents in memory, records every change and can hold a broken file.
+#[derive(Default)]
+pub struct MemoryData {
+    inner: SessionData,
+    broken: RefCell<BTreeSet<PluginId>>,
+    changes: RefCell<Vec<(PluginId, PluginDataChange)>>,
+    refusing: Cell<bool>,
+}
+
+impl MemoryData {
+    pub fn new() -> Rc<Self> {
+        Rc::new(Self::default())
+    }
+
+    /// Makes the port refuse every change, as a writer that is closing does.
+    pub fn refuse_changes(&self) {
+        self.refusing.set(true);
+    }
+
+    /// Puts a document on "disk".
+    pub fn put(&self, plugin: &PluginId, doc: PluginDataDoc) {
+        self.inner.put(plugin, doc);
+    }
+
+    /// Makes the plugin's file unreadable until a change replaces it.
+    pub fn break_file(&self, plugin: &PluginId) {
+        self.broken.borrow_mut().insert(plugin.clone());
+    }
+
+    /// The document on "disk", if any.
+    pub fn stored(&self, plugin: &PluginId) -> Option<PluginDataDoc> {
+        self.inner.stored(plugin)
+    }
+
+    /// Whether the plugin's file is still the unreadable one.
+    pub fn is_broken(&self, plugin: &PluginId) -> bool {
+        self.broken.borrow().contains(plugin)
+    }
+
+    /// Every change the host asked for, oldest first.
+    pub fn changes(&self) -> Vec<(PluginId, PluginDataChange)> {
+        self.changes.borrow().clone()
+    }
+}
+
+impl PluginData for MemoryData {
+    fn load(&self, plugin: &PluginId, cx: &App) -> Result<PluginDataDoc, PluginDataError> {
+        if self.is_broken(plugin) {
+            let syntax = PluginDataDoc::decode(b"not a data document")
+                .expect_err("the text is not a document");
+            return Err(PluginDataError::Broken(Cause::new(syntax)));
+        }
+        self.inner.load(plugin, cx)
+    }
+
+    fn change(
+        &self,
+        plugin: PluginId,
+        change: PluginDataChange,
+        cx: &mut App,
+    ) -> Result<(), PluginDataError> {
+        if self.refusing.get() {
+            return Err(PluginDataError::NotSaved(Cause::new(Refused)));
+        }
+        self.broken.borrow_mut().remove(&plugin);
+        self.inner.change(plugin.clone(), change.clone(), cx)?;
+        self.changes.borrow_mut().push((plugin, change));
+        Ok(())
+    }
+}
+
+/// A package store in memory. A package loads only under the hash it was published with.
+#[derive(Default)]
+pub struct MemoryPackages {
+    stored: Mutex<BTreeMap<(PluginId, ContentHash), Package>>,
+    offered: Mutex<BTreeMap<String, Package>>,
+}
+
+impl MemoryPackages {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    fn stored(&self) -> MutexGuard<'_, BTreeMap<(PluginId, ContentHash), Package>> {
+        self.stored
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Puts a package in the store, as if an earlier run had published it.
+    pub fn put(&self, package: &Package) {
+        let id = package.manifest().plugin().id().clone();
+        let mut stored = self.stored();
+        stored.retain(|(plugin, _), _| *plugin != id);
+        stored.insert((id, *package.hash()), package.clone());
+    }
+
+    /// Makes `read` find `package` at `location`.
+    pub fn offer(&self, location: &str, package: &Package) {
+        self.offered
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(location.to_owned(), package.clone());
+    }
+
+    /// Whether a package of the plugin is stored.
+    pub fn holds(&self, plugin: &PluginId) -> bool {
+        self.stored().keys().any(|(id, _)| id == plugin)
+    }
+}
+
+impl PluginPackages for MemoryPackages {
+    fn read(&self, location: &str) -> Result<Package, PackageError> {
+        self.offered
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(location)
+            .cloned()
+            .ok_or(PackageError::NotFound)
+    }
+
+    fn publish(&self, package: &Package, replace: bool) -> Result<(), PackageError> {
+        let id = package.manifest().plugin().id().clone();
+        let mut stored = self.stored();
+        if stored.keys().any(|(plugin, _)| *plugin == id) && !replace {
+            return Err(PackageError::Duplicate(id));
+        }
+        stored.insert((id, *package.hash()), package.clone());
+        Ok(())
+    }
+
+    fn load(&self, plugin: &PluginId, expected: &ContentHash) -> Result<Package, PackageError> {
+        let stored = self.stored();
+        match stored.get(&(plugin.clone(), *expected)) {
+            None if stored.keys().any(|(id, _)| id == plugin) => Err(PackageError::HashChanged),
+            None => Err(PackageError::NotFound),
+            Some(package) if package.hash() == expected => Ok(package.clone()),
+            Some(_) => Err(PackageError::HashChanged),
+        }
+    }
+
+    fn remove(&self, plugin: &PluginId) -> Result<(), PackageError> {
+        self.stored().retain(|(id, _), _| id != plugin);
+        Ok(())
+    }
+
+    fn retain(&self, plugin: &PluginId, expected: &ContentHash) -> Result<(), PackageError> {
+        self.load(plugin, expected)?;
+        self.stored()
+            .retain(|(id, hash), _| id != plugin || hash == expected);
+        Ok(())
+    }
+}
+
+/// What a scripted plugin does: shared between the test and the instances the runtime makes.
+#[derive(Clone)]
+pub struct Script {
+    state: Arc<Mutex<ScriptState>>,
+}
+
+struct ScriptState {
+    view: Result<View, RuntimeError>,
+    events: VecDeque<Result<Effects, RuntimeError>>,
+    snapshots: Vec<Snapshot>,
+    seen: Vec<Event>,
+    instances: usize,
+}
+
+impl Default for Script {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Script {
+    pub fn new() -> Self {
+        let node = Node::new(NodeKind::Text("hello".into()));
+        Self {
+            state: Arc::new(Mutex::new(ScriptState {
+                view: Ok(View {
+                    nodes: vec![node],
+                    ..View::default()
+                }),
+                events: VecDeque::new(),
+                snapshots: Vec::new(),
+                seen: Vec::new(),
+                instances: 0,
+            })),
+        }
+    }
+
+    fn state(&self) -> MutexGuard<'_, ScriptState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// What `render` answers from now on.
+    pub fn render_with(&self, view: Result<View, RuntimeError>) {
+        self.state().view = view;
+    }
+
+    /// What the next `on_event` answers; later calls answer with no effects.
+    pub fn answer_event(&self, answer: Result<Effects, RuntimeError>) {
+        self.state().events.push_back(answer);
+    }
+
+    /// Every snapshot the guest was given, oldest first.
+    pub fn snapshots(&self) -> Vec<Snapshot> {
+        self.state().snapshots.clone()
+    }
+
+    /// How many instances the runtime made.
+    pub fn instances(&self) -> usize {
+        self.state().instances
+    }
+
+    /// Every event the guest was given, oldest first.
+    pub fn events(&self) -> Vec<Event> {
+        self.state().seen.clone()
+    }
+}
+
+/// A runtime whose instances do what the [`Script`] says.
+pub struct ScriptedRuntime(Script);
+
+impl ScriptedRuntime {
+    pub fn new(script: &Script) -> Arc<Self> {
+        Arc::new(Self(script.clone()))
+    }
+}
+
+impl PluginRuntime for ScriptedRuntime {
+    fn instantiate(&self, _: &Package) -> Result<Box<dyn PluginInstance>, RuntimeError> {
+        self.0.state().instances += 1;
+        Ok(Box::new(ScriptedInstance(self.0.clone())))
+    }
+}
+
+struct ScriptedInstance(Script);
+
+impl PluginInstance for ScriptedInstance {
+    fn render(&self, _: &LocalId, snapshot: &Snapshot) -> Result<View, RuntimeError> {
+        let mut state = self.0.state();
+        state.snapshots.push(snapshot.clone());
+        state.view.clone()
+    }
+
+    fn on_event(
+        &self,
+        _: &LocalId,
+        event: Event,
+        snapshot: &Snapshot,
+    ) -> Result<Effects, RuntimeError> {
+        let mut state = self.0.state();
+        state.snapshots.push(snapshot.clone());
+        state.seen.push(event);
+        state.events.pop_front().unwrap_or(Ok(Effects::default()))
+    }
+}
+
+/// A package of the plugin `user-acme-clock` with two contributions, `face` (a widget) and
+/// `board` (a panel), every capability of the table declared and `monitor.usage` optional.
+pub fn package(hash_byte: u8) -> Package {
+    package_named("clock", hash_byte)
+}
+
+/// The same package under another plugin name.
+pub fn package_named(name: &str, hash_byte: u8) -> Package {
+    package_with(name, hash_byte, ALL)
+}
+
+/// Every capability of the table that is not optional in [`package`].
+pub const ALL: &[&str] = &[
+    "clock.now",
+    "workspace.kind",
+    "transfers.counts",
+    "notifications.own",
+    "notifications.post",
+    "panels.set-open",
+    "panels.set-badge",
+    "storage.set",
+    "storage.remove",
+];
+
+/// A code package (`runtime = "wasm"`, which a scripted runtime stands in for) that declares
+/// exactly these required capabilities (and `monitor.usage` as optional).
+pub fn package_with(name: &str, hash_byte: u8, capabilities: &[&str]) -> Package {
+    let mut text = fixture_manifest(name, capabilities);
+    text["runtime"] = "wasm".into();
+    fixture_package(text, hash_byte)
+}
+
+/// A declarative package of the plugin [`plugin_id`]: no `runtime`, and a one-node view for each
+/// contribution, as the host's own interpreter would draw it.
+pub fn declarative_package(hash_byte: u8) -> Package {
+    let mut text = fixture_manifest("clock", &["clock.now"]);
+    for contribution in text["contribution"].as_array_mut().into_iter().flatten() {
+        contribution["view"] = serde_json::json!({
+            "refresh": "next-minute",
+            "nodes": [{ "kind": "text", "text": "hello" }],
+        });
+    }
+    fixture_package(text, hash_byte)
+}
+
+fn fixture_manifest(name: &str, capabilities: &[&str]) -> serde_json::Value {
+    serde_json::json!({
+        "api": "0.1",
+        "publisher": "acme",
+        "id": name,
+        "name": format!("Acme {name}"),
+        "description": "A test plugin",
+        "capabilities": capabilities,
+        "optional_capabilities": ["monitor.usage"],
+        "contribution": [
+            {
+                "local": "face", "kind": "widget", "title": "Face"
+            },
+            {
+                "local": "board", "kind": "panel", "title": "Board"
+            }
+        ],
+        "settings": {
+            "version": 1,
+            "group": [{
+                "title": "General",
+                "field": [{ "key": "city", "label": "City", "kind": "text", "max_len": 40 }]
+            }]
+        }
+    })
+}
+
+fn fixture_package(text: serde_json::Value, hash_byte: u8) -> Package {
+    let dto: ManifestDto = serde_json::from_value(text).expect("the fixture is a manifest");
+    let manifest =
+        Manifest::validate(&dto, &HostContext::default()).expect("the fixture is a valid manifest");
+    Package::new(ContentHash::new([hash_byte; 32]), manifest, Vec::new())
+}
+
+/// A code package of the plugin [`plugin_id`] that sends requests to the address of its `url`
+/// setting with the secret `token` setting, and sets timers.
+pub fn network_package(hash_byte: u8) -> Package {
+    let mut text = fixture_manifest("clock", &["net.request", "timers.set"]);
+    text["runtime"] = "wasm".into();
+    text["settings"]["group"][0]["field"] = serde_json::json!([
+        { "key": "url", "label": "Address", "kind": "text", "max_len": 200 },
+        { "key": "token", "label": "Key", "kind": "secret", "max_len": 100 }
+    ]);
+    text["network"] = serde_json::json!({ "origin_setting": "url", "credential_setting": "token" });
+    fixture_package(text, hash_byte)
+}
+
+/// A network that records every request and answers each with the next scripted answer, or
+/// `200 {}`.
+#[derive(Default)]
+pub struct MemoryNet {
+    state: Mutex<(Vec<NetCall>, VecDeque<NetAnswer>)>,
+}
+
+impl MemoryNet {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    fn state(&self) -> MutexGuard<'_, (Vec<NetCall>, VecDeque<NetAnswer>)> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub fn answer(&self, answer: NetAnswer) {
+        self.state().1.push_back(answer);
+    }
+
+    pub fn calls(&self) -> Vec<NetCall> {
+        self.state().0.clone()
+    }
+}
+
+impl PluginNet for MemoryNet {
+    fn send(&self, call: &NetCall) -> NetAnswer {
+        let mut state = self.state();
+        state.0.push(call.clone());
+        state.1.pop_front().unwrap_or(NetAnswer {
+            status: 200,
+            body: String::from("{}"),
+        })
+    }
+}
+
+/// The id of [`package`].
+pub fn plugin_id() -> PluginId {
+    PluginId::owned("user-acme-clock")
+}
+
+/// An effect outcome as a test compares it: the key and what happened.
+pub type Outcome = (Option<String>, Result<(), nocterm_plugin_api::HostError>);

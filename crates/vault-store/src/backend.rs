@@ -75,6 +75,17 @@ impl Vault {
         self.commit(candidate)?;
         Ok(id)
     }
+    pub fn update(
+        &mut self,
+        id: CredentialId,
+        label: String,
+        binding: CredentialBinding,
+    ) -> Result<(), VaultError> {
+        let candidate = self
+            .state
+            .prepare_update(id, label, binding, entropy::nonces()?)?;
+        self.commit(candidate)
+    }
     pub fn delete(&mut self, id: CredentialId) -> Result<(), VaultError> {
         let candidate = self.state.prepare_delete(id, entropy::nonces()?)?;
         self.commit(candidate)

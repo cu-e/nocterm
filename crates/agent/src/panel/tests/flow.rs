@@ -234,27 +234,13 @@ fn restoration_keeps_descriptor_through_auth_and_falls_back_only_if_unavailable(
             .snapshot(cx)
             .unwrap()
     });
-    f.panel.update(cx, |panel, cx| {
-        panel
-            .current()
-            .unwrap()
-            .update(cx, |thread, cx| thread.release_resources(cx));
-    });
-    cx.run_until_parked();
-    let thread = cx.new(|cx| {
-        crate::thread::AgentThread::restored(
-            saved.clone(),
-            f._directory
-                .deps(f.workspace.downgrade(), f.installation.installed.clone()),
-            cx,
-        )
-    });
+    let thread = restoration::restore_released(&f, saved.clone(), cx);
     f.commands
         .restore_errors
         .lock()
         .unwrap()
         .push_back(AgentError::AuthRequired("Sign in".into()));
-    cx.update(|cx| activate_thread(&thread, &f.installation.installed, cx));
+    cx.update(|cx| activate_thread(&thread, cx));
     cx.run_until_parked();
     cx.update(|cx| {
         assert!(thread.read(cx).session_sign_in_required());
@@ -364,28 +350,14 @@ fn transient_restore_retries_without_starting_an_empty_session(cx: &mut TestAppC
             .snapshot(cx)
             .unwrap()
     });
-    f.panel.update(cx, |panel, cx| {
-        panel
-            .current()
-            .unwrap()
-            .update(cx, |thread, cx| thread.release_resources(cx));
-    });
-    cx.run_until_parked();
-    let thread = cx.new(|cx| {
-        crate::thread::AgentThread::restored(
-            saved.clone(),
-            f._directory
-                .deps(f.workspace.downgrade(), f.installation.installed.clone()),
-            cx,
-        )
-    });
+    let thread = restoration::restore_released(&f, saved.clone(), cx);
     f.commands
         .restore_errors
         .lock()
         .unwrap()
         .push_back(AgentError::Io("temporary".into()));
     let count = f.commands.sessions.load(Ordering::SeqCst);
-    cx.update(|cx| activate_thread(&thread, &f.installation.installed, cx));
+    cx.update(|cx| activate_thread(&thread, cx));
     cx.run_until_parked();
     cx.update(|cx| {
         assert_eq!(

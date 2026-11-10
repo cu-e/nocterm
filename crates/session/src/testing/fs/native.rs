@@ -12,8 +12,12 @@ pub(super) type Observer = Arc<dyn super::LocalRequestObserver>;
 pub(super) struct Controls {
     failures: VecDeque<(FsOperation, PathBuf, LocalFsError)>,
     observer: Option<Observer>,
+    portable_identity: bool,
 }
 impl Controls {
+    pub(super) fn use_portable_identity(&mut self, portable: bool) {
+        self.portable_identity = portable;
+    }
     pub(super) fn fail(&mut self, operation: FsOperation, path: PathBuf, error: LocalFsError) {
         self.failures.push_back((operation, path, error));
     }
@@ -48,6 +52,7 @@ pub(super) fn map(error: FsError, path: &Path) -> LocalFsError {
         FsError::NotFound { .. } => LocalFsError::NotFound(path.to_owned()),
         FsError::AlreadyExists { .. } => LocalFsError::AlreadyExists(path.to_owned()),
         FsError::Unsupported(_) => LocalFsError::InvalidPath(path.to_owned()),
+        FsError::Source(_) => LocalFsError::Unsupported("captured connection source"),
         FsError::Other(_) => LocalFsError::Unsupported("unclassified fake remote error"),
     }
 }
@@ -94,7 +99,11 @@ impl LocalDirectory for Directory {
         self.path.clone()
     }
     fn identity(&self) -> DirectoryIdentity {
-        DirectoryIdentity::native(Arc::as_ptr(&self.shared).addr() as u64, self.id)
+        if lock(&self.shared.native_control).portable_identity {
+            DirectoryIdentity::portable(self.path.clone())
+        } else {
+            DirectoryIdentity::native(Arc::as_ptr(&self.shared).addr() as u64, self.id)
+        }
     }
     fn entries(&self) -> LocalResult<Box<dyn LocalCursor>> {
         before(&self.shared, FsOperation::List, &self.path)?;
@@ -118,6 +127,14 @@ impl LocalDirectory for Directory {
     }
     fn create_child(&self, name: &OsStr) -> LocalResult<Arc<dyn LocalDirectory>> {
         self.descend(name, true)
+    }
+    fn remove_file(&self, name: &OsStr) -> LocalResult<()> {
+        check_name(name)?;
+        let path = self.path.join(name);
+        before(&self.shared, FsOperation::RemoveFile, &path)?;
+        lock(&self.shared.tree)
+            .held_remove(self.id, name, false)
+            .map_err(|error| map(error, &path))
     }
     fn open_source(&self, name: &OsStr) -> LocalResult<Box<dyn LocalSource>> {
         check_name(name)?;

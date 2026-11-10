@@ -1,0 +1,17 @@
+# `cargo deny check advisories`, run by CI ("Repository policy").
+#
+# Every other advisory fails CI: update the crate (`cargo update -p <crate>`).
+# An entry here is an advisory with no fixed release; its reason names where the
+# crate comes from. Remove the entry as soon as an upgrade exists.
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = "rsa (Marvin timing side channel) has no fixed release; russh and ssh-key use it for the user's own SSH keys" },
+    { id = "RUSTSEC-2024-0384", reason = "instant is unmaintained; only the vendored gpui-base and gpui-component use it" },
+    { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; the vendored gpui-component and pulp use it at compile time" },
+    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile is unmaintained, with no vulnerability; reqwest and the PEM loading of connections-io and plugin-net use it" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; font loading in gpui, cosmic-text and usvg uses it" },
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz is unmaintained; text shaping in gpui and usvg uses it" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant is unmaintained; Linux accessibility (accesskit, atspi) uses it" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names is unmaintained; Linux accessibility (accesskit, atspi) uses it" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive is unmaintained; Linux accessibility (accesskit, atspi) uses it" },
+]

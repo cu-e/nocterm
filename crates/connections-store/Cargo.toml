@@ -7,6 +7,10 @@ license-file.workspace = true
 publish = false
 [package.metadata.nocterm]
 layer = "service"
+[features]
+default = []
+test-support = []
+
 [dependencies]
 nocterm-core.workspace = true
 gpui.workspace = true
@@ -16,8 +20,10 @@ nocterm-store.workspace = true
 futures.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+serde_json.workspace = true
 [dev-dependencies]
 nocterm-session = { workspace = true, features = ["test-support"] }
+nocterm-store = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 nocterm-connections-model = { workspace = true, features = ["test-support"] }
 toml.workspace = true

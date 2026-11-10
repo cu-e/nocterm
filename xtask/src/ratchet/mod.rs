@@ -9,7 +9,11 @@ mod includes;
 mod metrics;
 mod source;
 mod symbols;
-pub(crate) use source::test_only;
+pub(crate) use metrics::{io_path, walk_paths};
+#[cfg(test)]
+pub(crate) use source::imports;
+pub(crate) use source::{Module, attributes, flatten, test_only};
+pub(crate) use symbols::Symbols;
 /// Production structs may have at most this many fields.
 pub(crate) const MAX_FIELDS: usize = 15;
 /// A local type may be implemented in at most this many source files.
@@ -37,13 +41,18 @@ mod tests;
 struct Policy {
     #[serde(default)]
     dto: BTreeMap<String, String>,
+    /// Parsed and enforced by the isolation check.
+    #[serde(default, rename = "isolation")]
+    _isolation: serde::de::IgnoredAny,
 }
 
-pub(crate) fn check(root: &Path) -> anyhow::Result<()> {
+pub(crate) fn check(root: &Path) -> anyhow::Result<(Vec<Module>, Symbols)> {
     let policy: Policy = toml::from_str(&fs::read_to_string(
         root.join("xtask/architecture-policy.toml"),
     )?)?;
-    let modules = source::load(root)?;
+    // All no-deps checks in this pass observe the same Cargo workspace snapshot.
+    let metadata = crate::metadata(root)?;
+    let modules = source::load_metadata(&metadata)?;
     let symbols = symbols::Symbols::new(&modules);
     for (name, reason) in &policy.dto {
         if reason.trim().is_empty() || !symbols.contains(name) {
@@ -51,8 +60,8 @@ pub(crate) fn check(root: &Path) -> anyhow::Result<()> {
         }
     }
     let mut counts = metrics::collect(&modules, &symbols, &policy.dto)?;
-    count_complexity(root, &mut counts)?;
-    count_dependencies(root, &mut counts)?;
+    count_complexity(&metadata, &mut counts)?;
+    count_dependencies(&metadata, &mut counts)?;
     let baseline = baseline::Counts::read(&root.join("xtask/baseline.toml"))?;
     baseline.check(&counts)?;
     if let Ok(reference) = std::env::var("NOCTERM_ARCHITECTURE_BASE") {
@@ -69,11 +78,14 @@ pub(crate) fn check(root: &Path) -> anyhow::Result<()> {
         }
     }
     docs::check(root, &symbols)?;
-    Ok(())
+    Ok((modules, symbols))
 }
 
-fn count_complexity(root: &Path, counts: &mut baseline::Counts) -> anyhow::Result<()> {
-    for package in crate::metadata(root)?.packages {
+fn count_complexity(
+    metadata: &crate::Metadata,
+    counts: &mut baseline::Counts,
+) -> anyhow::Result<()> {
+    for package in &metadata.packages {
         let directory = package
             .manifest_path
             .parent()
@@ -100,8 +112,11 @@ fn count_complexity(root: &Path, counts: &mut baseline::Counts) -> anyhow::Resul
     Ok(())
 }
 
-fn count_dependencies(root: &Path, counts: &mut baseline::Counts) -> anyhow::Result<()> {
-    for package in crate::metadata(root)?.packages {
+fn count_dependencies(
+    metadata: &crate::Metadata,
+    counts: &mut baseline::Counts,
+) -> anyhow::Result<()> {
+    for package in &metadata.packages {
         if package
             .metadata
             .pointer("/nocterm/layer")

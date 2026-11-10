@@ -1,3 +1,4 @@
+use crate::test_support::{Toggle, toggle_id};
 use crate::{Item, ItemEvent, LocalTerminal, Workspace};
 use gpui_kit::test::TestWindowExt as _;
 use gpui_kit::{
@@ -13,8 +14,16 @@ use std::{
     path::PathBuf,
     rc::Rc,
 };
+#[path = "tests/local_directory.rs"]
+mod local_directory;
+#[path = "tests/project_tabs.rs"]
+mod project_tabs;
+#[path = "tests/provider_resolution.rs"]
+mod provider_resolution;
+#[path = "tests/test_plugin.rs"]
+pub(super) mod test_plugin;
 
-struct Probe {
+pub(super) struct Probe {
     focus: FocusHandle,
     alternate_focus: Option<FocusHandle>,
     closes: Rc<Cell<usize>>,
@@ -113,6 +122,13 @@ pub(super) fn fixture(cx: &mut TestAppContext) -> (AnyWindowHandle, Entity<Works
 pub(super) fn fixture_with_layout(
     cx: &mut TestAppContext,
 ) -> (AnyWindowHandle, Entity<Workspace>, nocterm_ui::LayoutHandle) {
+    fixture_with_deps(cx, |layout, _| crate::Deps::new(layout))
+}
+/// A window composed with the dependencies `deps` builds from the shared layout memory.
+pub(super) fn fixture_with_deps(
+    cx: &mut TestAppContext,
+    deps: impl FnOnce(nocterm_ui::LayoutHandle, &mut App) -> crate::Deps,
+) -> (AnyWindowHandle, Entity<Workspace>, nocterm_ui::LayoutHandle) {
     cx.update(|cx| {
         gpui_kit::init(cx);
         nocterm_ui::init(
@@ -124,12 +140,10 @@ pub(super) fn fixture_with_layout(
             cx,
         );
         let layout = nocterm_ui::LayoutHandle::in_memory(cx);
+        let deps = deps(layout.clone(), cx);
         let (window, workspace) =
             gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-                cx.new(|cx| {
-                    let deps = crate::Deps::new(layout.clone());
-                    Workspace::new(deps, window, cx)
-                })
+                cx.new(|cx| Workspace::new(deps, window, cx))
             })
             .unwrap();
         window
@@ -138,7 +152,7 @@ pub(super) fn fixture_with_layout(
         (window, workspace, layout)
     })
 }
-fn probe(cx: &mut App, closes: Rc<Cell<usize>>) -> Entity<Probe> {
+pub(super) fn probe(cx: &mut App, closes: Rc<Cell<usize>>) -> Entity<Probe> {
     cx.new(|cx| Probe {
         focus: cx.focus_handle(),
         alternate_focus: None,
@@ -200,14 +214,14 @@ fn moves_splits_and_pane_collapse_preserve_item_identity(cx: &mut TestAppContext
             workspace.add_item(a.clone(), window, cx);
             workspace.add_item(b.clone(), window, cx);
             workspace.move_active_tab(-1, window, cx);
-            assert_eq!(workspace.active_item().unwrap().item_id(), b.entity_id());
+            assert_eq!(workspace.active_item(cx).unwrap().item_id(), b.entity_id());
             workspace.split_active(Placement::Right, window, cx);
             assert_eq!(groups(workspace, cx), 2);
             workspace.focus_pane(-1, window, cx);
-            assert_eq!(workspace.active_item().unwrap().item_id(), a.entity_id());
+            assert_eq!(workspace.active_item(cx).unwrap().item_id(), a.entity_id());
             workspace.close_item(0, window, cx);
             assert_eq!(groups(workspace, cx), 1);
-            assert_eq!(workspace.active_item().unwrap().item_id(), b.entity_id());
+            assert_eq!(workspace.active_item(cx).unwrap().item_id(), b.entity_id());
             assert_eq!(closes.get(), 1);
         });
         window.render_frame(cx);
@@ -232,7 +246,7 @@ fn local_hide_show_preserves_process_and_central_focus_context(cx: &mut TestAppC
             workspace.add_item(central.clone(), window, cx);
             workspace.set_local_terminal(local.clone(), window, cx);
             assert_eq!(
-                workspace.active_item().unwrap().item_id(),
+                workspace.active_item(cx).unwrap().item_id(),
                 central.entity_id()
             );
             assert_eq!(
@@ -258,7 +272,7 @@ fn local_hide_show_preserves_process_and_central_focus_context(cx: &mut TestAppC
             assert!(!workspace.dock_region_present(DockPlacement::Bottom, cx));
             assert_eq!(closes.get(), 1);
             assert_eq!(
-                workspace.active_item().unwrap().item_id(),
+                workspace.active_item(cx).unwrap().item_id(),
                 central.entity_id()
             );
         });
@@ -304,62 +318,8 @@ fn hidden_local_terminal_keeps_height_and_closes_exactly_once(cx: &mut TestAppCo
     assert_eq!(closes.get(), 1);
 }
 
-#[gpui_kit::test]
-fn close_scopes_follow_reordered_pane_tabs_and_do_not_close_other_panes(cx: &mut TestAppContext) {
-    use crate::TabCloseScope;
-    let (window, workspace) = fixture(cx);
-    let closes = Rc::new(Cell::new(0));
-    cx.update_window(window, |_, window, cx| {
-        let a = probe(cx, closes.clone());
-        let b = probe(cx, closes.clone());
-        let c = probe(cx, closes.clone());
-        let isolated = probe(cx, closes.clone());
-        workspace.update(cx, |workspace, cx| {
-            for item in [&a, &b, &c, &isolated] {
-                workspace.add_item(item.clone(), window, cx);
-            }
-            workspace.split_active(Placement::Right, window, cx);
-            workspace.activate_item_by_id(c.entity_id(), window, cx);
-            workspace.move_active_tab(-1, window, cx); // a, c, b
-            workspace.activate_item_by_id(isolated.entity_id(), window, cx);
-            assert_eq!(
-                workspace.tabs_to_close(c.entity_id(), TabCloseScope::Left, cx),
-                [a.entity_id()]
-            );
-            assert_eq!(
-                workspace.tabs_to_close(c.entity_id(), TabCloseScope::Right, cx),
-                [b.entity_id()]
-            );
-            assert_eq!(
-                workspace.tabs_to_close(c.entity_id(), TabCloseScope::Others, cx),
-                [a.entity_id(), b.entity_id()]
-            );
-            workspace.close_tabs(c.entity_id(), TabCloseScope::Others, window, cx);
-            assert_eq!(
-                workspace.active_item().unwrap().item_id(),
-                isolated.entity_id()
-            );
-            assert_eq!(workspace.tabs(cx).len(), 2);
-            assert_eq!(groups(workspace, cx), 2);
-            assert_eq!(closes.get(), 2);
-            let local = probe(cx, Rc::new(Cell::new(0)));
-            workspace.set_local_terminal(local, window, cx);
-            workspace.close_tabs(c.entity_id(), TabCloseScope::All, window, cx);
-            assert!(workspace.items().next().is_none());
-            assert!(workspace.selected_local_terminal(cx).is_some());
-            assert!(workspace.dock_region_present(DockPlacement::Bottom, cx));
-            assert_eq!(closes.get(), 4);
-        });
-        window.render_frame(cx);
-    })
-    .unwrap();
-    cx.run_until_parked();
-    assert_eq!(
-        closes.get(),
-        4,
-        "native deferred removal must not close twice"
-    );
-}
+#[path = "tests/close_scopes.rs"]
+mod close_scopes;
 
 #[gpui_kit::test]
 fn footer_spans_the_window_when_sidebar_is_hidden(cx: &mut TestAppContext) {
@@ -369,9 +329,9 @@ fn footer_spans_the_window_when_sidebar_is_hidden(cx: &mut TestAppContext) {
             workspace.toggle_sidebar(window, cx);
         });
         window.render_frame(cx);
-        let settings = window.find("toggle-local-terminal").bounds();
+        let settings = window.find(toggle_id(Toggle::LocalTerminal)).bounds();
         assert!(window.viewport_size().width - settings.right() < gpui_kit::px(16.));
-        assert!(window.try_find("toggle-local-terminal").is_some());
+        assert!(window.try_find(toggle_id(Toggle::LocalTerminal)).is_some());
         assert!(window.try_find("open-settings").is_none());
     })
     .unwrap();
@@ -405,8 +365,8 @@ fn tab_context_menu_closes_clicked_inactive_tab_and_not_active_tab(cx: &mut Test
     cx.run_until_parked();
     workspace.read_with(cx, |workspace, cx| {
         assert_eq!(workspace.tabs(cx).len(), 1);
-        assert_eq!(workspace.active_item().unwrap().item_id(), b.entity_id());
-        assert_ne!(workspace.active_item().unwrap().item_id(), a.entity_id());
+        assert_eq!(workspace.active_item(cx).unwrap().item_id(), b.entity_id());
+        assert_ne!(workspace.active_item(cx).unwrap().item_id(), a.entity_id());
     });
     assert_eq!(closes.get(), 1);
 }
@@ -471,7 +431,7 @@ fn aliases_accept_cancel_and_empty_restore_without_renaming_items(cx: &mut TestA
         workspace.update(cx, |workspace, cx| {
             assert_eq!(workspace.tabs(cx)[0].alias(), Some("Production"));
             assert_eq!(
-                workspace.items().next().unwrap().tab_title(cx).as_ref(),
+                workspace.items(cx).next().unwrap().tab_title(cx).as_ref(),
                 "Original"
             );
             workspace.rename_active_tab(window, cx);
@@ -613,7 +573,7 @@ fn alternate_child_focus_tracks_split_and_bottom_command_ownership(cx: &mut Test
                 );
                 let expected_central = if item == &local { &b } else { item };
                 assert_eq!(
-                    workspace.active_item().unwrap().item_id(),
+                    workspace.active_item(cx).unwrap().item_id(),
                     expected_central.entity_id(),
                     "bottom focus must preserve the active central pane"
                 );
@@ -663,20 +623,25 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
             workspace.update(cx, |workspace, cx| {
                 workspace.add_item(first.clone(), window, cx);
                 workspace.add_item(second.clone(), window, cx);
-                let active = workspace.connected_session_for_host(&host).unwrap();
+                let active = workspace.connected_session_for_host(&host, cx).unwrap();
                 assert!(
                     Arc::ptr_eq(active.fs.as_ref().unwrap(), &second_fs),
                     "active matching session wins"
                 );
                 workspace.add_item(utility.clone(), window, cx);
                 assert!(workspace.active_session(cx).is_none());
-                let fallback = workspace.connected_session_for_host(&host).unwrap();
+                let fallback = workspace.connected_session_for_host(&host, cx).unwrap();
                 assert!(Arc::ptr_eq(fallback.fs.as_ref().unwrap(), &first_fs));
                 assert!(
                     workspace
-                        .connected_session_for_host(&nocterm_session::HostAddress::direct(
-                            nocterm_session::Target::new("other", "same.test", 22)
-                        ))
+                        .connected_session_for_host(
+                            &nocterm_session::HostAddress::direct(nocterm_session::Target::new(
+                                "other",
+                                "same.test",
+                                22
+                            )),
+                            cx
+                        )
                         .is_none()
                 );
             });
@@ -685,7 +650,7 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
                 assert!(
                     workspace
                         .read(cx)
-                        .connected_session_for_host(&host)
+                        .connected_session_for_host(&host, cx)
                         .is_some()
                 )
             });
@@ -703,7 +668,7 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
     cx.update_window(window, |_, _, cx| {
         let session = workspace
             .read(cx)
-            .connected_session_for_host(&host)
+            .connected_session_for_host(&host, cx)
             .unwrap();
         assert!(
             Arc::ptr_eq(session.fs.as_ref().unwrap(), &second_fs),
@@ -721,7 +686,7 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
         assert!(
             workspace
                 .read(cx)
-                .connected_session_for_host(&host)
+                .connected_session_for_host(&host, cx)
                 .is_none()
         );
         workspace.update(cx, |workspace, cx| {
@@ -744,7 +709,7 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
         assert!(
             workspace
                 .read(cx)
-                .connected_session_for_host(&host)
+                .connected_session_for_host(&host, cx)
                 .is_none(),
             "closed Item removes its cached connected session"
         );
@@ -754,9 +719,6 @@ fn explicit_target_snapshot_survives_utility_tab_and_inactive_disconnect(cx: &mu
 
 #[path = "menu_tests.rs"]
 mod menus;
-#[path = "right_panel_tests.rs"]
-mod right_panel;
-pub(super) use right_panel::RightProbe;
 
 #[gpui_kit::test]
 fn close_hook_metadata_notification_cannot_republish_removed_membership(cx: &mut TestAppContext) {
@@ -788,5 +750,5 @@ fn close_hook_metadata_notification_cannot_republish_removed_membership(cx: &mut
         1,
         "only committed removal publishes membership"
     );
-    cx.update(|cx| assert_eq!(workspace.read(cx).items().count(), 0));
+    cx.update(|cx| assert_eq!(workspace.read(cx).items(cx).count(), 0));
 }

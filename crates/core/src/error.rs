@@ -1,6 +1,21 @@
 //! Immutable shared causes preserve the original concrete error in source chains.
 use std::{error::Error, fmt, sync::Arc};
 
+/// The error and every cause beneath it as one line, outermost first, for a log record.
+///
+/// It prints only what each frame's `Display` shows; callers log chains of typed errors
+/// whose messages carry no secrets.
+pub fn chain(error: &(dyn Error + 'static)) -> String {
+    let mut line = error.to_string();
+    let mut cause = error.source();
+    while let Some(next) = cause {
+        line.push_str(": ");
+        line.push_str(&next.to_string());
+        cause = next.source();
+    }
+    line
+}
+
 /// Cheaply clone an error without requiring the original error to implement Clone.
 ///
 /// The holder is one source frame; the next frame is the original error, including

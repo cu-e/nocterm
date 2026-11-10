@@ -34,7 +34,7 @@ mod execution;
 mod permissions;
 mod reconnects;
 mod session_grants;
-pub use approval_inbox::ToolApprovalCard;
+pub use approval_inbox::{ApprovalToken, ToolApprovalCard};
 pub use permissions::PermissionCard;
 mod queue;
 mod tool_display;
@@ -45,15 +45,17 @@ mod session_driver;
 mod tool_runtime;
 pub use restart::RestartData;
 mod document;
+pub(crate) mod local_payloads;
 mod saved;
 mod sign_in_wait;
+mod title;
 pub use sign_in_wait::SignInWait;
 mod session;
 mod tools;
 /// A chat's title from its name and transcript, as the history shows it.
 #[cfg(any(test, feature = "test-support"))]
 pub fn chat_title(name: Option<&str>, state: &ThreadState) -> String {
-    saved::chat_title(name, state)
+    title::chat_title(name, state)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -80,12 +82,8 @@ impl Restore {
         self.fork
     }
 }
-/// What a forked chat starts from.
-pub struct Fork {
-    chat: nocterm_ai::history::SavedChat,
-    restore: Option<Restore>,
-    attachments: Vec<Attachment>,
-}
+mod fork;
+pub use fork::Fork;
 
 pub struct AgentThread {
     session: session_driver::SessionDriver,
@@ -97,6 +95,7 @@ pub struct AgentThread {
     notice: notice::ThreadNotice,
     deps: crate::chat_deps::ChatDeps,
     bindings: bindings::ThreadBindings,
+    payloads: local_payloads::LocalPayloads,
 }
 
 impl AgentThread {
@@ -115,6 +114,11 @@ impl AgentThread {
     ) {
         self.tools.clear_wait(expected);
         cx.notify();
+    }
+
+    /// The original terminal collection captured when this document was opened.
+    pub fn workspace_seat(&self) -> &crate::seat::Seat {
+        self.deps.seat()
     }
 
     /// Ends background sessions this chat opened that it can no longer use.
@@ -165,6 +169,12 @@ impl AgentThread {
             .is_none_or(|info| info.at_prompt != Some(true) || info.dirty_input || info.alt_screen)
     }
 
+    pub fn tool_approval_tokens(&self) -> Vec<ApprovalToken> {
+        self.tools.approval_tool_tokens()
+    }
+    pub fn tool_approval_call(&self, token: ApprovalToken) -> Option<&nocterm_ai::TerminalCall> {
+        self.tools.approval_tool(token)
+    }
     pub fn tool_cards(&self) -> Vec<ToolApprovalCard> {
         self.tools.approval_tool_cards()
     }
@@ -188,6 +198,7 @@ impl AgentThread {
     }
 
     pub fn context(&mut self, cx: &App) -> String {
+        self.offer_tools(cx);
         let input = self::tool_runtime::resolution::Resolution::observe(self.deps.seat(), cx);
         self.tools
             .context(&input, self.composer.default_attachments(), cx)
@@ -287,7 +298,9 @@ impl AgentThread {
         let owner = self::client(&cx.entity());
         let runtime = self.deps.runtime().clone();
         cx.defer(move |cx| {
-            runtime.request_activation(owner, cx);
+            if let Err(error) = runtime.request_activation(owner.clone(), cx) {
+                owner.emit(crate::runtime::SessionEvent::Failed(error.to_string()), cx);
+            }
         });
         cx.notify();
     }
@@ -323,11 +336,17 @@ impl AgentThread {
     fn on_release(&mut self, id: EntityId, cx: &mut gpui::App) {
         self.cancel_pending();
         self.finalize_tool_displays();
-        let snapshot = self
-            .deps
-            .enabled(cx)
-            .then(|| self.capture_pending(cx))
-            .flatten();
+        let snapshot = if self.deps.enabled(cx) {
+            match self.capture_pending(cx) {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    tracing::warn!(%error, "released chat capture failed");
+                    None
+                }
+            }
+        } else {
+            None
+        };
         self.cancel_execution();
         // The lease releases its connection when it is dropped.
         self.session.release_lease();
@@ -338,7 +357,9 @@ impl AgentThread {
             {
                 tracing::warn!(%error,"released chat admission failed");
             }
-            runtime.unregister_document(id, cx);
+            if let Err(error) = runtime.unregister_document(id, cx) {
+                tracing::warn!(%error, "could not retire released chat document");
+            }
         });
         if let Some(window) = self.bindings.window() {
             let seat = self.deps.seat().clone();
@@ -359,6 +380,7 @@ impl AgentThread {
     fn from_document(
         state: document::ChatDocument,
         deps: crate::chat_deps::ChatDeps,
+        allocation: crate::thread::local_payloads::LocalPayloadAllocation,
         cx: &mut Context<Self>,
     ) -> Self {
         let this = cx.weak_entity();
@@ -372,7 +394,7 @@ impl AgentThread {
         let release = cx.on_release(move |this, cx| this.on_release(id, cx));
         Self {
             session: Default::default(),
-            tools: Default::default(),
+            tools: tool_runtime::ToolRuntime::attached(deps.runtime(), cx),
             archive: Default::default(),
             composer: Default::default(),
             state,
@@ -380,31 +402,44 @@ impl AgentThread {
             notice: Default::default(),
             deps,
             bindings: bindings::ThreadBindings::new(release, authority),
+            payloads: local_payloads::LocalPayloads::new(allocation.0, allocation.1, id),
         }
     }
-    pub fn new(agent_id: String, deps: crate::chat_deps::ChatDeps, cx: &mut Context<Self>) -> Self {
-        let chat = deps.new_chat(agent_id);
+    pub(crate) fn new(
+        chat: nocterm_ai::history::SavedChat,
+        deps: crate::chat_deps::ChatDeps,
+        allocation: crate::thread::local_payloads::LocalPayloadAllocation,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self::from_document(
-            document::ChatDocument::new(chat.agent_id, chat.id, chat.updated),
+            document::ChatDocument::new(
+                chat.header.agent_id.clone(),
+                nocterm_ai::execution_origin::ChatKey::from_header(&chat.header),
+                chat.header.updated,
+            ),
             deps,
+            allocation,
             cx,
         )
     }
-    pub fn archived(
-        summary: nocterm_ai::history::ChatSummary,
+    pub(crate) fn archived(
+        row: nocterm_agent_runtime::CatalogRow,
         deps: crate::chat_deps::ChatDeps,
+        allocation: crate::thread::local_payloads::LocalPayloadAllocation,
         cx: &mut Context<Self>,
     ) -> Self {
+        let summary = row.summary();
         let mut state = document::ChatDocument::new(
             summary.agent_id.clone(),
-            summary.id.clone(),
+            nocterm_ai::execution_origin::ChatKey::from_summary(summary),
             summary.updated,
         );
-        state.archived_clean(&summary);
-        let mut thread = Self::from_document(state, deps, cx);
+        state.archived_clean(summary);
+        let mut thread = Self::from_document(state, deps, allocation, cx);
         thread.config.saved_model(summary.model.clone());
         thread.notice.present("Saved chat".into());
-        thread.archive = archive::Archive::archived(summary);
+        thread.archive = archive::Archive::archived(row);
+        thread.payloads.archive();
         thread
     }
     pub fn is_archived(&self) -> bool {
@@ -421,6 +456,10 @@ impl AgentThread {
     }
     pub fn take_changed_rows(&mut self) -> std::collections::HashSet<usize> {
         self.state.take_changed_rows()
+    }
+    /// Whether a row changed since the last [`Self::take_changed_rows`], without taking it.
+    pub fn has_changed_rows(&self) -> bool {
+        self.state.has_changed_rows()
     }
     pub fn document(&self) -> &document::ChatDocument {
         &self.state
@@ -499,7 +538,6 @@ impl AgentThread {
     pub fn session_accepts_updates(&self) -> bool {
         self.session.accepts_updates()
     }
-    #[cfg(any(test, feature = "test-support"))]
     pub fn session_stopped(&self) -> bool {
         self.session.stopped()
     }

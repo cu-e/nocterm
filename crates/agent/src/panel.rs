@@ -1,28 +1,31 @@
+use crate::chat_host::ChatHostError;
 use crate::thread::AgentThread;
+use account_notice::AccountNotice;
 use gpui_kit::{
     AnyElement, App, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable, SharedString,
-    Subscription, TestSupportExt as _, Window,
-    component::{ActiveTheme as _, v_flex},
-    div,
-    prelude::*,
+    Subscription, TestSupportExt as _, Window, component::v_flex, div, prelude::*,
 };
 use nocterm_ai::model::controls::ConfigCategory;
+use nocterm_plugin_model::Side;
 use nocterm_ui::IconName;
-use nocterm_workspace::{Panel, RightPanel, RightPanelEvent, WorkspaceEvent};
+use nocterm_workspace::{ExpandablePanel, Panel, PanelRequest, WorkspaceEvent};
 
+mod account_notice;
 mod approvals;
 mod attach;
+mod attach_files;
 mod attachments;
 mod bindings;
 mod chat;
+mod chat_servers;
 pub(crate) mod commands;
 mod composer;
+mod composer_frame;
 mod composer_renderer;
 mod composer_view;
 mod entries;
 mod history;
 mod history_column;
-mod image_picker;
 mod image_pipeline;
 mod image_preparation;
 mod images;
@@ -32,8 +35,11 @@ mod menu;
 mod menu_view;
 mod message_actions;
 mod message_list;
+mod message_markdown;
 mod navigation;
 mod notices;
+mod other_windows;
+mod parts;
 mod preview_operation;
 mod queue;
 mod queue_image_preparation;
@@ -68,8 +74,9 @@ pub(crate) struct AgentPanel {
     layout: layout::PanelLayout,
     menus: menu_view::MenuView,
     settings: nocterm_store::SettingsHandle,
+    source: nocterm_workspace::ProjectSurfaceReceipt,
 }
-impl EventEmitter<RightPanelEvent> for AgentPanel {}
+impl EventEmitter<PanelRequest> for AgentPanel {}
 
 #[cfg(test)]
 mod tests;
@@ -89,6 +96,10 @@ impl AgentPanel {
         let layout = layout::PanelLayout::new(layout, cx);
         let messages = message_list::MessageList::new(images, cx);
         let subscriptions = Self::bind_panel(&host, &settings, window, cx);
+        // Whatever the panel redraws for, its cached regions redraw too; thread changes
+        // and typing redraw only their regions instead of notifying the panel.
+        cx.observe_self(|panel, cx| panel.layout.parts().invalidate(cx))
+            .detach();
         let panel = cx.weak_entity();
         window.defer(cx, move |window, cx| {
             let _ = panel.update(cx, |panel, cx| panel.on_runtime_changed(window, cx));
@@ -96,6 +107,7 @@ impl AgentPanel {
         Self {
             focus: cx.focus_handle(),
             chats: crate::roster::ChatRoster::new(host.deps().clone()),
+            source: host.source(),
             host,
             notices: notices::PanelNotices::default(),
             _bindings: bindings::PanelBindings::new(subscriptions),
@@ -132,13 +144,121 @@ impl AgentPanel {
                 let _ = panel.update(cx, |panel, cx| panel.on_runtime_changed(window, cx));
             });
         });
-        [Some(settings), workspace, Some(runtime)]
-            .into_iter()
-            .flatten()
-            .collect()
+        let panel = cx.weak_entity();
+        let holders = host.runtime().observe_holders(cx, move |event, cx| {
+            let event = *event;
+            let _ = cx.update_window(originating_window, |_, window, cx| {
+                let _ = panel.update(cx, |panel, cx| panel.on_holder_event(event, window, cx));
+            });
+        });
+        let hubs = host.hub_agents().map(|access| {
+            let hub = access.hub().cloned();
+            cx.subscribe(access.agents(), move |panel, _, event, cx| {
+                panel.on_hub_agents_event(hub.as_ref(), event, cx);
+            })
+        });
+        [
+            Some(settings),
+            workspace,
+            Some(runtime),
+            Some(holders),
+            hubs,
+        ]
+        .into_iter()
+        .flatten()
+        .collect()
     }
     fn on_runtime_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let retired = self.chats.retire_stale_sources(cx);
+        let removed = !retired.removed().is_empty();
+        if let Some(error) = retired.into_error() {
+            self.notices.set_error(Some(error.to_string()));
+        }
+        let deps = self.host.deps_for_source(self.source);
+        let account_notice = match &deps {
+            Ok(_) => None,
+            Err(ChatHostError::Account(error)) => AccountNotice::from_capture(error),
+            Err(ChatHostError::WindowMismatch) => None,
+        };
+        self.notices.set_account(account_notice);
+        let switched = deps
+            .ok()
+            .is_some_and(|deps| self.chats.switch_context(deps, cx));
+        if switched || removed {
+            self.composer.clear();
+            self.history.switch_context(window, cx);
+            self.sign_ins.clear();
+            self.reset_chat_view(cx);
+        }
+        self.chats.release_quiet_hidden(cx);
+        if !self.settings.setting::<nocterm_ai::AiSettings>(cx).enabled {
+            return;
+        }
+        if account_notice.is_some() {
+            cx.notify();
+            return;
+        }
+        self.load_history(cx);
         self.adopt_saved_chats(window, cx);
+        self.refresh_other_windows(cx);
+        cx.notify();
+    }
+    /// Asks for the history of the captured context; a failure of the account becomes the
+    /// account notice, any other the error line.
+    fn load_history(&mut self, cx: &mut Context<Self>) {
+        if let Err(error) = self.chats.host().runtime().ensure_history(cx) {
+            match AccountNotice::from_catalog(&error) {
+                Some(notice) => self.notices.set_account(Some(notice)),
+                None => self.notices.set_error(Some(error.to_string())),
+            }
+        }
+    }
+    fn select_context(
+        &mut self,
+        source: nocterm_workspace::ProjectSurfaceReceipt,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if source == self.source {
+            return;
+        }
+        let deps = match self.host.deps_for_source(source) {
+            Ok(deps) => deps,
+            Err(error) => {
+                match &error {
+                    ChatHostError::Account(cause) => match AccountNotice::from_capture(cause) {
+                        Some(notice) => self.notices.set_account(Some(notice)),
+                        None => self.notices.set_error(Some(error.to_string())),
+                    },
+                    ChatHostError::WindowMismatch => {
+                        self.notices.set_error(Some(error.to_string()));
+                    }
+                }
+                cx.notify();
+                return;
+            }
+        };
+        self.notices.set_account(None);
+        self.leave_composer(cx);
+        self.chats.switch_context(deps, cx);
+        self.source = source;
+        self.composer.clear();
+        self.history.switch_context(window, cx);
+        self.sign_ins.clear();
+        self.notices.set_error(None);
+        self.reset_chat_view(cx);
+        if let Some(thread) = self.current() {
+            let binding = self.composer.bind_loading(thread.entity_id(), cx);
+            let archived = thread.read(cx).is_archived();
+            let draft = thread.read(cx).draft_text().unwrap_or_default().to_owned();
+            self.composer
+                .finish_loading(&binding, draft, archived, window, cx);
+        } else {
+            self.composer.set_text("", window, cx);
+        }
+        self.load_history(cx);
+        self.adopt_saved_chats(window, cx);
+        self.sync_approval_attention(window, cx);
         cx.notify();
     }
     fn on_workspace_event(
@@ -147,14 +267,22 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if event == WorkspaceEvent::RightPanelVisibilityChanged {
+        if event == WorkspaceEvent::ContextChanged {
+            // This synchronous committed event captures the original source once.
+            // Async history/runtime callbacks never consult current UI selection.
+            if let Some(workspace) = self.host.workspace().upgrade() {
+                let source = workspace.read(cx).context_source(cx);
+                self.select_context(source, window, cx);
+            }
+        }
+        if event == WorkspaceEvent::PanelVisibilityChanged {
             let visible = self.history_is_visible(cx);
             self.history.set_visible(visible, cx);
             if !self
                 .host
                 .workspace()
                 .upgrade()
-                .is_some_and(|workspace| workspace.read(cx).right_panel_is_open())
+                .is_some_and(|workspace| workspace.read(cx).panel_is_open(&crate::plugin::CHATS.id))
             {
                 self.sync_composer_draft(cx);
                 if let Some(thread) = self.current() {
@@ -173,7 +301,7 @@ impl AgentPanel {
         let workspace = self.host.workspace().clone();
         window.defer(cx, move |window, cx| {
             let _ = workspace.update(cx, |workspace, cx| {
-                workspace.set_right_panel_available(enabled, window, cx)
+                workspace.set_panel_available(&crate::plugin::CHATS.id, enabled, window, cx)
             });
         });
         cx.notify();
@@ -195,12 +323,12 @@ impl AgentPanel {
     }
     fn history_is_visible(&self, cx: &App) -> bool {
         self.layout.history()
-            && !self.chats.is_empty()
+            && (!self.chats.is_empty() || !self.history.others().listed(cx).is_empty())
             && self
                 .host
                 .workspace()
                 .upgrade()
-                .is_some_and(|workspace| workspace.read(cx).right_panel_is_open())
+                .is_some_and(|workspace| workspace.read(cx).panel_is_open(&crate::plugin::CHATS.id))
     }
     fn on_history_split_settling(
         &mut self,
@@ -235,6 +363,23 @@ impl AgentPanel {
     pub(crate) fn current(&self) -> Option<Entity<AgentThread>> {
         self.chats.current()
     }
+    /// The hub's agents or chats changed: a hub window lists the hub's chats again and offers
+    /// the agents it lists now.
+    fn on_hub_agents_event(
+        &mut self,
+        window_hub: Option<&nocterm_hubs_model::HubId>,
+        event: &nocterm_hub_agents::HubAgentsEvent,
+        cx: &mut Context<Self>,
+    ) {
+        use nocterm_hub_agents::HubAgentsEvent;
+        match event {
+            HubAgentsEvent::ChatsChanged(hub) if Some(hub) == window_hub => {
+                self.host.runtime().reload_history(cx);
+            }
+            HubAgentsEvent::Changed(hub) if Some(hub) == window_hub => cx.notify(),
+            _ => {}
+        }
+    }
     #[cfg(test)]
     pub(crate) fn chat_documents(&self) -> impl ExactSizeIterator<Item = &Entity<AgentThread>> {
         self.chats.iter()
@@ -251,7 +396,7 @@ impl AgentPanel {
     /// The agent `NewThreadWithLastAgent` starts: the last one used, else
     /// the default, else the first enabled one.
     fn last_agent(&self, cx: &App) -> Option<String> {
-        let agents = self.host.agents().available(cx);
+        let agents = self.host.window_agents(cx);
         let known = |id: &&String| agents.get(id).is_some();
         self.host
             .runtime()
@@ -269,8 +414,9 @@ impl AgentPanel {
             .or_else(|| agents.iter().next().map(|agent| agent.id().to_owned()))
     }
     pub(super) fn set_history(&mut self, open: bool, cx: &mut Context<Self>) {
-        if let Some(width) = self.layout.set_history(open, self.current().is_some(), cx) {
-            cx.emit(RightPanelEvent::Widen(width));
+        let chat = self.current().is_some();
+        if let Some(width) = self.layout.set_history(open, chat, cx) {
+            cx.emit(PanelRequest::Widen(width));
         }
         cx.notify();
     }
@@ -280,17 +426,51 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let history = history::HistoryProjection::render(
-            &self.chats,
-            &self.history,
-            self.host.agents(),
-            self.host.timestamp(),
-            cx,
-        );
+        let history = self.layout.parts().history().into_any_element();
         self.layout.render_split(chat, history, window, cx)
+    }
+    /// Draws one region of the panel for its view in [`parts`].
+    fn render_part(
+        &mut self,
+        kind: parts::PartKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        match kind {
+            parts::PartKind::Transcript => self.render_transcript_part(cx),
+            parts::PartKind::History => {
+                let stamp = history::HistoryProjection::stamp(&self.chats, &self.history, cx);
+                self.layout.parts_mut().drew_history(stamp);
+                let hub_window = self
+                    .host
+                    .hub_agents()
+                    .is_some_and(|access| access.hub().is_some());
+                let history = history::HistoryProjection::render(
+                    &self.chats,
+                    &self.history,
+                    (self.host.agents(), hub_window),
+                    self.host.timestamp(),
+                    cx,
+                );
+                div()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .child(history)
+                    .into_any_element()
+            }
+            parts::PartKind::Footer => self.render_footer(window, cx),
+        }
     }
     fn toggle_history(&mut self, cx: &mut Context<Self>) {
         self.set_history(!self.layout.history(), cx);
+    }
+    /// Lists the chats of `side` in the history of a hub window.
+    fn show_history_side(&mut self, side: history_column::HistorySide, cx: &mut Context<Self>) {
+        if self.history.show_side(side) {
+            self.layout.parts().invalidate(cx);
+            cx.notify();
+        }
     }
     fn new_thread_with_last(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(id) = self.last_agent(cx) {
@@ -318,19 +498,22 @@ impl AgentPanel {
 impl AgentPanel {
     pub(super) fn render_menu(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let kind = self.menus.current().cloned();
-        let attachment = matches!(kind, Some(MenuKind::Context)).then(|| {
-            attach::AttachmentMenuRenderer::render_attach_menu(
-                self.current(),
+        let attachment = matches!(kind, Some(MenuKind::Context)).then(|| match self.current() {
+            Some(thread) if chat_servers::takes_servers(thread.read(cx)) => {
+                chat_servers::ChatServersRenderer::render_menu(&thread, cx)
+            }
+            thread => attach::AttachmentMenuRenderer::render_attach_menu(
+                thread,
                 self.host.workspace().clone(),
                 cx,
-            )
+            ),
         });
         let frame = menu::MenuFrame::new(
             kind,
             self.current(),
             self.menus.query_input(),
             self.menus.query(cx).to_lowercase(),
-            self.host.agents().available(cx),
+            self.host.window_agents(cx),
             self.last_agent(cx),
             self.focus.clone(),
             self.host.runtime().favorites(cx).clone(),
@@ -362,15 +545,21 @@ impl Panel for AgentPanel {
     fn icon(&self, _: &App) -> IconName {
         IconName::Bot
     }
+    fn attention(&self, cx: &App) -> Option<SharedString> {
+        self.chats
+            .iter()
+            .any(|thread| thread.read(cx).has_pending_approvals())
+            .then(|| "An agent needs permission to continue.".into())
+    }
 }
 
-impl RightPanel for AgentPanel {
-    fn set_maximized(&mut self, maximized: bool, cx: &mut Context<Self>) {
-        self.layout.set_maximized(maximized);
+impl ExpandablePanel for AgentPanel {
+    fn set_expanded(&mut self, expanded: bool, cx: &mut Context<Self>) {
+        self.layout.set_maximized(expanded);
         cx.notify();
     }
-    fn set_docked_left(&mut self, left: bool, cx: &mut Context<Self>) {
-        self.layout.set_docked_left(left);
+    fn set_side(&mut self, side: Side, cx: &mut Context<Self>) {
+        self.layout.set_docked_left(side == Side::Left);
         cx.notify();
     }
 }
@@ -392,20 +581,25 @@ impl Render for AgentPanel {
             cx,
         );
         let mut body = shell::ShellRenderer::body(&self.focus, cx).child(header);
-        body = match current {
-            None => body.child(history::HistoryProjection::render(
-                &self.chats,
-                &self.history,
-                self.host.agents(),
-                self.host.timestamp(),
-                cx,
-            )),
-            Some(thread) if self.layout.history() => {
-                let chat = self.render_chat(thread, window, cx);
+        body = if current.is_none() {
+            body.child(self.layout.parts().history())
+        } else {
+            let chat = v_flex()
+                .size_full()
+                .min_w_0()
+                .min_h_0()
+                .child(self.layout.parts().transcript())
+                .child(self.layout.parts().footer())
+                .into_any_element();
+            if self.layout.history() {
                 body.child(self.render_split(chat, window, cx))
+            } else {
+                body.child(chat)
             }
-            Some(thread) => body.child(self.render_chat(thread, window, cx)),
         };
+        if let Some(notice) = self.notices.account() {
+            body = body.child(notice.strip(cx));
+        }
         if let Some(error) = self.notices.error() {
             body = body.child(
                 shell::ShellRenderer::error(error.to_owned(), cx)

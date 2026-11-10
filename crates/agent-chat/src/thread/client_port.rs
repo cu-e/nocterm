@@ -14,6 +14,9 @@ impl SessionClient for ThreadClient {
     fn id(&self) -> EntityId {
         self.0.entity_id()
     }
+    fn chat(&self) -> Option<gpui::AnyWeakEntity> {
+        Some(self.0.clone().into())
+    }
     fn alive(&self) -> bool {
         self.0.upgrade().is_some()
     }
@@ -25,31 +28,66 @@ impl SessionClient for ThreadClient {
     fn state(&self, cx: &App) -> Option<ClientState> {
         let thread = self.0.upgrade()?;
         let thread = thread.read(cx);
-        Some(ClientState {
-            chat_id: thread.state.chat_id().to_owned(),
-            workdir: thread
-                .session
-                .restore()
-                .as_ref()
-                .filter(|restore| {
-                    !thread.state.entries().is_empty() && restore.workdir.is_absolute()
-                })
-                .map(|restore| restore.workdir.clone()),
-            agent_id: thread.state.agent_id().to_owned(),
-            session: thread.session().clone(),
-            busy: thread.session_busy(),
-            leased: thread.session.leased(),
-            activation_pending: thread.session.queued(),
-            closing: thread.session.closing(),
-            shown: thread.session.shown(),
-        })
+        let resume = thread
+            .session
+            .restore()
+            .as_ref()
+            .filter(|restore| !thread.state.entries().is_empty() && restore.workdir.is_absolute())
+            .map(|restore| restore.workdir.clone());
+        let origin =
+            nocterm_ai::execution_origin::ExecutionOrigin::new(thread.state.key().clone(), resume);
+        Some(ClientState::new(
+            origin,
+            thread.state.agent_id().to_owned(),
+            thread.session().clone(),
+            thread.session_busy(),
+            thread.session.leased(),
+            thread.session.queued(),
+            thread.session.closing(),
+            thread.session.shown(),
+        ))
     }
-    fn snapshot(&self, cx: &App) -> Option<Arc<nocterm_ai::history::SharedChat>> {
-        self.0.upgrade()?.read(cx).flush_snapshot(cx)
+    fn history_usage(&self, cx: &App) -> Option<nocterm_agent_runtime::HistoryUsage> {
+        let thread = self.0.upgrade()?;
+        let thread = thread.read(cx);
+        Some(nocterm_agent_runtime::HistoryUsage::new(
+            thread.resident_history_bytes(),
+            thread.document().updated(),
+            thread.session.shown(),
+        ))
     }
-    fn capture(&self, cx: &mut App) -> Option<(Arc<nocterm_ai::history::SharedChat>, u64)> {
+    fn history_payload(&self, cx: &App) -> Option<u64> {
+        let thread = self.0.upgrade()?;
+        let thread = thread.read(cx);
+        (!thread.is_archived() && thread.history_eviction_gate().is_permitted())
+            .then(|| thread.payloads.order())
+            .flatten()
+    }
+    fn evict_history(&self, cx: &mut App) -> bool {
         self.0
-            .upgrade()?
-            .update(cx, |thread, cx| thread.capture_pending(cx))
+            .upgrade()
+            .is_some_and(|thread| thread.update(cx, |thread, cx| thread.evict_history(cx)))
+    }
+    fn snapshot(
+        &self,
+        cx: &mut App,
+    ) -> Result<Option<Arc<nocterm_ai::history::SharedChat>>, nocterm_ai::storage::AgentStorageError>
+    {
+        let Some(thread) = self.0.upgrade() else {
+            return Ok(None);
+        };
+        thread.update(cx, |thread, cx| thread.flush_snapshot(cx))
+    }
+    fn capture(
+        &self,
+        cx: &mut App,
+    ) -> Result<
+        Option<(Arc<nocterm_ai::history::SharedChat>, u64)>,
+        nocterm_ai::storage::AgentStorageError,
+    > {
+        let Some(thread) = self.0.upgrade() else {
+            return Ok(None);
+        };
+        thread.update(cx, |thread, cx| thread.capture_pending(cx))
     }
 }

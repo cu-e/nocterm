@@ -120,6 +120,9 @@ pub enum ConfigCategory {
     Model,
     ModelConfig,
     ThoughtLevel,
+    /// A server an agent that runs elsewhere may sign in to during the chat: a flag, on while
+    /// the server is attached to the chat. The option's description is the server's address.
+    Server,
     Other(String),
 }
 

@@ -15,8 +15,10 @@ fn show_panel(
     panel: &Entity<FilesPanel>,
     cx: &mut TestAppContext,
 ) {
-    cx.update_window(handle, |_, _, cx| {
-        workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
+    cx.update_window(handle, |_, window, cx| {
+        workspace.update(cx, |workspace, cx| {
+            add_explorer(workspace, panel.clone(), window, cx)
+        });
     })
     .unwrap();
     cx.simulate_window_resize(handle, gpui_kit::size(px(1400.), px(1000.)));

@@ -131,6 +131,11 @@ impl Paths {
         self.config_dir.join("snippets.toml")
     }
 
+    /// Saved workspace folder definitions.
+    pub fn projects_file(&self) -> PathBuf {
+        self.state_dir.join("workspaces.json")
+    }
+
     /// Host keys the user accepted from inside nocterm.
     pub fn known_hosts_file(&self) -> PathBuf {
         self.config_dir.join("known_hosts")

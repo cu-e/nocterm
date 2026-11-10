@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Identifies a saved connection across renames and edits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ProfileId(Uuid);
 
@@ -193,6 +193,33 @@ impl Profiles {
             }
         }
         self.forget_group(group);
+    }
+
+    /// Moves the `members` that are in folder `from` to folder `to` (`None`: the top
+    /// level); connections of the folder that are not listed keep it.
+    pub fn regroup(&mut self, members: &[ProfileId], from: &str, to: Option<&str>) {
+        if to == Some(from) {
+            return;
+        }
+        for profile in &mut self.list {
+            if profile.group.as_deref() == Some(from) && members.contains(&profile.id) {
+                profile.group = to.map(str::to_owned);
+            }
+        }
+        self.forget_group(from);
+        self.remember_group(to);
+    }
+
+    /// Deletes the `members` that are in `group`, returning the removed ones.
+    pub fn remove_members(&mut self, group: &str, members: &[ProfileId]) -> Vec<Profile> {
+        let (removed, kept) = std::mem::take(&mut self.list)
+            .into_iter()
+            .partition(|profile| {
+                profile.group.as_deref() == Some(group) && members.contains(&profile.id)
+            });
+        self.list = kept;
+        self.forget_group(group);
+        removed
     }
 
     /// Deletes the folder and its connections, returning the removed ones.

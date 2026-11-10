@@ -1,34 +1,46 @@
 //! SSH transport: opens [`Session`]s over SSH, browses the host over SFTP and
 //! runs programs on it beside the shell.
 //!
-//! This is the only crate that knows the SSH protocol exists. It implements
+//! This adapter owns the SSH transport protocol. It implements
 //! [`Transport`] from `nocterm-session`, and everything it has to say to the
 //! rest of the application travels as that crate's events and prompts.
 //!
 //! The transport owns a small Tokio runtime, so callers need none: a session
 //! is driven entirely through the runtime-agnostic channels of [`Session`].
 //!
-//! Owns: SSH authentication, host-key policy, proxy tunnels, jump-host routes, SFTP and remote execution.
-//! Does not own: profiles, credential storage, terminal emulation or session views.
+//! Owns: SSH authentication (including keys kept in the vault), entropy and file reads for new vault keys, host-key policy, proxy tunnels and the bridge from a relay's frame channels to a stream, jump-host routes, SFTP and remote execution.
+//! Also owns the edit of the user's `authorized_keys` through an open session's SFTP (`authorized_keys`).
+//! Does not own: profiles, credential storage, the rules of key text (`nocterm-ssh-keys`), terminal emulation or session views.
 //! Ports provided: `Transport`, `RemoteFs`, `HostExec` from `nocterm-session`.
+//! Ports used: `RelayDialer`, supplied by the application through `SshTransport::with_relay`.
 //! Settings section: consumes session SSH options. Globals: none.
 //! Invariants: bounded session channels and independent closure interrupt blocked I/O;
-//! the proxy carries only the first connection of a route, and each jump host is
-//! verified and authenticated before a forward is opened through it.
+//! the proxy or relay carries only the first connection of a route, the host key checked is
+//! always the destination's, and each jump host is verified and authenticated before a
+//! forward is opened through it.
+
+//! Captured source and independent closure guard the actual native stream polls,
+//! SFTP/exec workers and retained outputs. Already admitted effects cannot be undone.
 
 mod auth;
+pub mod authorized_keys;
 mod connection;
+mod connection_relay;
 mod exec;
 mod file;
 mod host_keys;
+pub mod keys;
 mod login;
 mod proxy;
 mod route;
 mod sftp;
+mod source_stream;
 
 use std::{path::PathBuf, sync::Arc};
 
-use nocterm_session::{ConnectRequest, MAX_JUMP_HOSTS, Session, SessionError, Transport};
+use nocterm_session::{
+    ConnectRequest, MAX_JUMP_HOSTS, RelayDialer, Session, SessionError, Transport,
+};
 use tokio::runtime::{Builder, Runtime};
 
 /// Threads serving every SSH connection of the application.
@@ -56,6 +68,7 @@ pub struct SshTransport {
     // `None` only while the transport is being dropped.
     runtime: Option<Runtime>,
     config: Arc<SshConfig>,
+    relay: Option<Arc<dyn RelayDialer>>,
 }
 
 impl SshTransport {
@@ -68,12 +81,27 @@ impl SshTransport {
         Ok(Self {
             runtime: Some(runtime),
             config: Arc::new(config),
+            relay: None,
         })
     }
-}
 
-impl Transport for SshTransport {
-    fn open(&self, request: ConnectRequest) -> Session {
+    /// Lets sessions whose proxy is a hub open their first stream through `relay`.
+    ///
+    /// Without one, such a session fails to connect. The relay only supplies the byte
+    /// stream: host keys and sign-in are still checked here, against the destination.
+    #[must_use]
+    pub fn with_relay(mut self, relay: Arc<dyn RelayDialer>) -> Self {
+        self.relay = Some(relay);
+        self
+    }
+    fn start(
+        &self,
+        request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+    ) -> Session {
+        if let Err(error) = options.source().check() {
+            return Session::failed(error.into());
+        }
         let Some(runtime) = &self.runtime else {
             return Session::failed(SessionError::Other("the SSH transport has stopped".into()));
         };
@@ -86,18 +114,41 @@ impl Transport for SshTransport {
                 limit: MAX_JUMP_HOSTS,
             });
         }
-        let (fs, fs_requests) = sftp::channel();
-        let (exec, exec_requests) = exec::channel(runtime.handle().clone());
-        let (session, driver) = nocterm_session::channel(Some(Arc::new(fs)));
+        let relay = match connection_relay::ConnectionRelay::capture(
+            &request,
+            &options,
+            self.relay.clone(),
+        ) {
+            Ok(captured) => captured.into_port(),
+            Err(error) => return Session::failed(error),
+        };
+        let source = options.source().clone();
+        let (fs, fs_requests) = sftp::channel(source.clone());
+        let (exec, exec_requests) = exec::channel(runtime.handle().clone(), source.clone());
+        let (session, driver) = nocterm_session::channel_with_source(Some(Arc::new(fs)), source);
         let session = session.with_exec(Arc::new(exec));
         runtime.spawn(connection::run(
             self.config.clone(),
+            relay,
             request,
             driver,
             fs_requests,
             exec_requests,
         ));
         session
+    }
+}
+
+impl Transport for SshTransport {
+    fn open(&self, request: ConnectRequest) -> Session {
+        self.open_with(request, nocterm_session::ConnectionOpenOptions::default())
+    }
+    fn open_with(
+        &self,
+        request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+    ) -> Session {
+        self.start(request, options)
     }
 }
 

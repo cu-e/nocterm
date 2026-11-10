@@ -211,7 +211,7 @@ fn command_routing_prefers_focus_and_rejects_unsupported_commands(cx: &mut TestA
             window.focus(&workspace.focus_handle(cx), cx);
             assert_eq!(
                 workspace.command_item(window, cx).unwrap().item_id(),
-                workspace.active_item().unwrap().item_id(),
+                workspace.active_item(cx).unwrap().item_id(),
                 "focus outside Item containers falls back to the active central pane"
             );
         });
@@ -440,4 +440,79 @@ fn native_menu_keyboard_navigation_keeps_the_original_item(cx: &mut TestAppConte
         item.read_with(cx, |item, _| item.executed.borrow().clone()),
         vec![Command::Find]
     );
+}
+
+/// A stand-in for a feature's title-bar dropdown.
+struct EnvironmentProbe;
+impl Render for EnvironmentProbe {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().w(gpui_kit::px(80.)).h(gpui_kit::px(16.))
+    }
+}
+
+#[gpui_kit::test]
+fn title_bar_leaves_the_environment_slot_empty_until_a_menu_is_installed(cx: &mut TestAppContext) {
+    let (handle, _workspace) = fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("workspace-environment").is_none());
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn installed_environment_menu_is_drawn_in_the_title_bar_before_the_new_tab_button(
+    cx: &mut TestAppContext,
+) {
+    let (handle, workspace) = fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        let menu = cx.new(|_| EnvironmentProbe);
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_environment_menu(menu, cx);
+        });
+        window.render_frame(cx);
+        let environment = window.find("workspace-environment").bounds();
+        let new_tab = window.find("new-tab").bounds();
+        assert!(environment.size.width > gpui_kit::px(0.));
+        assert!(
+            environment.right() <= new_tab.left(),
+            "the environment menu sits to the left of the new tab button"
+        );
+    })
+    .unwrap();
+}
+
+#[gpui_kit::test]
+fn installed_environment_menu_sits_right_after_the_last_application_menu(cx: &mut TestAppContext) {
+    let (handle, workspace) = fixture(cx);
+    cx.update_window(handle, |_, window, cx| {
+        let menu = cx.new(|_| EnvironmentProbe);
+        workspace.update(cx, |workspace, cx| {
+            workspace.set_menu_builder(
+                |_, _, _| {
+                    vec![
+                        gpui_kit::Menu::new("Edit")
+                            .items([gpui_kit::MenuItem::action("Copy", crate::EditCopy)]),
+                        gpui_kit::Menu::new("Help")
+                            .items([gpui_kit::MenuItem::action("Find", crate::Find)]),
+                    ]
+                },
+                window,
+                cx,
+            );
+            workspace.set_environment_menu(menu, cx);
+        });
+        window.render_frame(cx);
+        let help = window
+            .within("app-menu-bar")
+            .within(1usize)
+            .find("menu")
+            .bounds();
+        let environment = window.find("workspace-environment").bounds();
+        assert!(
+            help.right() <= environment.left(),
+            "the environment menu follows the Help menu"
+        );
+    })
+    .unwrap();
 }

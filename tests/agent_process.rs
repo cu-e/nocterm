@@ -120,6 +120,7 @@ fn request(dir: &Path) -> ConnectRequest {
             args: vec![script.to_string_lossy().into_owned(), "$LITERAL".into()],
             env: BTreeMap::from([("EXPECTED".into(), "forwarded".into())]),
             inherit_env: Vec::new(),
+            hub: None,
         },
         working_directory: dir.to_owned(),
         terminal_auth: false,

@@ -1,14 +1,14 @@
 use crate::{
-    reservations,
+    pipeline, reservations,
     scheduler::{DownloadJob, FileOutcome, Work},
 };
 use nocterm_session::{
-    fs::{RemoteDownload, UploadMode},
+    fs::UploadMode,
     local_fs::{LocalFsError, LocalStage, PublicationOutcome},
 };
 use nocterm_transfers::{
-    CollisionPolicy, LimitKind, StreamBudget, TransferCause, TransferEvent, TransferIssue,
-    TransferOperation, TransferPath,
+    CollisionPolicy, LimitKind, TransferCause, TransferEvent, TransferIssue, TransferOperation,
+    TransferPath,
 };
 use std::ffi::OsString;
 
@@ -26,13 +26,17 @@ impl StageWriter {
                 "consumed stage",
             )))
     }
-    async fn write(&mut self, work: &Work, bytes: Vec<u8>) -> Result<(), TransferCause> {
+    async fn write_batch(
+        &mut self,
+        work: &Work,
+        chunks: Vec<Vec<u8>>,
+    ) -> Result<(), TransferCause> {
         let mut stage = self.take()?;
         let (stage, result) = work
             .state()
             .blocking()
             .call(work.cancel(), move || {
-                let result = stage.write(&bytes);
+                let result = chunks.iter().try_for_each(|chunk| stage.write(chunk));
                 Ok((stage, result))
             })
             .await?;
@@ -124,7 +128,9 @@ async fn receive(
     let mut reader = work
         .remote(work.batch().request().fs().download(job.remote()))
         .await?;
-    let result = stream(work, job, stage, reader.as_mut()).await;
+    let result = pipeline::copy(work, job.expected(), reader.as_mut(), stage)
+        .await
+        .map_err(|(_, cause)| cause);
     let closed = reader.close().await.map_err(TransferCause::from);
     match result {
         Ok(()) => {
@@ -143,29 +149,16 @@ async fn receive(
         }
     }
 }
-async fn stream(
-    work: &Work,
-    job: &DownloadJob,
-    stage: &mut StageWriter,
-    reader: &mut dyn RemoteDownload,
-) -> Result<(), TransferCause> {
-    let limits = work.state().limits().stream();
-    let mut budget = StreamBudget::new(limits, job.expected());
-    loop {
-        let bytes = work.remote(reader.read(limits.chunk())).await?;
-        if bytes.is_empty() {
-            break;
-        }
-        budget.accept_chunk(bytes.len())?;
-        let length = bytes.len();
-        stage.write(work, bytes).await?;
-        budget.acknowledged(length)?;
-        work.batch().event(TransferEvent::Acknowledged {
-            bytes: length as u64,
-        });
+impl pipeline::BatchWriter for StageWriter {
+    async fn write_batch(
+        &mut self,
+        work: &Work,
+        chunks: Vec<Vec<u8>>,
+    ) -> Result<(), TransferCause> {
+        StageWriter::write_batch(self, work, chunks).await
     }
-    budget.finish()
 }
+
 async fn publish(
     work: &Work,
     job: &DownloadJob,

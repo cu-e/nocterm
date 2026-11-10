@@ -6,7 +6,8 @@ use crate::{
     TerminalInfo, TerminalState, TerminalStatus, Workspace,
 };
 use gpui_kit::{
-    App, Context, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity, Window, div, prelude::*,
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, WeakEntity,
+    Window, div, prelude::*,
 };
 use nocterm_session::RemoteFs;
 use std::{rc::Rc, sync::Arc};
@@ -16,7 +17,10 @@ pub struct SessionProbe {
     spec: SessionSpec,
     connected: bool,
     fs: Option<Arc<dyn RemoteFs>>,
+    exec: Option<Arc<dyn nocterm_session::HostExec>>,
     generation: u64,
+    parent: Option<Rc<dyn nocterm_workspace_ports::ProjectParentCapture>>,
+    title_reads: std::cell::Cell<usize>,
 }
 #[derive(Debug, thiserror::Error)]
 #[error("test session generation is exhausted")]
@@ -31,13 +35,46 @@ impl SessionProbe {
         fs: Option<Arc<dyn RemoteFs>>,
         cx: &mut Context<Workspace>,
     ) -> Entity<Self> {
+        Self::from_app(spec, connected, fs, cx)
+    }
+    /// Compose the same Item from a narrow opening port, without a Workspace borrow.
+    pub fn from_app(
+        spec: SessionSpec,
+        connected: bool,
+        fs: Option<Arc<dyn RemoteFs>>,
+        cx: &mut App,
+    ) -> Entity<Self> {
         cx.new(|cx| Self {
             focus: cx.focus_handle(),
             spec,
             connected,
             fs,
+            exec: None,
             generation: 0,
+            parent: None,
+            title_reads: Default::default(),
         })
+    }
+    /// How many times the tab strip asked for this Item's title: once per drawn tab bar.
+    pub fn title_reads(&self) -> usize {
+        self.title_reads.get()
+    }
+    /// Supply structured execution without a native session in feature tests.
+    pub fn set_executor(
+        &mut self,
+        exec: Arc<dyn nocterm_session::HostExec>,
+        cx: &mut Context<Self>,
+    ) {
+        self.exec = Some(exec);
+        cx.emit(ItemEvent::Changed);
+    }
+    pub fn set_project_parent(
+        &mut self,
+        parent: Rc<dyn nocterm_workspace_ports::ProjectParentCapture>,
+        cx: &mut Context<Self>,
+    ) {
+        self.parent = Some(parent);
+        cx.emit(ItemEvent::Changed);
     }
     pub fn set_connected(
         &mut self,
@@ -96,12 +133,14 @@ impl Item for SessionProbe {
             .expect("test session generation is available");
     }
     fn tab_title(&self, _: &App) -> gpui_kit::SharedString {
+        self.title_reads.set(self.title_reads.get() + 1);
         self.spec.title.clone()
     }
     fn session(&self, _: &App) -> Option<SessionContext> {
         Some(
             SessionContext::new(self.spec.target.clone(), self.fs.clone(), self.connected)
-                .with_via(self.spec.address().via),
+                .with_via(self.spec.address().via)
+                .with_exec(self.exec.clone()),
         )
     }
     fn session_spec(&self, _: &App) -> Option<SessionSpec> {
@@ -109,17 +148,88 @@ impl Item for SessionProbe {
     }
     fn terminal_capabilities(&self, owner: WeakEntity<Self>) -> Option<TerminalCapabilities> {
         let state = Rc::new(ProbeState { owner });
-        Some(TerminalCapabilities::new(state.clone()).with_fact_session(state))
+        Some(
+            TerminalCapabilities::new(state.clone())
+                .with_fact_session(state.clone())
+                .with_project_parent(state.clone())
+                .with_execution(state),
+        )
+    }
+}
+impl crate::LocalTerminal for SessionProbe {
+    fn cwd(&self, _: &App) -> Option<std::path::PathBuf> {
+        self.spec
+            .launch
+            .as_ref()?
+            .cwd
+            .as_ref()
+            .map(std::path::PathBuf::from)
+    }
+    fn change_directory(
+        &mut self,
+        _: std::path::PathBuf,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Result<(), crate::LocalDirectoryError> {
+        Err(crate::LocalDirectoryError::UnsupportedShell)
     }
 }
 struct ProbeState {
     owner: WeakEntity<SessionProbe>,
+}
+impl nocterm_workspace_ports::ProjectParentCapture for ProbeState {
+    fn capture(
+        &self,
+        expected: ExpectedSession,
+        cx: &App,
+    ) -> Result<
+        nocterm_workspace_ports::ProjectCreationSource,
+        nocterm_workspace_ports::ProjectParentError,
+    > {
+        use nocterm_workspace_ports::ProjectParentError;
+        let owner = self
+            .owner
+            .upgrade()
+            .ok_or(ProjectParentError::Disconnected)?;
+        let probe = owner.read(cx);
+        if expected != ExpectedSession::new(owner.entity_id(), probe.generation) {
+            return Err(ProjectParentError::StaleSession);
+        }
+        if !probe.connected {
+            return Err(ProjectParentError::Disconnected);
+        }
+        probe
+            .parent
+            .as_ref()
+            .ok_or(ProjectParentError::Disconnected)?
+            .capture(expected, cx)
+    }
+}
+impl crate::TerminalExecution for ProbeState {
+    fn executor(
+        &self,
+        expected: ExpectedSession,
+        cx: &App,
+    ) -> Result<Arc<dyn nocterm_session::HostExec>, crate::TerminalError> {
+        let owner = self.owner.upgrade().ok_or(crate::TerminalError::Gone)?;
+        let probe = owner.read(cx);
+        if expected != ExpectedSession::new(owner.entity_id(), probe.generation) {
+            return Err(crate::TerminalError::StaleSession);
+        }
+        if !probe.connected {
+            return Err(crate::TerminalError::Unavailable);
+        }
+        probe.exec.clone().ok_or(crate::TerminalError::Unsupported(
+            crate::TerminalCapability::SessionExecution,
+        ))
+    }
 }
 impl crate::ConnectionFactSession for ProbeState {
     fn current(&self, cx: &App) -> Option<crate::FactSessionSnapshot> {
         let owner = self.owner.upgrade()?;
         let probe = owner.read(cx);
         Some(crate::FactSessionSnapshot {
+            source: None,
             expected: ExpectedSession::new(owner.entity_id(), probe.generation),
             session: SessionContext::new(
                 probe.spec.target.clone(),
@@ -136,6 +246,8 @@ impl TerminalState for ProbeState {
         let owner = self.owner.upgrade()?;
         let probe = owner.read(cx);
         Some(TerminalInfo {
+            source: None,
+            source_current: true,
             title: probe.spec.title.clone(),
             local: false,
             target: Some(probe.spec.target.clone()),
@@ -155,3 +267,22 @@ impl TerminalState for ProbeState {
         })
     }
 }
+
+mod project_terminal;
+pub use project_terminal::ProjectTerminalProbe;
+
+mod project_surface;
+pub use project_surface::ProjectSurfaceProbe;
+
+mod panel;
+pub use panel::{TestPanel, TestPanelBuilder};
+
+mod plugin;
+pub use plugin::{
+    CORE_PANEL, EXPANDABLE, PANEL_A, PANEL_B, REQUIRED_EXPANDABLE, REQUIRED_PLUGIN, RIGHT_WIDGET,
+    SIDEBAR_EXPANDABLE, TEST_CORE, TEST_PLUGIN, TRAY_PANEL, TRAY_WIDGET, WIDGET, deps_for,
+    deps_for_core, deps_over,
+};
+
+mod shell;
+pub use shell::{Toggle, select_layout, toggle_id, toggle_presentation};

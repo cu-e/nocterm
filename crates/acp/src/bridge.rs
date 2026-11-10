@@ -14,7 +14,7 @@ use futures::{
     future::{Either, select},
 };
 use nocterm_ai::{
-    BridgeCall, BridgeLaunch, BridgeRegistration, BridgeRejection, ToolBridge,
+    BridgeCall, BridgeLaunch, BridgeRegistration, BridgeRejection, ToolBridge, ToolOffer,
     mcp::{McpSession, McpStep},
 };
 use nocterm_core::Paths;
@@ -30,9 +30,16 @@ type Listener = std::os::unix::net::UnixListener;
 #[cfg(not(unix))]
 type Listener = std::net::TcpListener;
 
+/// One connection's way to write lines, shared by its replies and the notifications sent to it,
+/// so a line is never written into the middle of another.
+type Writer = Arc<Mutex<Socket>>;
+
 struct Registration {
     token: String,
     sockets: BTreeMap<u64, Socket>,
+    writers: BTreeMap<u64, Writer>,
+    /// What the chat offers its agent now: the tools listed and admitted.
+    offer: ToolOffer,
     cancel: async_channel::Sender<()>,
     cancelled: async_channel::Receiver<()>,
 }
@@ -122,11 +129,14 @@ impl ToolBridge for BridgeServer {
             Registration {
                 token: token.clone(),
                 sockets: BTreeMap::new(),
+                writers: BTreeMap::new(),
+                offer: ToolOffer::default(),
                 cancel,
                 cancelled,
             },
         );
         let inner = Arc::downgrade(&self.inner);
+        let offering = inner.clone();
         let launch = BridgeLaunch {
             program: relay.program.clone(),
             args: relay.args.clone(),
@@ -143,7 +153,12 @@ impl ToolBridge for BridgeServer {
                     revoke(&inner, id);
                 }
             }),
-        ))
+        )
+        .with_offer(Arc::new(move |id, offer| {
+            if let Some(inner) = offering.upgrade() {
+                set_offer(&inner, id, offer);
+            }
+        })))
     }
     fn calls(&self) -> async_channel::Receiver<BridgeCall> {
         self.inner.calls_rx.clone()
@@ -311,6 +326,44 @@ fn close_registration(registration: Registration) {
     }
     registration.cancel.close();
 }
+/// Records what a chat offers and, when it changed, tells its connected agents to list the
+/// tools again. The notice is written on a thread of its own: a busy agent never blocks the chat.
+fn set_offer(inner: &Inner, id: u64, offer: ToolOffer) {
+    let writers: Vec<Writer> = {
+        let mut state = inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(registration) = state.registrations.get_mut(&id) else {
+            return;
+        };
+        if registration.offer == offer {
+            return;
+        }
+        registration.offer = offer;
+        registration.writers.values().cloned().collect()
+    };
+    if writers.is_empty() {
+        return;
+    }
+    let _ = std::thread::Builder::new()
+        .name("nocterm-bridge-notice".into())
+        .spawn(move || {
+            for writer in writers {
+                let mut socket = writer.lock().unwrap_or_else(|e| e.into_inner());
+                let _ = write_line(&mut socket, &nocterm_ai::mcp::list_changed());
+            }
+        });
+}
+fn write_line(socket: &mut Socket, value: &Value) -> io::Result<()> {
+    let bytes = serde_json::to_vec(value)?;
+    if bytes.len() > nocterm_ai::MAX_MCP_LINE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Bridge response too large",
+        ));
+    }
+    socket.write_all(&bytes)?;
+    socket.write_all(b"\n")?;
+    socket.flush()
+}
 fn revoke(inner: &Inner, id: u64) {
     let registration = inner
         .state
@@ -385,7 +438,7 @@ fn serve(socket: Socket, inner: Arc<Inner>, epoch: u64, connection_id: u64) -> i
         .get("token")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let (id, cancel) = {
+    let (id, cancel, writer) = {
         let mut state = inner.state.lock().unwrap_or_else(|e| e.into_inner());
         if inner.generation.load(Ordering::Acquire) != epoch {
             return Err(io::Error::new(
@@ -413,32 +466,44 @@ fn serve(socket: Socket, inner: Arc<Inner>, epoch: u64, connection_id: u64) -> i
                 "Thread connection limit",
             ));
         }
+        let writer: Writer = Arc::new(Mutex::new(socket.try_clone()?));
         registration
             .sockets
             .insert(connection_id, socket.try_clone()?);
-        (*id, registration.cancelled.clone())
+        registration.writers.insert(connection_id, writer.clone());
+        (*id, registration.cancelled.clone(), writer)
     };
-    let result = serve_authenticated(socket, &mut reader, &inner, id, cancel);
+    let result = socket
+        .set_read_timeout(None)
+        .and_then(|()| serve_authenticated(&writer, &mut reader, &inner, id, cancel));
     let mut state = inner.state.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(registration) = state.registrations.get_mut(&id) {
         registration.sockets.remove(&connection_id);
+        registration.writers.remove(&connection_id);
     }
     result
 }
 fn serve_authenticated(
-    mut socket: Socket,
+    writer: &Writer,
     reader: &mut BufReader<Socket>,
     inner: &Inner,
     id: u64,
     cancel: async_channel::Receiver<()>,
 ) -> io::Result<()> {
-    socket.set_read_timeout(None)?;
     let mut session = McpSession::default();
     while let Some(line) = bounded_line(reader, nocterm_ai::MAX_MCP_LINE)? {
         if cancel.is_closed() {
             break;
         }
-        let response = match session.handle(&line) {
+        let offer = inner
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .registrations
+            .get(&id)
+            .map(|registration| registration.offer)
+            .unwrap_or_default();
+        let response = match session.handle(&line, offer) {
             McpStep::Reply(reply) => reply,
             McpStep::Ignore => continue,
             McpStep::Rejected {
@@ -489,16 +554,10 @@ fn serve_authenticated(
                 nocterm_ai::mcp::tool_result(request_id, result)
             }
         };
-        let bytes = serde_json::to_vec(&response)?;
-        if bytes.len() > nocterm_ai::MAX_MCP_LINE {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Bridge response too large",
-            ));
-        }
-        socket.write_all(&bytes)?;
-        socket.write_all(b"\n")?;
-        socket.flush()?;
+        write_line(
+            &mut writer.lock().unwrap_or_else(|e| e.into_inner()),
+            &response,
+        )?;
     }
     Ok(())
 }

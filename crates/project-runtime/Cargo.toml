@@ -1,0 +1,28 @@
+[package]
+name = "nocterm-project-runtime"
+description = "Builtin project resource preparation, bounded commands and lifecycle actions."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "adapter"
+
+[dependencies]
+getrandom.workspace = true
+nocterm-project-model.workspace = true
+nocterm-project-providers.workspace = true
+nocterm-containers.workspace = true
+nocterm-session.workspace = true
+futures.workspace = true
+async-io.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+nocterm-project-providers = { workspace = true, features = ["test-support"] }
+nocterm-session = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

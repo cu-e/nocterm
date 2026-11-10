@@ -5,7 +5,7 @@ use std::{error::Error as _, io, path::PathBuf, sync::Arc};
 
 fn request() -> Request {
     Request::Upload(UploadRequest {
-        sources: vec![PathBuf::from("selected.txt")],
+        sources: vec![std::env::temp_dir().join("selected.txt")],
         host: nocterm_session::HostAddress::direct(Target::new("u", "h", 22)),
         destination: "/dest".into(),
         fs: Arc::new(InMemoryFs::default()),
@@ -44,6 +44,24 @@ fn relative_or_traversing_remote_destinations_are_rejected() {
             request.validate(DiscoveryLimits::default()),
             Err(TransferError::InvalidDestination)
         ));
+    }
+}
+#[test]
+fn relative_or_traversing_local_sources_are_rejected() {
+    let parent = std::env::temp_dir().join("..").join("etc");
+    for source in [PathBuf::from("selected.txt"), PathBuf::from("~/a"), parent] {
+        let mut request = request();
+        let Request::Upload(upload) = &mut request else {
+            unreachable!()
+        };
+        upload.sources = vec![source.clone()];
+        assert!(
+            matches!(
+                request.validate(DiscoveryLimits::default()),
+                Err(TransferError::InvalidDestination)
+            ),
+            "{source:?}"
+        );
     }
 }
 #[test]

@@ -40,7 +40,7 @@ pub(super) fn content(value: wire::ContentBlock) -> Result<Content, ModelError> 
         }),
         wire::ContentBlock::Image(value) => Content::Image(Image {
             annotations: annotations(value.annotations)?,
-            data: value.data,
+            data: value.data.into(),
             mime_type: value.mime_type,
             uri: value.uri,
             meta: extensions(value.meta),
@@ -112,7 +112,7 @@ pub(super) fn wire_content(value: Content) -> wire::ContentBlock {
                 .meta(meta(value.meta)),
         ),
         Content::Image(value) => wire::ContentBlock::Image(
-            wire::ImageContent::new(value.data, value.mime_type)
+            wire::ImageContent::new(String::from(value.data), value.mime_type)
                 .uri(value.uri)
                 .annotations(wire_annotations(value.annotations))
                 .meta(meta(value.meta)),

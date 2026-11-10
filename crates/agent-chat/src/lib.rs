@@ -1,22 +1,35 @@
 //! Agent chats without views: one [`thread::AgentThread`] per chat and the
-//! [`roster::ChatRoster`] of a window's chats.
-//! Command jobs privately assemble their owned runner; snapshots and sign-in waits expose
-//! immutable facts.
+//! [`roster::ChatRoster`] of a window's selected and retained context chats.
+//! Command jobs use a supplied session-domain registry; the chat owns scheduling its runner.
+//! File transfers go through a supplied `TransferRequests` port; each chat reads and cancels
+//! only the transfers it submitted, bound to both endpoint terminals' sessions.
+//! A chat offers the file tools while an attached terminal serves files but runs no programs,
+//! and runs them only on such terminals, on the filesystem captured with the call's session.
+//! Snapshots and sign-in waits expose immutable facts.
 //!
 //! Owns: AgentThread coordination, private Composer/ChatConfig/ChatDocument owners, private
 //! SessionDriver and ToolRuntime owners, the session-scoped ApprovalInbox for provider
 //! requests, bridge cards, card tokens and terminal grants, ChatRoster membership and chat
-//! lifecycle (new, restart, fork, restore, removal admission, resident history budget).
+//! lifecycle (new, restart, fork, restore and removal admission).
+//! Runtime owns installation-wide history admission. Catalog archives retain an accounted
+//! row reference; quiet hidden archives release their entities and references.
+//! ChatDeps binds an immutable Local environment lease, context and exact per-chat original seat; every entity factory
+//! acquires a scoped document claim and binds the seat before constructing an entity. ChatDocument identity retains its ChatKey.
 //! ThreadNotice owns status/error presentation facts; ThreadBindings retains the
 //! window/subscriptions. Finite operations return named completions and original-authority
 //! polling projections. Archive owns lazy hydration generations, typed pending intentions
 //! and delivery residency. BackgroundOpen owns the native-opening handoff and its original
 //! workspace receipt.
+//! A hub agent's chat is an ordinary chat: an agent that keeps its sessions reopens them
+//! without a saved transcript and replaces it with the history it returns, and a turn the
+//! agent runs for another device shows as a turn of the chat (ADR 0148).
+//! The private Transcript admits live byte/row growth before mutation; capacity failure preserves accepted rows and queued prompts.
 //! Does not own: views, the workspace shell, ACP transport, connection admission,
-//! filesystem storage or image decoding.
+//! filesystem storage, native command execution or image decoding.
 //! Ports used: AgentConnector and ToolBridge through the runtime, terminal ports from
 //! nocterm-workspace-ports, [`seat::ChatWorkspace`], [`sign_in::SignInTerminal`] and
-//! ChatMetadataSource, all supplied with [`chat_deps::ChatDeps`].
+//! ChatMetadataSource, all supplied with [`chat_deps::ChatDeps`]. The retained runtime supplies
+//! CommandJobsFactory; each chat creates its own bounded registry without depending on an adapter.
 //! Ports provided: [`seat::ChatWorkspace`] and [`sign_in::SignInTerminal`] for the window
 //! shell to implement.
 //! Settings section: reads ai; its schema belongs to nocterm-ai.
@@ -33,7 +46,8 @@
 //! old publication failures cannot pause a newer desired document.
 //! Session operations carry their original ticket, connection, session and registration
 //! authority. Tool work retains fixed prompt scope, original executor identities and
-//! workspace receipts; cancellation preserves readable job outcomes.
+//! workspace receipts; cancellation preserves readable job outcomes. Actual tool dispatch and
+//! every background runner poll recheck their original account lease.
 //! Joined reconnect calls retain their original busy guards and dispatch in acceptance
 //! order after validating original session, registration, workspace and window authority.
 //! Ordering releases after synchronous launch; direct calls after connection retain
@@ -48,8 +62,10 @@ use nocterm_agent_runtime as runtime;
 pub use runtime::TerminalAuthRequest;
 
 /// Why a terminal sign-in did not succeed.
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum TerminalAuthError {
+    #[error("Authentication terminal could not be opened.")]
+    Opening(#[source] nocterm_core::SharedCause),
     /// The user closed the sign-in terminal.
     #[error("Authentication canceled.")]
     Canceled,

@@ -77,7 +77,7 @@ fn rejected_destination_closes_only_new_item_once(cx: &mut TestAppContext) {
                 assert!(!workspace.add_local_terminal_at(rejected.clone(), target, window, cx));
                 assert!(!workspace.add_local_terminal_at(registered.clone(), target, window, cx));
                 assert!(!workspace.add_local_terminal_at(background.clone(), target, window, cx));
-                assert!(workspace.is_background(background.entity_id()));
+                assert!(workspace.is_background(background.entity_id(), cx));
                 assert_eq!(rejected_closes.get(), 1);
                 assert_eq!(registered_closes.get(), 0);
                 assert_eq!(workspace.tabs(cx).len(), 1);

@@ -18,18 +18,32 @@ fn a_canonical_saved_chat_reencodes_byte_for_byte() {
 }
 
 #[test]
+fn a_shared_snapshot_keeps_canonical_bytes_with_its_separately_held_queue() {
+    let mut chat = decode(CANONICAL, ID).unwrap();
+    let queue = std::mem::take(&mut chat.queue)
+        .into_iter()
+        .map(std::sync::Arc::new)
+        .collect();
+    let shared = SharedChat {
+        metadata: chat,
+        queue,
+    };
+    assert_eq!(encode_shared(&shared).unwrap(), CANONICAL);
+}
+
+#[test]
 fn a_canonical_saved_chat_keeps_every_field() {
     let chat = decode(CANONICAL, ID).unwrap();
-    assert_eq!(chat.agent_id, "codex");
-    assert_eq!(chat.title.as_deref(), Some("Disk usage"));
-    assert_eq!(chat.name.as_deref(), Some("Disks"));
-    assert!(chat.pinned);
+    assert_eq!(chat.header.agent_id, "codex");
+    assert_eq!(chat.header.title.as_deref(), Some("Disk usage"));
+    assert_eq!(chat.header.name.as_deref(), Some("Disks"));
+    assert!(chat.header.pinned);
     assert_eq!(chat.session_id.as_deref(), Some("session-1"));
     assert_eq!(chat.model.as_deref(), Some("opus"));
     assert_eq!(chat.mode.as_deref(), Some("plan"));
     assert!(chat.pending_history);
     assert_eq!(chat.draft.as_deref(), Some("unsent \n text"));
-    assert_eq!(chat.updated, 1_700_000_000);
+    assert_eq!(chat.header.updated, 1_700_000_000);
     assert_eq!(chat.entries.len(), 6);
     assert_eq!(chat.times, [10, 11, 12, 13, 14, 15]);
     assert_eq!(chat.queue.len(), 1);
@@ -144,11 +158,11 @@ fn summaries_agree_with_the_fully_decoded_chat() {
 #[test]
 fn other_versions_and_identities_are_rejected() {
     let mut other: Value = serde_json::from_slice(CANONICAL).unwrap();
-    other["version"] = json!(2);
+    other["version"] = json!(99);
     let bytes = serde_json::to_vec(&other).unwrap();
     assert!(matches!(
         decode(&bytes, ID),
-        Err(HistoryCodecError::UnsupportedVersion(2))
+        Err(HistoryCodecError::UnsupportedVersion(99))
     ));
     assert!(matches!(
         decode(CANONICAL, "00000000-0000-4000-8000-0000000000a2"),

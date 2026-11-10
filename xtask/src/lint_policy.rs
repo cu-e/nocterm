@@ -32,12 +32,16 @@ pub(crate) fn check(root: &Path) -> anyhow::Result<()> {
 }
 
 pub(crate) fn inspect(text: &str) -> anyhow::Result<(usize, Vec<(usize, String)>)> {
+    Ok(inspect_parsed(&syn::parse_file(text)?))
+}
+
+pub(crate) fn inspect_parsed(file: &syn::File) -> (usize, Vec<(usize, String)>) {
     let mut inspector = Inspector {
         count: 0,
         problems: Vec::new(),
     };
-    inspector.visit_file(&syn::parse_file(text)?);
-    Ok((inspector.count, inspector.problems))
+    inspector.visit_file(file);
+    (inspector.count, inspector.problems)
 }
 
 struct Inspector {

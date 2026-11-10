@@ -1,10 +1,14 @@
-//! Hydration returns its original local generation and delivery permit together.
+//! Original archive intent observes the shared admitted native-load service.
 use super::LoadId;
+use crate::thread::AgentThread;
+use gpui::Context;
+use nocterm_agent_runtime::{LoadedHistory, history_admission::HistoryPayloadPermit};
 use nocterm_ai::{
     history::{HistoryPermit, SavedChat},
     session::Ticket,
     storage::AgentStorageError,
 };
+
 pub(in crate::thread) struct LoadOperation {
     id: LoadId,
     ticket: Ticket,
@@ -25,31 +29,42 @@ impl LoadOperation {
             reader,
         }
     }
-    pub(in crate::thread) async fn run(self) -> LoadCompletion {
-        let (result, permit) = self.reader.load(self.chat).await;
-        LoadCompletion {
-            id: self.id,
-            ticket: self.ticket,
-            result,
-            permit,
-        }
+    pub(in crate::thread) fn start(
+        self,
+        admission: nocterm_agent_runtime::history_admission::HistoryAdmissionHandle,
+        cx: &mut Context<AgentThread>,
+    ) {
+        let loading = self.reader.load_admitted(self.chat, admission, cx);
+        cx.spawn(async move |thread, cx| {
+            let loaded = loading.await;
+            let completion = LoadCompletion {
+                id: self.id,
+                ticket: self.ticket,
+                loaded,
+            };
+            let _ = thread.update(cx, |thread, cx| thread.on_archive_loaded(completion, cx));
+        })
+        .detach();
     }
 }
 pub(in crate::thread) struct LoadCompletion {
     id: LoadId,
     ticket: Ticket,
-    result: Result<SavedChat, AgentStorageError>,
-    permit: HistoryPermit,
+    loaded: LoadedHistory,
 }
 impl LoadCompletion {
-    pub(in crate::thread) fn into_parts(
+    pub(in crate::thread) fn publish(
         self,
-    ) -> (
-        LoadId,
-        Ticket,
-        Result<SavedChat, AgentStorageError>,
-        HistoryPermit,
+        publish: impl FnOnce(
+            LoadId,
+            Ticket,
+            Result<SavedChat, AgentStorageError>,
+            Option<HistoryPermit>,
+            Option<HistoryPayloadPermit>,
+        ),
     ) {
-        (self.id, self.ticket, self.result, self.permit)
+        self.loaded.publish(|result, permit, payload| {
+            publish(self.id, self.ticket, result, permit, payload)
+        });
     }
 }

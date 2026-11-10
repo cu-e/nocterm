@@ -56,6 +56,7 @@ pub(crate) fn opened(value: wire::NewSessionResponse) -> SessionOpened {
         session: SessionId::new(value.session_id.to_string()),
         modes: value.modes.map(modes),
         configuration: value.config_options.map(options),
+        history: None,
     }
 }
 pub(crate) fn prompt_outcome(value: wire::PromptResponse) -> Result<PromptOutcome, ModelError> {

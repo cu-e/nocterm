@@ -123,7 +123,7 @@ async fn theme_query_finds_both_commands_and_selection_restyles_the_connected_te
             "#ff0000".parse().unwrap()
         );
         assert_eq!(
-            workspace.read(cx).items().count(),
+            workspace.read(cx).items(cx).count(),
             1,
             "no Settings tab needed"
         );
@@ -418,7 +418,7 @@ async fn terminal_and_settings_paint_the_supplied_background_without_a_settings_
         assert!(
             workspace
                 .read(cx)
-                .find_item::<nocterm_settings_ui::SettingsView>()
+                .find_item::<nocterm_settings_ui::SettingsView>(cx)
                 .is_some()
         );
         let bounds = window

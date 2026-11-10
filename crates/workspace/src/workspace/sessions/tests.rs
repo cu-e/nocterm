@@ -201,14 +201,16 @@ fn equal_targets_behind_different_jump_hosts_never_share_a_file_system(cx: &mut 
     cx.update_window(window, |_, _, cx| {
         let workspace = workspace.read(cx);
         // The active tab is the second one; the first route must still win its own lookup.
-        let first = workspace.connected_session_for_host(&routes.first).unwrap();
+        let first = workspace
+            .connected_session_for_host(&routes.first, cx)
+            .unwrap();
         assert!(Arc::ptr_eq(first.fs.as_ref().unwrap(), &routes.first_fs));
         let second = workspace
-            .connected_session_for_host(&routes.second)
+            .connected_session_for_host(&routes.second, cx)
             .unwrap();
         assert!(Arc::ptr_eq(second.fs.as_ref().unwrap(), &routes.second_fs));
         let direct = HostAddress::direct(routes.first.target.clone());
-        assert!(workspace.connected_session_for_host(&direct).is_none());
+        assert!(workspace.connected_session_for_host(&direct, cx).is_none());
     })
     .unwrap();
 }

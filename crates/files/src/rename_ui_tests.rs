@@ -104,7 +104,9 @@ fn local_navigation_during_rename_keeps_original_path_without_refreshing_new_fol
     cx.update_window(handle, |_, window, cx| {
         window.activate_window();
         cx.set_reduce_motion(true);
-        workspace.update(cx, |workspace, cx| workspace.add_panel(panel.clone(), cx));
+        workspace.update(cx, |workspace, cx| {
+            add_explorer(workspace, panel.clone(), window, cx)
+        });
         panel.update(cx, |panel, cx| {
             panel.navigate_local(source.path().into(), cx)
         });

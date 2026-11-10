@@ -1,30 +1,29 @@
 ---
 name: responsibility-map
-description: Read-only analysis of a type, module or crate that finds its responsibilities and candidate state owners from `cargo xtask survey` facts. Run before any split, owner extraction or crate split, and when a file or type reaches an early-warning threshold.
+description: Read-only analysis of a type, module or crate that finds its responsibilities and candidate state owners from `cargo xtask survey` facts. Use for a split or unclear ownership; early warnings invite inspection rather than mandatory extraction.
 user-invocable: false
 ---
 
 # Responsibility map
 
-Input: a type (`AgentThread`), a module (`agent/thread`) or a crate. Output:
-`20-map.md` in the plan directory (`.claude/skills/feature/plan-bus.md`). This
-step writes no source code.
+Input: a type (`AgentThread`), a module (`agent/thread`) or a crate. Record facts
+and the proposed owners in the compact plan (`.claude/skills/feature/plan-bus.md`).
+This step writes no source code.
 
 The goal is to find where responsibilities separate **by state**, because an
 owner is a set of fields with the transitions that keep them consistent
-(AGENTS.md design rules 1, 2 and 7). Line counts only say that a split is due;
-they never say where.
+(AGENTS.md design rules 1, 2 and 7). Line counts signal remaining room; they do not decide whether or where to split.
 
 ## 1. Collect facts
 
-Run through the shared lock (AGENTS.md hard rules):
+Use a survey when it helps resolve ownership (Cargo resources follow CONTRIBUTING.md):
 
 ```sh
-.claude/hooks/cargo-serial.sh cargo xtask survey <package> --json > .claude/plans/<slug>/survey.json
-.claude/hooks/cargo-serial.sh cargo xtask survey <package> --type <Type>
+cargo xtask survey <package> --json > .claude/plans/<slug>/survey.json
+cargo xtask survey <package> --type <Type>
 ```
 
-Record in `20-map.md`: the warnings, the largest files, the type's fields,
+Record relevant facts in the plan: the warnings, the largest files, the type's fields,
 methods and impl files, and the module reference counts. The survey is
 syntactic: it keys types by name and does not expand macros, so confirm any
 surprising fact in the source.
@@ -37,11 +36,15 @@ coordinators use are listed separately: assign them by hand.
 
 | Pattern | Meaning | Next step |
 | --- | --- | --- |
-| A cluster of 2+ fields with its own methods | a hidden owner | `owner-extract` |
-| Every field is its own cluster and most methods are cross-cluster or coordinators | the fields are already owners; the type is a coordinator with too large a surface | split coordination by use case: named effects returned by owners (ADR 0044) or a separate coordinator per workflow |
+| A cluster of 2+ fields with its own methods | possible owner | confirm one invariant and lifetime before `owner-extract` |
+| Every field is its own cluster and most methods are cross-cluster or coordinators | possible coordination among existing owners | inspect actual types and transitions; split by use case only if responsibilities differ (ADR 0044) |
 | Many methods with no direct field access | delegating wrappers or free functions | move each next to the owner it calls, or into a pure function of the domain |
 | A field no method touches | state used only through destructuring or by another type | confirm; it may belong to that other type |
-| Impl blocks of one type in 4+ files | file slicing already happened | treat each file's methods as a candidate owner, check its fields |
+| Impl blocks of one type in 4+ files | possible file slicing | inspect responsibilities; do not treat each existing file as a future owner |
+
+Clusters reflect syntactic co-access, not semantic ownership. Confirm which
+fields must change together, who is authoritative, and when work ends. A cohesive
+type may need no split; pure logic may need functions rather than a state owner.
 
 For a module or crate, use the `modules` section: a top-level module whose
 references go mostly to one workspace crate, and which has few references to
@@ -57,6 +60,7 @@ For every candidate owner write:
 - a draft card: `Owns:`, `Does not own:`, `Invariants:`;
 - its fields, its transition methods, and what it returns to the parent (a value,
   a typed error, or a named effect for the coordinator to apply);
+- creation/teardown, cancellation and the destination of late asynchronous results;
 - expected field counts after extraction for both the parent and the owner.
 
 Reject a candidate that would need the parent passed back into it (`&mut Parent`,
@@ -64,10 +68,11 @@ the parent's `Context`): it is not a separate responsibility yet.
 
 ## 4. Card drift
 
-Compare what the code does with the crate card. List every responsibility that
-is under `Does not own:` or missing from `Owns:`; these go to `docs-adr`.
+Compare code with the crate card. A conflicting responsibility needs a placement
+fix; do not legitimize it by expanding the card. Use `docs-adr` for actual boundary
+decisions and stale descriptions after ownership is resolved.
 
-## Output: `20-map.md`
+## Decision to record
 
 ```
 # Responsibility map: <subject>
@@ -82,5 +87,5 @@ is under `Does not own:` or missing from `Owns:`; these go to `docs-adr`.
 ## Recommended order (smallest safe extraction first)
 ```
 
-End with the Result block; `next` is usually `behavior-tests` (characterize)
-and then `owner-extract`.
+Report the map and next useful step; `behavior-tests` and `owner-extract`
+apply when an extraction is needed.

@@ -2,9 +2,9 @@
 use crate::file_drop::FileDropError;
 
 use super::{Terminal, TerminalEvent};
-use crate::credentials::credential_for;
+use crate::credentials::answering_credential;
 use gpui_kit::{App, Context};
-use nocterm_session::{HostKeyDecision, Prompt, Secret, SecretRequest};
+use nocterm_session::{CredentialStoreError, HostKeyDecision, Prompt, Secret, SecretRequest};
 use nocterm_vt::encode_paste;
 use nocterm_workspace::{LiveCommandLease, LocalDirectoryError, TerminalError};
 use std::{
@@ -15,9 +15,8 @@ use std::{
     },
 };
 
-use crate::{codec::TextCodec, integration::ShellIntegration};
 use nocterm_session::{Charset, TextEncodingError};
-use nocterm_vt::Modes;
+use nocterm_vt::{Modes, ShellIntegration, TextCodec};
 use std::cell::RefCell;
 
 #[derive(Clone, Copy)]
@@ -81,6 +80,11 @@ impl TerminalInput {
         if local {
             *self.integration.borrow_mut() = ShellIntegration::default();
         }
+    }
+    /// Forgets the directory and prompt the shell last reported: a restored
+    /// screen says nothing about them until the shell speaks again.
+    pub(super) fn forget_shell_state(&self) {
+        *self.integration.borrow_mut() = ShellIntegration::default();
     }
     pub(super) fn set_shell_syntax(&mut self, syntax: Option<nocterm_workspace::ShellSyntax>) {
         self.shell_syntax = syntax;
@@ -412,9 +416,16 @@ impl Terminal {
     }
     pub fn vault_unlocked(&self, cx: &App) -> bool {
         let _ = cx;
-        self.deps
-            .credentials()
-            .is_some_and(|provider| provider.store().is_available())
+        self.deps.source_current()
+            && self
+                .deps
+                .credentials()
+                .is_some_and(|provider| provider.store().is_available())
+    }
+    /// Whether a remembered answer goes to the vault of an account, which keeps the secrets of
+    /// its servers for every computer of the account, rather than to this computer's vault.
+    pub(crate) fn remembers_for_account(&self) -> bool {
+        self.deps.source().is_some()
     }
     /// Whether unlocking the vault would answer the current prompt.
     pub fn awaiting_vault(&self) -> bool {
@@ -428,12 +439,16 @@ impl Terminal {
         cx.emit(TerminalEvent::Changed);
     }
     pub(crate) fn retrieve_credential(&mut self, cx: &mut Context<Self>) {
+        if !self.deps.source_current() {
+            return;
+        }
         self.credentials.begin_lookup();
         let Some(Prompt::Secret { request, hop, .. }) = self.prompt() else {
             return;
         };
         let request = request.clone();
-        let credential = credential_for(self.spec(), hop.as_ref());
+        let vault_key = matches!(request, SecretRequest::PrivateKey { .. });
+        let credential = answering_credential(self.spec(), hop.as_ref(), &request);
         if !matches!(request, SecretRequest::Interactive { .. }) {
             self.credentials.cancel_candidate();
         }
@@ -444,18 +459,23 @@ impl Terminal {
         ) {
             return;
         }
-        if !request.is_storable() {
-            return;
-        }
         let Some(id) = credential else {
             return;
         };
         let Some(provider) = self.deps.credentials() else {
+            if vault_key {
+                self.skip_vault_key("No credential vault is available for this key.", cx);
+            }
             return;
         };
         if !provider.store().is_available() {
             self.credentials.set_message(Some(
-                "Unlock the credential vault to use the saved secret, or enter it here.".into(),
+                if vault_key {
+                    "Unlock the credential vault to sign in with its key."
+                } else {
+                    "Unlock the credential vault to use the saved secret, or enter it here."
+                }
+                .into(),
             ));
             self.credentials.wait_for_vault(true);
             let available = provider.store().wait_available();
@@ -473,6 +493,11 @@ impl Terminal {
                     }
                     match result {
                         Ok(secret) => this.answer_secret(Some(secret), cx),
+                        Err(CredentialStoreError::NotFound) if vault_key => {
+                            this.skip_vault_key("Key not found in the vault.", cx)
+                        }
+                        Err(error) if vault_key => this
+                            .skip_vault_key(&format!("The vault key is unavailable: {error}"), cx),
                         Err(error) => {
                             this.credentials.set_message(Some(format!(
                                 "Saved credential unavailable: {error}"
@@ -482,6 +507,12 @@ impl Terminal {
                     }
                 });
             }));
+    }
+    /// Declines the vault key: no one can type it, so the sign-in moves on to
+    /// the next method and the reason stays for the person to read.
+    fn skip_vault_key(&mut self, message: &str, cx: &mut Context<Self>) {
+        self.answer_secret(None, cx);
+        self.credentials.set_message(Some(message.to_owned()));
     }
     /// Answers the prompt with the saved secret as soon as the vault is
     /// unlocked, whether from the prompt's link, Settings or device unlock.
@@ -538,6 +569,9 @@ impl Terminal {
         self.credentials.cancel_candidate();
     }
     pub(crate) fn save_authenticated_credential(&mut self, cx: &mut Context<Self>) {
+        if !self.deps.source_current() {
+            return;
+        }
         let Some((request, secret)) = self.credentials.take_candidate() else {
             return;
         };
@@ -576,6 +610,10 @@ impl Terminal {
                         return;
                     }
                     this.credentials.set_message(Some(match result {
+                        Ok(()) if this.remembers_for_account() => {
+                            "Kept in the account's vault: your other computers sign in with it too."
+                                .into()
+                        }
                         Ok(()) => "Credential saved in the encrypted vault.".into(),
                         Err(error) => format!(
                             "Credential saved; could not link it to connection history: {error}"

@@ -97,6 +97,36 @@ an attacker-controlled PKCS#1 v1.5 decryption oracle was not identified.
 That reachability observation does not prove all RSA operations safe. Follow
 upstream fixes and re-run dependency auditing when upgrading russh/ssh-key.
 
+## Hub relay boundary
+
+A route through a hub ([ADR 0100](adr/0100-the-hub-is-a-route-step.md)) gives the hub a byte
+stream to the destination and nothing else. The SSH handshake runs end to end with the
+destination: its host key is checked against `known_hosts` and its authentication is the
+user's, so a hub that is a hop can drop or delay a connection but cannot read or alter it
+without failing the host-key check. The hub learns the destination address, the time and the
+volume. The stream is bounded in both directions (a few hundred KiB at most per direction)
+and ends from either side, so a hub that stops reading or a session that stops reading ends up
+stalled, not buffered. The device is never signed in to a hub because a route names it, and a
+hub address that does not match a signed-in hub is refused before anything is sent.
+
+## Hub account data
+
+The vault and the saved profiles of a hub account are sealed on the device before they leave it
+([ADR 0103](adr/0103-account-data-is-sealed-on-the-device.md)). The hub stores ciphertext and
+learns the number, size and times of records. Each collection has its own key, derived with the
+hub contract's `nocterm-keys` from the account password (or a vault passphrase of its own); the
+keyset on the hub is sealed, and the recovery key is shown once and not stored. The device keeps
+no key on disk: locking the vault or signing out clears the keys in memory. The account data on
+disk is ciphertext and the non-secret facts needed to derive the unlock key again, in one
+mode-0600 file replaced atomically; the agreed profile replica state is kept in memory for the
+run. A record that does not verify (changed, or moved to another collection or identity) is an
+error that stops the feed, and never overwrites or deletes local data. Collections and record
+kinds this version does not know are never listed, rewritten or deleted. Only the account's own
+collections exist: there are no organization or group keys to grant. A revoked device erases its
+cached ciphertext and zeroes its keys, as signing out of the server or removing it does. The only record of the recovery key on a device is a flag that
+it was shown and not yet confirmed as saved; it is not a secret, and it makes the open keys offer
+a new key, replacing the recovery envelope with a write conditional on the keyset version.
+
 ## Verification scope
 
 Storage, trust-store, SFTP protocol, concurrency, resource-budget and terminal

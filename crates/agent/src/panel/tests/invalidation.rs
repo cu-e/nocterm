@@ -60,8 +60,9 @@ fn closing_and_reopening_pending_chat_updates_attention_without_stream_updates(
             0,
             "visible current approval needs no notice"
         );
-        f.workspace
-            .update(cx, |w, cx| w.toggle_right_panel(window, cx));
+        f.workspace.update(cx, |w, cx| {
+            w.toggle_panel(&crate::plugin::CHATS.id, window, cx)
+        });
     })
     .unwrap();
     cx.run_until_parked();
@@ -79,15 +80,17 @@ fn closing_and_reopening_pending_chat_updates_attention_without_stream_updates(
             0,
             "streaming must not repost a dismissed notice"
         );
-        f.workspace
-            .update(cx, |w, cx| w.toggle_right_panel(window, cx));
+        f.workspace.update(cx, |w, cx| {
+            w.toggle_panel(&crate::plugin::CHATS.id, window, cx)
+        });
     })
     .unwrap();
     cx.run_until_parked();
     cx.update_window(f.handle, |_, window, cx| {
         assert_eq!(nocterm_ui::notice::count(window, cx), 0);
-        f.workspace
-            .update(cx, |w, cx| w.toggle_right_panel(window, cx));
+        f.workspace.update(cx, |w, cx| {
+            w.toggle_panel(&crate::plugin::CHATS.id, window, cx)
+        });
     })
     .unwrap();
     cx.run_until_parked();
@@ -105,8 +108,9 @@ fn new_hidden_approval_reposts_after_dismissal_but_unchanged_stream_does_not(
     new_chat(&f, cx);
     let owner = cx.update(|cx| f.panel.read(cx).current().unwrap());
     cx.update_window(f.handle, |_, window, cx| {
-        f.workspace
-            .update(cx, |w, cx| w.toggle_right_panel(window, cx))
+        f.workspace.update(cx, |w, cx| {
+            w.toggle_panel(&crate::plugin::CHATS.id, window, cx)
+        })
     })
     .unwrap();
     for id in ["first", "second"] {
@@ -177,8 +181,18 @@ fn separate_installations_keep_original_runtime_and_policy_after_later_compositi
     });
     cx.run_until_parked();
     cx.update(|cx| {
-        assert!(first.workspace.read(cx).right_panel_is_available());
-        assert!(!second.workspace.read(cx).right_panel_is_available());
+        assert!(
+            first
+                .workspace
+                .read(cx)
+                .panel_is_available(&crate::plugin::CHATS.id)
+        );
+        assert!(
+            !second
+                .workspace
+                .read(cx)
+                .panel_is_available(&crate::plugin::CHATS.id)
+        );
         assert_eq!(
             first
                 .installation
@@ -216,6 +230,7 @@ fn refused_shutdown_registration_returns_a_usable_original_installation(cx: &mut
             f.installation.layout.clone(),
             &f.installation.ready,
             &refused,
+            None,
             cx,
         );
         assert!(matches!(
@@ -378,4 +393,133 @@ async fn ai_off_clears_edit_drafts_stream_and_queue_measurements(cx: &mut TestAp
         assert!(!owner.read(cx).composer().editing_queue());
     })
     .unwrap();
+}
+
+fn count_panel_notifications(
+    f: &Fixture,
+    cx: &mut TestAppContext,
+) -> (Rc<Cell<usize>>, gpui_kit::Subscription) {
+    let notifications = Rc::new(Cell::new(0));
+    let seen = notifications.clone();
+    let observer = cx.update(|cx| cx.observe(&f.panel, move |_, _| seen.set(seen.get() + 1)));
+    (notifications, observer)
+}
+
+#[gpui_kit::test]
+fn a_streamed_chunk_draws_in_the_open_chat_without_redrawing_the_whole_panel(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    exchange(&f, "question", "answer", cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("next question".into(), cx));
+    cx.run_until_parked();
+    let streamed = cx.update(|cx| thread.read(cx).history_entries().len());
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(("agent-entry", streamed)).is_none());
+    })
+    .unwrap();
+    let (notifications, _observer) = count_panel_notifications(&f, cx);
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
+    f.events
+        .try_send(AgentEvent::Session(SessionNotice::new(
+            session,
+            SessionUpdate::AgentMessageChunk(Content::text("streamed answer")),
+        )))
+        .unwrap();
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(100));
+    cx.run_until_parked();
+    cx.update_window(f.handle, |_, window, cx| {
+        // A plain draw, which reuses cached views a refresh would redraw.
+        window.draw(cx).clear(cx);
+        assert!(
+            window.try_find(("agent-entry", streamed)).is_some(),
+            "the streamed answer draws in the open chat"
+        );
+    })
+    .unwrap();
+    assert_eq!(
+        notifications.get(),
+        0,
+        "a chunk redraws the chat's regions, not the whole panel"
+    );
+}
+
+#[gpui_kit::test]
+fn typing_a_draft_saves_it_without_redrawing_the_whole_panel(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    exchange(&f, "question", "answer", cx);
+    cx.update_window(f.handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    let (notifications, _observer) = count_panel_notifications(&f, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        replace_composer_value(f.panel.read(cx).composer_focus(cx), "a draft", window, cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    cx.executor()
+        .advance_clock(std::time::Duration::from_millis(100));
+    cx.run_until_parked();
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    cx.update(|cx| {
+        assert_eq!(f.panel.read(cx).composer_text(cx).as_ref(), "a draft");
+        assert_eq!(thread.read(cx).draft_text(), Some("a draft"));
+    });
+    assert_eq!(
+        notifications.get(),
+        0,
+        "typing redraws the composer, not the transcript and history"
+    );
+}
+
+#[gpui_kit::test]
+fn a_growing_draft_grows_the_cached_composer_below_the_transcript(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    exchange(&f, "question", "answer", cx);
+    let draw = |cx: &mut TestAppContext| {
+        // Plain draws, which reuse cached regions a refresh would redraw.
+        for _ in 0..2 {
+            cx.update_window(f.handle, |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+            cx.run_until_parked();
+        }
+        cx.update_window(f.handle, |_, window, _| {
+            (
+                window.find("agent-composer").bounds(),
+                window.find("agent-transcript-area").bounds(),
+            )
+        })
+        .unwrap()
+    };
+    let (before, _) = draw(cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        replace_composer_value(
+            f.panel.read(cx).composer_focus(cx),
+            "one\ntwo\nthree\nfour\nfive",
+            window,
+            cx,
+        );
+    })
+    .unwrap();
+    let (after, transcript) = draw(cx);
+    assert!(
+        after.size.height > before.size.height,
+        "the composer grows with its draft: {before:?} -> {after:?}"
+    );
+    assert_eq!(
+        after.bottom(),
+        before.bottom(),
+        "the composer stays at the bottom"
+    );
+    assert!(
+        transcript.bottom() <= after.top(),
+        "the transcript gives way: {transcript:?} above {after:?}"
+    );
 }

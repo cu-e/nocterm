@@ -23,6 +23,8 @@ impl TransferState {
 pub enum TransferDirection {
     Upload,
     Download,
+    /// Remote to remote, streamed through this application.
+    Relay,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Progress {
@@ -220,6 +222,9 @@ impl ProgressTracker {
             detail_limit: limits.details(),
             cancel_requested: false,
         }
+    }
+    pub fn is_finished(&self) -> bool {
+        self.progress.state.finished()
     }
     pub fn snapshot(&self) -> Progress {
         self.progress.clone()

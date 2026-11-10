@@ -43,14 +43,19 @@ pub(super) struct TestFacts {
 }
 
 /// Collects facts; `test_file` marks files whose every item is test code.
+#[cfg(test)]
 pub(super) fn collect(source: &str, test_file: bool) -> anyhow::Result<FileFacts> {
     let file = syn::parse_file(source)?;
+    Ok(collect_parsed(&file, test_file))
+}
+
+pub(super) fn collect_parsed(file: &syn::File, test_file: bool) -> FileFacts {
     let mut collector = Collector {
         facts: FileFacts::default(),
         in_test: test_file || test_only(&file.attrs),
     };
-    collector.visit_file(&file);
-    Ok(collector.facts)
+    collector.visit_file(file);
+    collector.facts
 }
 
 struct Collector {

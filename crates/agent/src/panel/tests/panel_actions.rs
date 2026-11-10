@@ -16,26 +16,28 @@ pub(super) fn replace_composer_value(
     }
 }
 pub(super) fn new_chat(fixture: &Fixture, cx: &mut TestAppContext) {
+    new_agent_chat(fixture, "codex", cx);
+}
+pub(super) fn new_agent_chat(fixture: &Fixture, agent: &str, cx: &mut TestAppContext) {
     cx.update_window(fixture.handle, |_, window, cx| {
         let focus = fixture.panel.read(cx).composer_focus(cx);
         window.focus(&focus, cx);
         window.render_frame(cx);
         window.click("agent-new-thread", cx);
         window.render_frame(cx);
-        window.click("new-agent-codex", cx);
+        window.click(format!("new-agent-{agent}"), cx);
         window.render_frame(cx);
         let thread = fixture.panel.read(cx).current().unwrap();
-        {
-            let runtime = fixture.installation.installed.runtime();
-            runtime.register_document(crate::thread::client(&thread), cx)
-        };
         thread.update(cx, |thread, cx| thread.request_activation(cx));
     })
     .unwrap();
     cx.run_until_parked();
 }
 pub(super) fn show_history(f: &Fixture, cx: &mut TestAppContext) {
-    cx.update_window(f.handle, |_, window, cx| {
+    show_history_in(f.handle, cx);
+}
+pub(super) fn show_history_in(handle: AnyWindowHandle, cx: &mut TestAppContext) {
+    cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
         if window.try_find("agent-history-column").is_none() {
             window.click("agent-history", cx);

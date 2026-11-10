@@ -19,10 +19,10 @@ fn role(text: &str, needle: &str) -> Option<Role> {
 
 #[test]
 fn screenshot_motd_and_syslog_fields_are_meaningful() {
-    let motd = "Linux cv758185.novalocal 6.12.43+deb13-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.43-1 (2025-08-27) x86_64";
+    let motd = "Linux node4821.example 6.12.43+deb13-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.43-1 (2025-08-27) x86_64";
     assert_eq!(role(motd, "6.12.43+"), Some(Role::Version));
     assert_eq!(role(motd, "2025-08-27"), Some(Role::Timestamp));
-    assert_eq!(role(motd, "cv758185"), None);
+    assert_eq!(role(motd, "node4821"), None);
     assert_eq!(
         role(
             "Debian GNU/Linux comes with ABSOLUTELY NO WARRANTY",
@@ -30,13 +30,13 @@ fn screenshot_motd_and_syslog_fields_are_meaningful() {
         ),
         Some(Role::Error)
     );
-    let log = "Oct 07 15:59:33 cv758185.novalocal sshd-session[460573]: Failed password for root from 136.232.11.10 port 51263 ssh2";
+    let log = "Oct 07 15:59:33 node4821.example sshd-session[460573]: Failed password for root from 203.0.113.10 port 51263 ssh2";
     for (token, expected) in [
         ("Oct 07", Role::Timestamp),
         ("15:59:33", Role::Timestamp),
         ("460573", Role::Identifier),
         ("Failed password", Role::Error),
-        ("136.232.11.10", Role::Address),
+        ("203.0.113.10", Role::Address),
         ("51263", Role::Identifier),
     ] {
         assert_eq!(role(log, token), Some(expected), "{token}");
@@ -51,7 +51,7 @@ fn screenshot_motd_and_syslog_fields_are_meaningful() {
             "Couldn't stat /var/log/lastlog: No such file or directory",
             Role::Error,
         ),
-        ("Connection closed by 82.194.49.43 port 48406", Role::Info),
+        ("Connection closed by 198.51.100.43 port 48406", Role::Info),
         ("WARNING: timed out", Role::Warning),
     ] {
         let needle = if text.starts_with("pam_") {

@@ -10,31 +10,41 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "THIRD_PARTY_NOTICES.txt"
 VERSION = "0.9.2"
 MARKER = "Input fingerprint: "
 CONTENT_MARKER = "Content SHA-256: "
-LICENSE_NAME = re.compile(r"^(licen[cs]e|copying|notice|ofl|copyright)([._-].*)?$", re.I)
+LICENSE_NAME = re.compile(
+    r"^(licen[cs]e|copying|notice|ofl|copyright)([._-].*)?$", re.I
+)
 # Release-please bumps the application's own version on every release (see
 # release-please-config.json). That version appears in no notice, so it is
 # hashed as a placeholder: a release commit must not make the notices stale.
 RELEASED_PACKAGE = "nocterm"
 RELEASED_VERSION = {
-    "Cargo.toml": re.compile(r'(\A\[package\]\nname = "' + RELEASED_PACKAGE + r'"\n(?:(?!\[)[^\n]*\n)*?version = )"[^"\n]*"'),
-    "Cargo.lock": re.compile(r'(\[\[package\]\]\nname = "' + RELEASED_PACKAGE + r'"\nversion = )"[^"\n]*"'),
+    "Cargo.toml": re.compile(
+        r'(\A\[package\]\nname = "'
+        + RELEASED_PACKAGE
+        + r'"\n(?:(?!\[)[^\n]*\n)*?version = )"[^"\n]*"'
+    ),
+    "Cargo.lock": re.compile(
+        r'(\[\[package\]\]\nname = "' + RELEASED_PACKAGE + r'"\nversion = )"[^"\n]*"'
+    ),
 }
 
 
 def tracked_inputs():
     result = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
-        cwd=ROOT, check=True, capture_output=True,
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
     )
     paths = set()
     for name in result.stdout.decode().split("\0"):
@@ -43,12 +53,26 @@ def tracked_inputs():
         path = Path(name)
         # Vendored code is not an input; its manifests, licenses and the
         # assets it bundles into the application are.
-        if name.startswith("vendor/") and not (is_notice_source(path) or "assets" in path.parts):
+        if name.startswith("vendor/") and not (
+            is_notice_source(path) or "assets" in path.parts
+        ):
             continue
-        if (name in {"Cargo.lock", "about.toml", ".gitattributes", "rust-toolchain.toml", "rust-toolchain", ".github/workflows/package.yml", "scripts/generate-license-notices.py", "scripts/prepare-appimage-runtime.py"}
-                or path.name == "Cargo.toml"
-                or name.startswith(("vendor/", "licensing/", ".cargo/"))
-                or "assets" in path.parts):
+        if (
+            name
+            in {
+                "Cargo.lock",
+                "about.toml",
+                ".gitattributes",
+                "rust-toolchain.toml",
+                "rust-toolchain",
+                ".github/workflows/package.yml",
+                "scripts/generate-license-notices.py",
+                "scripts/prepare-appimage-runtime.py",
+            }
+            or path.name == "Cargo.toml"
+            or name.startswith(("vendor/", "licensing/", ".cargo/"))
+            or "assets" in path.parts
+        ):
             if (ROOT / path).is_file():
                 paths.add(name)
     return sorted(paths)
@@ -58,9 +82,15 @@ def is_notice_source(path):
     """Whether a vendored file can change the notices: its crate manifest, which
     cargo-about reads for license expressions, or a license file the notices
     quote. Vendored code changes alone leave the notices as they are."""
-    return (path.name == "Cargo.toml" or LICENSE_NAME.match(path.name) is not None
-            or path.name == "FTL.TXT"
-            or any(part.lower() in {".licenses", "licenses", "licences"} for part in path.parts[:-1]))
+    return (
+        path.name == "Cargo.toml"
+        or LICENSE_NAME.match(path.name) is not None
+        or path.name == "FTL.TXT"
+        or any(
+            part.lower() in {".licenses", "licenses", "licences"}
+            for part in path.parts[:-1]
+        )
+    )
 
 
 def input_bytes(name):
@@ -85,19 +115,36 @@ def fingerprint():
 
 
 def validate_rust_version():
-    sources = json.loads((ROOT / "licensing" / "sources.json").read_text(encoding="utf-8"))
-    versions = [source["version"] for source in sources if source.get("component") == "rust-std"]
+    sources = json.loads(
+        (ROOT / "licensing" / "sources.json").read_text(encoding="utf-8")
+    )
+    versions = [
+        source["version"] for source in sources if source.get("component") == "rust-std"
+    ]
     if len(versions) != 1:
-        raise RuntimeError("Record exactly one pinned rust-std notice version in licensing/sources.json")
+        raise RuntimeError(
+            "Record exactly one pinned rust-std notice version in licensing/sources.json"
+        )
     expected = versions[0]
     toolchain = (ROOT / "rust-toolchain.toml").read_text(encoding="utf-8")
     channel = re.search(r'^channel\s*=\s*"([^"\n]+)"', toolchain, re.M)
     if not channel or channel[1] != expected:
-        raise RuntimeError("Pinned Rust toolchain changed; update the rust-std notice snapshot")
-    installed = subprocess.run(["rustc", "--version"], cwd=ROOT, check=True,
-                               text=True, encoding="utf-8", capture_output=True).stdout.split()
+        raise RuntimeError(
+            "Pinned Rust toolchain changed; update the rust-std notice snapshot"
+        )
+    installed = subprocess.run(
+        ["rustc", "--version"],
+        cwd=ROOT,
+        check=True,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+    ).stdout.split()
     if len(installed) < 2 or installed[1] != expected:
-        raise RuntimeError("Installed Rust compiler differs from the pinned rust-std notice version " + expected)
+        raise RuntimeError(
+            "Installed Rust compiler differs from the pinned rust-std notice version "
+            + expected
+        )
 
 
 def fast_check(output=None):
@@ -105,30 +152,55 @@ def fast_check(output=None):
     content = (output or OUTPUT).read_text(encoding="utf-8")
     expected = MARKER + fingerprint()
     if expected not in content.splitlines():
-        raise RuntimeError("License inputs changed (dependencies, vendor/ or assets); "
-                           "regenerate with `python3 scripts/generate-license-notices.py` "
-                           "after `cargo install --locked --version " + VERSION
-                           + " --features cli cargo-about`")
+        raise RuntimeError(
+            "License inputs changed (dependencies, vendor/ or assets); "
+            "regenerate with `python3 scripts/generate-license-notices.py` "
+            "after `cargo install --locked --version "
+            + VERSION
+            + " --features cli cargo-about`"
+        )
     lines = content.splitlines(keepends=True)
     checksums = [line for line in lines if line.startswith(CONTENT_MARKER)]
     payload = "".join(line for line in lines if not line.startswith(CONTENT_MARKER))
-    if (len(checksums) != 1 or checksums[0].strip() != CONTENT_MARKER
-            + hashlib.sha256(payload.encode()).hexdigest()):
+    if (
+        len(checksums) != 1
+        or checksums[0].strip()
+        != CONTENT_MARKER + hashlib.sha256(payload.encode()).hexdigest()
+    ):
         raise RuntimeError("THIRD_PARTY_NOTICES.txt was edited; regenerate it")
     print("Third-party notice inputs are current.")
 
 
 def collect(cargo_about):
-    version = subprocess.run([cargo_about, "--version"], check=True,
-                             text=True, encoding="utf-8", capture_output=True).stdout.strip()
+    version = subprocess.run(
+        [cargo_about, "--version"],
+        check=True,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+    ).stdout.strip()
     if version != "cargo-about " + VERSION:
         raise RuntimeError(f"Expected cargo-about {VERSION}, found {version}")
     reports = []
     for manifest in ("Cargo.toml", "crates/vault-broker/Cargo.toml"):
         result = subprocess.run(
-            [cargo_about, "generate", "--locked", "--fail", "--format", "json",
-             "--config", str(ROOT / "about.toml"), "--manifest-path", str(ROOT / manifest)],
-            cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8",
+            [
+                cargo_about,
+                "generate",
+                "--locked",
+                "--fail",
+                "--format",
+                "json",
+                "--config",
+                str(ROOT / "about.toml"),
+                "--manifest-path",
+                str(ROOT / manifest),
+            ],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
         )
         # Preserve diagnostics: missing or unrecognized files must remain visible.
         if result.stderr:
@@ -139,11 +211,19 @@ def collect(cargo_about):
 
 def original_files(directory):
     for path in sorted(directory.rglob("*")):
-        if (path.is_file()
-                and path.suffix.lower() not in {".svg", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp"}
-                and (LICENSE_NAME.match(path.name) or path.name == "FTL.TXT"
-                     or any(part.lower() in {".licenses", "licenses", "licences"}
-                            for part in path.relative_to(directory).parts[:-1]))):
+        if (
+            path.is_file()
+            and path.suffix.lower()
+            not in {".svg", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp"}
+            and (
+                LICENSE_NAME.match(path.name)
+                or path.name == "FTL.TXT"
+                or any(
+                    part.lower() in {".licenses", "licenses", "licences"}
+                    for part in path.relative_to(directory).parts[:-1]
+                )
+            )
+        ):
             yield path
 
 
@@ -157,7 +237,10 @@ def render(reports):
     for report in reports:
         for entry in report["crates"]:
             package = entry["package"]
-            packages[(package["name"], package["version"])] = (package, entry["license"])
+            packages[(package["name"], package["version"])] = (
+                package,
+                entry["license"],
+            )
         for license in report["licenses"]:
             text = license["text"].strip()
             key = (license["id"], text)
@@ -180,20 +263,31 @@ def render(reports):
         for source in sources:
             path = ROOT / "licensing" / source["path"]
             if not path.resolve().is_relative_to((ROOT / "licensing").resolve()):
-                raise RuntimeError("Supplemental source path escapes licensing directory")
+                raise RuntimeError(
+                    "Supplemental source path escapes licensing directory"
+                )
             if hashlib.sha256(path.read_bytes()).hexdigest() != source["sha256"]:
-                raise RuntimeError("Pinned license checksum mismatch: " + source["path"])
+                raise RuntimeError(
+                    "Pinned license checksum mismatch: " + source["path"]
+                )
             for identity in source["packages"]:
                 name, version = identity.rsplit("@", 1)
                 actual.add((name, version))
             label = ", ".join(source["packages"]) + " / " + source["path"]
-            supplemental.append((label + "\nSource: " + source["url"],
-                                 path.read_text(encoding="utf-8").strip(), source.get("kind", "notice")))
+            supplemental.append(
+                (
+                    label + "\nSource: " + source["url"],
+                    path.read_text(encoding="utf-8").strip(),
+                    source.get("kind", "notice"),
+                )
+            )
     # freetype-sys omits the FreeType license referenced by its bundled LICENSE.TXT.
     if any(name == "freetype-sys" for name, _ in packages):
         ftl = ROOT / "licensing" / "supplemental" / "freetype" / "FTL.TXT"
         if not ftl.is_file():
-            raise RuntimeError("Supply the pinned FreeType license at licensing/supplemental/freetype/FTL.TXT")
+            raise RuntimeError(
+                "Supply the pinned FreeType license at licensing/supplemental/freetype/FTL.TXT"
+            )
     for identity, (package, _) in sorted(packages.items()):
         directory = Path(package["manifest_path"]).parent
         files = list(original_files(directory))
@@ -202,21 +296,34 @@ def render(reports):
         if override.exists():
             files.extend(original_files(override))
         for path in files:
-            relative = path.relative_to(override if path.is_relative_to(override) else directory)
+            relative = path.relative_to(
+                override if path.is_relative_to(override) else directory
+            )
             label = f"{identity[0]} {identity[1]} / {relative.as_posix()}"
-            supplemental.append((label, path.read_text(encoding="utf-8").strip(), "notice"))
-        if any(path.parent in {directory, override}
-               and path.name.lower() not in {"license-lucide", "license-boringssl", "license-other-bits"}
-               for path in files):
+            supplemental.append(
+                (label, path.read_text(encoding="utf-8").strip(), "notice")
+            )
+        if any(
+            path.parent in {directory, override}
+            and path.name.lower()
+            not in {"license-lucide", "license-boringssl", "license-other-bits"}
+            for path in files
+        ):
             actual.add(identity)
     missing = synthesized - actual
     if missing:
         names = ", ".join(f"{name} {version}" for name, version in sorted(missing))
-        raise RuntimeError("Only synthesized SPDX text available; supply original notices: " + names)
+        raise RuntimeError(
+            "Only synthesized SPDX text available; supply original notices: " + names
+        )
 
     lines = [
-        "Nocterm third-party licenses and notices", "=" * 40, "",
-        "Generated by scripts/generate-license-notices.py using cargo-about " + VERSION + ".",
+        "Nocterm third-party licenses and notices",
+        "=" * 40,
+        "",
+        "Generated by scripts/generate-license-notices.py using cargo-about "
+        + VERSION
+        + ".",
         MARKER + fingerprint(),
         "Cargo.lock SHA-256 (release version masked): "
         + hashlib.sha256(input_bytes("Cargo.lock")).hexdigest(),
@@ -241,7 +348,9 @@ def render(reports):
         "the covered files and build metadata; full license terms are reproduced here.",
         "Vendored modifications retain",
         "their upstream licenses; see each vendor directory's Nocterm change notes.",
-        "", "Dependency inventory", "-" * 40,
+        "",
+        "Dependency inventory",
+        "-" * 40,
     ]
     for (name, version), (package, expression) in sorted(packages.items()):
         lines.extend([f"{name} {version}: {expression}"])
@@ -249,7 +358,9 @@ def render(reports):
             lines.append("Authors: " + "; ".join(package["authors"]))
         source = package.get("source") or ""
         if source.startswith("registry+"):
-            lines.append(f"Source: https://crates.io/api/v1/crates/{name}/{version}/download")
+            lines.append(
+                f"Source: https://crates.io/api/v1/crates/{name}/{version}/download"
+            )
         elif source.startswith("git+"):
             lines.append("Source: " + source)
         else:
@@ -260,21 +371,38 @@ def render(reports):
     corpus = {}
 
     def add_notice(text, label):
-        normalized = "\n".join(line.rstrip() for line in text.replace("\r\n", "\n").strip().splitlines())
+        normalized = "\n".join(
+            line.rstrip() for line in text.replace("\r\n", "\n").strip().splitlines()
+        )
         corpus.setdefault(normalized, set()).add(label)
 
     for (identifier, text), users in sorted(sections.items()):
-        title = "SPDX reference license terms: " if (identifier, text) in reference_terms else "License: "
-        add_notice(text, title + identifier + "\nUsed by: "
-                   + ", ".join(f"{n} {v}" for n, v in sorted(users)))
+        title = (
+            "SPDX reference license terms: "
+            if (identifier, text) in reference_terms
+            else "License: "
+        )
+        add_notice(
+            text,
+            title
+            + identifier
+            + "\nUsed by: "
+            + ", ".join(f"{n} {v}" for n, v in sorted(users)),
+        )
     for label, text, kind in supplemental:
-        title = "Original licensing declaration: " if kind == "declaration" else "Original notice: "
+        title = (
+            "Original licensing declaration: "
+            if kind == "declaration"
+            else "Original notice: "
+        )
         add_notice(text, title + label)
     supplemental_root = ROOT / "licensing" / "supplemental"
     if supplemental_root.exists():
         for path in original_files(supplemental_root):
-            add_notice(path.read_text(encoding="utf-8"),
-                       "Bundled component: " + path.relative_to(supplemental_root).as_posix())
+            add_notice(
+                path.read_text(encoding="utf-8"),
+                "Bundled component: " + path.relative_to(supplemental_root).as_posix(),
+            )
     for text, labels in sorted(corpus.items()):
         lines.extend(["=" * 72, "\n".join(sorted(labels)), "", text, ""])
     content = "\n".join(lines).rstrip() + "\n"
@@ -286,17 +414,31 @@ def render(reports):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", action="store_true", help="regenerate and compare notices")
-    parser.add_argument("--check-inputs", action="store_true", help="fast local packaging drift check")
-    parser.add_argument("--cargo-about", default=os.environ.get("CARGO_ABOUT", "cargo-about"))
-    parser.add_argument("--from-json", type=Path, nargs="+", help="render already harvested cargo-about JSON")
+    parser.add_argument(
+        "--check", action="store_true", help="regenerate and compare notices"
+    )
+    parser.add_argument(
+        "--check-inputs", action="store_true", help="fast local packaging drift check"
+    )
+    parser.add_argument(
+        "--cargo-about", default=os.environ.get("CARGO_ABOUT", "cargo-about")
+    )
+    parser.add_argument(
+        "--from-json",
+        type=Path,
+        nargs="+",
+        help="render already harvested cargo-about JSON",
+    )
     args = parser.parse_args()
     try:
         if args.check_inputs:
             fast_check()
             return
-        reports = ([json.loads(path.read_text(encoding="utf-8")) for path in args.from_json]
-                   if args.from_json else collect(args.cargo_about))
+        reports = (
+            [json.loads(path.read_text(encoding="utf-8")) for path in args.from_json]
+            if args.from_json
+            else collect(args.cargo_about)
+        )
         content = render(reports)
         if args.check:
             if OUTPUT.read_text(encoding="utf-8") != content:
@@ -305,7 +447,14 @@ def main():
         else:
             OUTPUT.write_text(content, encoding="utf-8", newline="\n")
             print("Generated THIRD_PARTY_NOTICES.txt")
-    except (RuntimeError, OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
+    except (
+        RuntimeError,
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        subprocess.CalledProcessError,
+    ) as error:
         if isinstance(error, subprocess.CalledProcessError) and error.stderr:
             print(error.stderr, file=sys.stderr, end="")
         print(f"License notice generation failed: {error}", file=sys.stderr)

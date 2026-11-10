@@ -1,0 +1,49 @@
+[package]
+name = "nocterm-hub-io"
+description = "Reaches Nocterm hubs through the hub contract: pinned TLS, device credentials and sign-in."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "adapter"
+
+[dependencies]
+hex.workspace = true
+nocterm-core.workspace = true
+nocterm-ai.workspace = true
+nocterm-hubs-model.workspace = true
+nocterm-hub-agents-model.workspace = true
+nocterm-session.workspace = true
+nocterm-hub-client.workspace = true
+nocterm-hub-proto.workspace = true
+nocterm-keys.workspace = true
+nocterm-connections-model.workspace = true
+nocterm-vault.workspace = true
+
+async-channel.workspace = true
+base64.workspace = true
+futures.workspace = true
+prost.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tonic.workspace = true
+toml.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+nocterm-core = { workspace = true, features = ["test-support"] }
+tokio = { workspace = true, features = ["test-util"] }
+nocterm-hubs-model = { workspace = true, features = ["test-support"] }
+nocterm-session = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+nocterm-connections-model = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

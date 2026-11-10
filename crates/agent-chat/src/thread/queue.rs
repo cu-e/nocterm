@@ -1,22 +1,19 @@
-//! Prompt snapshots and FIFO dispatch. Cancellation completes before dispatch resumes.
+//! Prompt snapshots and FIFO dispatch. Cancellation completes before dispatch resumes, and a
+//! turn the agent runs for another device holds dispatch until it ends.
 use super::tools::unreachable;
 use super::{
     background_open::BackgroundOpen,
     bound_call::BoundToolCall,
     connection_wait::{ConnectionWaitError, WaitTarget},
-    execution::jobs,
+    execution::WaitSubject,
 };
 use gpui::{App, Context, EntityId, Task};
 use nocterm_ai::history::{SavedAttachment, SavedPrompt};
 use nocterm_ai::model::content::Content;
 use nocterm_ai::{BridgeCall, TerminalCall, ToolFailure};
-use nocterm_session::ExecRequest;
 
 use nocterm_workspace_ports::{ExpectedSession, TerminalEntry, TerminalStatus};
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-};
+use std::sync::Arc;
 
 use super::{AgentThread, Attachment};
 
@@ -26,7 +23,6 @@ pub(super) use submit_error::SubmitError;
 #[derive(Clone)]
 pub struct QueuedPrompt {
     saved: Arc<SavedPrompt>,
-    image_keys: Arc<Vec<Option<(usize, usize, bool)>>>,
     attachments: Vec<Attachment>,
     encoded_len: usize,
     memory_len: usize,
@@ -42,37 +38,18 @@ impl QueuedPrompt {
         attachments: Vec<Attachment>,
         encoded_len: Option<usize>,
     ) -> Self {
-        static NEXT_IMAGE: AtomicUsize = AtomicUsize::new(1);
         let encoded_len = encoded_len
             .unwrap_or_else(|| nocterm_ai::history::prompt_size(&saved).unwrap_or(usize::MAX));
-        let image_keys = saved
-            .images
-            .iter()
-            .map(|block| match block {
-                Content::Image(image) => Some((
-                    NEXT_IMAGE.fetch_add(1, Ordering::Relaxed),
-                    image.data.len(),
-                    true,
-                )),
-                _ => None,
-            })
-            .collect();
         let memory_len = nocterm_ai::history::prompt_memory(&saved).unwrap_or(usize::MAX);
         Self {
             memory_len,
             saved: Arc::new(saved),
             attachments,
-            image_keys: Arc::new(image_keys),
             encoded_len,
         }
     }
     pub fn saved(&self) -> &Arc<SavedPrompt> {
         &self.saved
-    }
-    /// One key per image block: its preview identity, encoded size and
-    /// whether it still awaits preparation; `None` for other blocks.
-    pub fn image_keys(&self) -> &[Option<(usize, usize, bool)>] {
-        &self.image_keys
     }
     /// What the prompt was written about, captured when it was queued.
     pub fn attachments(&self) -> &[Attachment] {
@@ -87,7 +64,7 @@ impl QueuedPrompt {
 }
 
 impl AgentThread {
-    fn start_execution_watch(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn start_execution_watch(&mut self, cx: &mut Context<Self>) {
         if self.tools.has_watch() {
             return;
         }
@@ -98,9 +75,9 @@ impl AgentThread {
         }));
     }
 
-    pub(super) fn poll_command_wait(
+    pub(super) fn poll_tool_wait(
         &mut self,
-        operation: &super::execution::CommandWaitOperation,
+        operation: &super::execution::ToolWaitOperation,
         cx: &mut Context<Self>,
     ) -> Result<Option<serde_json::Value>, ToolFailure> {
         if !self.session.session_current(operation.ticket())
@@ -110,23 +87,18 @@ impl AgentThread {
             return Err(ToolFailure::from("Chat is unavailable."));
         }
         self.revoke_executions(cx);
-        let state = self
-            .tools
-            .command_snapshot(operation.id(), operation.terminal())?;
-        operation.frame(state, self.deps.ai(cx).approval.redact_secrets)
+        operation.frame(&mut self.tools, self.deps.ai(cx).approval.redact_secrets)
     }
 
-    fn wait_command(
+    pub(super) fn wait_tool(
         &mut self,
-        terminal: String,
-        id: String,
+        subject: WaitSubject,
         yield_ms: u64,
         call: BridgeCall,
         cx: &mut Context<Self>,
     ) {
-        let operation = super::execution::CommandWaitOperation::new(
-            terminal,
-            id,
+        let operation = super::execution::ToolWaitOperation::new(
+            subject,
             yield_ms,
             self.session.ticket(),
             self.hold_operation(),
@@ -150,9 +122,8 @@ impl AgentThread {
         let TerminalCall::ReadCommand(request) = &call.call else {
             return;
         };
-        let terminal = request.terminal_id.clone();
-        let id = request.command_id.clone();
-        self.wait_command(terminal, id, request.yield_ms.unwrap_or(0), call, cx);
+        let subject = WaitSubject::command(&request.terminal_id, &request.command_id);
+        self.wait_tool(subject, request.yield_ms.unwrap_or(0), call, cx);
     }
 
     pub(super) fn execute_command(
@@ -165,48 +136,19 @@ impl AgentThread {
         let TerminalCall::ExecCommand(request) = &call.call else {
             return;
         };
-        let executor = match entry
-            .capabilities
-            .execution()
-            .ok_or(nocterm_workspace_ports::TerminalError::Unsupported(
-                nocterm_workspace_ports::TerminalCapability::StructuredExecution,
-            ))
-            .and_then(|port| port.executor(expected, cx))
+        let source =
+            super::tool_runtime::source_execution::SourceExecution::capture(self.deps.runtime());
+        let (id, run) = match source
+            .and_then(|source| source.start(entry, expected, request, &mut self.tools, cx))
         {
-            Ok(executor) => executor,
-            Err(error) => {
-                self.finish(call, Err(error.to_string().into()));
-                return;
-            }
+            Ok(started) => started,
+            Err(error) => return self.finish(call, Err(error)),
         };
-        let program = ExecRequest {
-            program: request.program.clone(),
-            args: request.args.clone(),
-            stdin: request
-                .stdin
-                .as_ref()
-                .map(|stdin| stdin.as_bytes().to_vec()),
-        };
-        let timer = cx
-            .background_executor()
-            .timer(jobs::timeout(request.timeout_ms));
-        let started =
-            match self
-                .tools
-                .start_command(request.terminal_id.clone(), executor, program, timer)
-            {
-                Ok(started) => started,
-                Err(error) => {
-                    self.finish(call, Err(error));
-                    return;
-                }
-            };
-        let (id, run) = started.into_run();
         cx.background_executor().spawn(run).detach();
         self.start_execution_watch(cx);
-        let terminal = request.terminal_id.clone();
+        let subject = WaitSubject::command(&request.terminal_id, &id);
         let yield_ms = request.yield_ms.unwrap_or(1000);
-        self.wait_command(terminal, id, yield_ms, call, cx);
+        self.wait_tool(subject, yield_ms, call, cx);
     }
 
     fn reconnect_target(
@@ -219,6 +161,9 @@ impl AgentThread {
             .bindings
             .window()
             .ok_or(ConnectionWaitError::WorkspaceClosed)?;
+        if !self.deps.enabled(cx) {
+            return Err(ConnectionWaitError::Stopped);
+        }
         let receipt = self.tools.prepare_reconnect(entry, expected, cx)?;
         Ok(WaitTarget::new(
             self.deps.seat().clone(),
@@ -363,8 +308,15 @@ impl AgentThread {
             DispatchAction::Execute(entry, expected, call) => {
                 self.execute_command(entry, expected, call, cx)
             }
+            DispatchAction::Files(call, work) => {
+                let guard = self.hold_operation();
+                super::tool_runtime::file_dispatch::complete(call, work, guard, cx);
+            }
             DispatchAction::Read(call) => self.read_command(call, cx),
             DispatchAction::Cancel(call) => self.cancel_command(call, cx),
+            DispatchAction::Transfer(admission) => self.start_transfer(*admission, cx),
+            DispatchAction::ReadTransfer(call) => self.read_transfer(call, cx),
+            DispatchAction::CancelTransfer(call) => self.cancel_transfer(call, cx),
             DispatchAction::Ignore => {}
         }
     }
@@ -377,7 +329,9 @@ impl AgentThread {
         cx: &mut Context<Self>,
     ) {
         let redact = self.deps.ai(cx).approval.redact_secrets;
-        let action = self.tools.dispatch(call, entry, expected, redact, cx);
+        let action = self
+            .tools
+            .dispatch(call, entry, expected, redact, self.deps.enabled(cx), cx);
         self.apply_dispatch_action(action, cx);
     }
 
@@ -558,6 +512,9 @@ impl AgentThread {
         call: BridgeCall,
         cx: &mut Context<Self>,
     ) {
+        if !self.deps.enabled(cx) {
+            return self.finish_unreachable(call, "Chat is unavailable.");
+        }
         let mut operation =
             match super::live::LiveCommandOperation::acquire(entry, expected, request, cx) {
                 Ok(operation) => operation,
@@ -590,7 +547,11 @@ impl AgentThread {
         // ACP adapters inspect the first block for slash commands; local
         // administrative commands may require a single text block.
         let is_command = nocterm_ai::commands::invocation(&text, self.config.commands()).is_some();
-        let context = (!is_command).then(|| self.context(cx));
+        // An agent with tools of its own gets only what the person wrote.
+        let own_tools = self
+            .agent_info()
+            .is_some_and(|info| info.capabilities.own_tools);
+        let context = (!is_command && !own_tools).then(|| self.context(cx));
         let history = (self.state.pending_history() && !is_command)
             .then(|| super::session::history_context(self.state.entries()));
         let prepared = super::composer::prompt_preparation::PromptPreparation::new(
@@ -605,8 +566,15 @@ impl AgentThread {
         let resume =
             super::document::Resume::new(Some(session.to_string()), self.session_workdir().clone());
         let input = super::document::Inputs::new(&self.composer, &self.config, attachments, resume);
-        self.state
-            .append_user(prepared.visible().to_vec(), self.deps.timestamp(), &input);
+        if let Err(error) =
+            self.state
+                .append_user(prepared.visible().to_vec(), self.deps.timestamp(), &input)
+        {
+            self.fail(&error.to_string(), cx);
+            return;
+        }
+        // Consume only after live-transcript admission: a refusal preserves the queued body.
+        let _ = self.composer.take_next();
         self.mark_dirty(self.state.entries().len() - 1);
         self.persist(cx);
         self.notice.present("Thinking…".into());
@@ -647,6 +615,7 @@ impl AgentThread {
                 self.prune_background(cx);
             }
         }
+        self.offer_tools(cx);
         self.accept_document_inputs(cx, false);
         self.save(cx);
         cx.notify();
@@ -692,7 +661,10 @@ impl AgentThread {
         if !self.deps.enabled(cx) || self.session.sign_in_required() {
             return Ok(false);
         }
-        if text.trim().is_empty() && self.composer.images().is_empty() {
+        if text.trim().is_empty()
+            && self.composer.images().is_empty()
+            && self.composer.files().is_empty()
+        {
             return Ok(false);
         }
         let candidate = self.composer.prepare_submission(
@@ -726,6 +698,36 @@ impl AgentThread {
         Ok(true)
     }
 
+    /// A turn the agent runs for another device: its prompt joins the transcript and the chat
+    /// shows the agent working until the turn ends; then the chat's own queue goes on.
+    pub(super) fn external_turn(
+        &mut self,
+        activity: &nocterm_ai::model::session::TurnActivity,
+        cx: &mut Context<Self>,
+    ) {
+        use nocterm_ai::model::session::TurnActivity;
+        match activity {
+            TurnActivity::Started { prompt } => {
+                if let Err(error) = self.state.append_prompt(prompt, self.deps.timestamp()) {
+                    return self.fail(&error.to_string(), cx);
+                }
+                if self.session.begin_external_turn() {
+                    self.notice.present("Working…".into());
+                }
+            }
+            TurnActivity::Ended => {
+                if !self.session.finish_external_turn() {
+                    return;
+                }
+                self.finalize_tool_displays();
+                self.notice.present("Ready".into());
+                self.persist(cx);
+                self.dispatch_next(cx);
+            }
+        }
+        cx.notify();
+    }
+
     pub fn dispatch_next(&mut self, cx: &mut Context<Self>) {
         if !self.queue_dispatchable()
             || self.session.generating()
@@ -745,7 +747,7 @@ impl AgentThread {
         if self.session.phase() != nocterm_ai::session::SessionPhase::Ready {
             return;
         }
-        let Some(prompt) = self.composer.take_next() else {
+        let Some(prompt) = self.composer.queue().first().cloned() else {
             return;
         };
         // Context is fixed for this turn, including terminal tool access.
@@ -770,7 +772,7 @@ pub(super) fn restore_attachments(values: &[SavedAttachment]) -> Vec<Attachment>
 mod tests {
     use super::*;
     #[test]
-    fn rendering_snapshot_shares_image_payload_and_precomputed_keys() {
+    fn rendering_snapshot_shares_immutable_image_payload() {
         let prompt = QueuedPrompt::new(
             SavedPrompt {
                 id: 1,
@@ -784,8 +786,14 @@ mod tests {
             Vec::new(),
         );
         let copy = prompt.clone();
-        assert!(Arc::ptr_eq(&prompt.saved, &copy.saved));
-        assert!(Arc::ptr_eq(&prompt.image_keys, &copy.image_keys));
-        assert_eq!(copy.image_keys[0].unwrap().1, 2 * 1024 * 1024);
+        assert!(Arc::ptr_eq(prompt.saved(), copy.saved()));
+        let Content::Image(original) = &prompt.saved().images[0] else {
+            panic!("image");
+        };
+        let Content::Image(cloned) = &copy.saved().images[0] else {
+            panic!("image");
+        };
+        assert_eq!(original.data.as_ptr(), cloned.data.as_ptr());
+        assert_eq!(cloned.data.len(), 2 * 1024 * 1024);
     }
 }

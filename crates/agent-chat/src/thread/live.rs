@@ -158,11 +158,12 @@ impl LiveCommandOperation {
                 },
                 cx,
             )?;
-        let (mut payload, bytes) = super::tool_runtime::presentation::text_payload(tail, redact);
-        payload["completion"] = serde_json::json!(reason);
-        payload["exit_status"] = serde_json::Value::Null;
-        payload["completed"] = serde_json::json!(reason == "prompt_returned");
-        Ok(Some((payload, bytes)))
+        let report = super::tool_runtime::presentation::terminal_report(tail, redact);
+        let bytes = report.text.len();
+        Ok(Some((
+            serde_json::json!(report.observed(reason.into())),
+            bytes,
+        )))
     }
     pub(super) async fn run(
         mut self,

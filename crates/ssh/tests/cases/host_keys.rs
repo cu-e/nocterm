@@ -141,7 +141,7 @@ async fn changed_host_can_connect_once_before_authentication_without_writing() {
         };
         assert_eq!(hop, None, "the destination is not a jump host");
         assert_eq!(host, "127.0.0.1");
-        assert_eq!(port, sshd.port);
+        assert_eq!(port, sshd.port());
         assert_eq!(algorithm, "ssh-ed25519");
         assert_eq!(fingerprint, sshd.host_fingerprint());
         assert_eq!(old_fingerprints.len(), 1);
@@ -331,20 +331,12 @@ async fn accepted_first_key_in_two_key_authentication_is_not_reported_as_rejecte
     let Some(mut sshd) = Sshd::start() else {
         return;
     };
-    sshd.process.kill().unwrap();
-    sshd.process.wait().unwrap();
+    sshd.stop().unwrap();
     let config_path = sshd.root().join("sshd_config");
     let mut config = fs::read_to_string(&config_path).unwrap();
     config.push_str("AuthenticationMethods publickey,publickey\n");
     fs::write(&config_path, config).unwrap();
-    sshd.process = Command::new(find_sshd().unwrap())
-        .args(["-D", "-e", "-f"])
-        .arg(&config_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .spawn()
-        .unwrap();
-    sshd.wait_until_listening();
+    sshd.restart().unwrap();
     let transport = sshd.transport("plain");
     let session = transport.open(sshd.request());
     let reason = closed(&session, accept).await;

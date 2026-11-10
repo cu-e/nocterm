@@ -14,7 +14,7 @@ use gpui_kit::{
 };
 use nocterm_ai::model::tools::ToolRecord;
 use nocterm_ai::{
-    TerminalCall,
+    TerminalCall, TransferFiles,
     tool_display::{self, ToolDisplay},
 };
 use nocterm_ui::IconName;
@@ -217,7 +217,85 @@ fn request_source(call: TerminalCall) -> Source {
         TerminalCall::ListTerminals => {
             Source::plain("Scope", "Terminals attached to this chat".into(), None)
         }
+        TerminalCall::TransferFiles(v) => transfer_source(v),
+        TerminalCall::ReadTransfer(v) => transfer_handle(v.transfer_id, v.yield_ms),
+        TerminalCall::CancelTransfer(v) => transfer_handle(v.transfer_id, None),
+        call @ (TerminalCall::ListFiles(_)
+        | TerminalCall::ReadFile(_)
+        | TerminalCall::WriteFile(_)
+        | TerminalCall::EditFile(_)
+        | TerminalCall::MakeDirectory(_)
+        | TerminalCall::DeletePath(_)
+        | TerminalCall::MovePath(_)) => file_source(call),
     }
+}
+
+/// A file call: its path, with what a change writes.
+fn file_source(call: TerminalCall) -> Source {
+    let terminal = call.terminal_id().unwrap_or_default().to_owned();
+    let mut source = match call {
+        TerminalCall::ListFiles(v) => Source::plain("Folder", v.path, None),
+        TerminalCall::ReadFile(v) => {
+            let mut source = Source::plain("File", v.path, None);
+            source.parameters.push(format!(
+                "From line {}, {} lines",
+                v.start_line.unwrap_or(1),
+                v.max_lines.unwrap_or(2000)
+            ));
+            source
+        }
+        TerminalCall::WriteFile(v) => {
+            let mut source = Source::plain("Content", v.content, None);
+            source.parameters.push(format!("File {}", v.path));
+            if v.overwrite {
+                source.parameters.push("Replaces an existing file".into());
+            }
+            source
+        }
+        TerminalCall::EditFile(v) => {
+            let mut source = Source::plain("Replace", v.old_text, None);
+            source.extra.push(Section {
+                label: "With",
+                text: v.new_text,
+                language: None,
+            });
+            source.parameters.push(format!("File {}", v.path));
+            if v.replace_all {
+                source.parameters.push("Every occurrence".into());
+            }
+            source
+        }
+        TerminalCall::MakeDirectory(v) => Source::plain("New folder", v.path, None),
+        TerminalCall::DeletePath(v) => Source::plain("Delete", v.path, None),
+        TerminalCall::MovePath(v) => Source::plain("Move", format!("{}\n→ {}", v.from, v.to), None),
+        _ => Source::plain("Tool input", String::new(), None),
+    };
+    source.parameters.push(format!("Terminal {terminal}"));
+    source
+}
+
+fn transfer_source(v: TransferFiles) -> Source {
+    let mut source = Source::plain("Sources", v.sources.join("\n"), None);
+    source.parameters = vec![
+        format!("From terminal {}", v.source_terminal_id),
+        format!(
+            "Into {} on terminal {}",
+            v.destination, v.destination_terminal_id
+        ),
+        format!(
+            "Existing files: {}",
+            if v.overwrite { "replace" } else { "skip" }
+        ),
+    ];
+    source
+}
+
+fn transfer_handle(transfer_id: String, wait_ms: Option<u64>) -> Source {
+    let mut source = Source::plain("Transfer handle", transfer_id, None);
+    if let Some(wait) = wait_ms {
+        source.parameters.push(format!("Wait {wait} ms"));
+    }
+    source
 }
 
 fn shell_script<'a>(program: &str, args: &'a [String]) -> Option<&'a str> {

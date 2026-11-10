@@ -1,7 +1,8 @@
-//! One presentation index per render, independent of terminal grants.
+//! One presentation index per render, projected from the chat's original seat.
 use crate::thread::Attachment;
-use gpui_kit::{App, EntityId, WeakEntity};
-use nocterm_workspace::{TerminalStatus, Workspace};
+use gpui_kit::{App, EntityId};
+use nocterm_agent_chat::seat::Seat;
+use nocterm_workspace::TerminalStatus;
 use std::collections::{HashMap, HashSet};
 pub(super) struct AttachmentLabels {
     terminals: HashMap<EntityId, (String, bool)>,
@@ -10,11 +11,9 @@ pub(super) struct AttachmentLabels {
     groups: HashSet<String>,
 }
 impl AttachmentLabels {
-    pub(super) fn new(workspace: &WeakEntity<Workspace>, cx: &App) -> Self {
-        let workspace = workspace.upgrade();
-        let terminals = workspace
-            .as_ref()
-            .map(|workspace| workspace.read(cx).terminals(cx))
+    pub(super) fn new(seat: &Seat, cx: &App) -> Self {
+        let terminals = seat
+            .terminals(cx)
             .unwrap_or_default()
             .into_iter()
             .map(|entry| {
@@ -26,11 +25,7 @@ impl AttachmentLabels {
                 (entry.item, (entry.title.to_string(), connected))
             })
             .collect();
-        let summaries = workspace
-            .as_ref()
-            .and_then(|workspace| workspace.read(cx).connection_directory())
-            .map(|directory| directory.connections(cx))
-            .unwrap_or_default();
+        let summaries = seat.connections(cx);
         let groups = summaries
             .iter()
             .filter_map(|summary| summary.group.as_ref().map(ToString::to_string))

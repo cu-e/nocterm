@@ -1,7 +1,9 @@
 //! Decode the known bridge payload independently of provider envelopes.
 use super::super::Output;
 use crate::panel::entries::tool_input::Section;
-use serde::Deserialize;
+use nocterm_ai::tools::output::{
+    CommandReport as Command, ObservationReport as Observation, TerminalReport as Terminal,
+};
 use serde_json::Value;
 
 /// Shape recognition protects payload fields from being mistaken for wrappers.
@@ -87,18 +89,6 @@ pub(super) fn known(tool: &str, value: &Value) -> Option<Output> {
     Some(output)
 }
 
-#[derive(Deserialize)]
-struct Command {
-    command_id: String,
-    state: String,
-    stdout: String,
-    stderr: String,
-    exit_status: Option<u32>,
-    total_bytes: u64,
-    truncated: bool,
-    error: Option<String>,
-}
-
 pub(super) fn command(value: &Value) -> Option<Output> {
     let value: Command = serde_json::from_value(value.clone()).ok()?;
     let state = match value.state.as_str() {
@@ -141,18 +131,8 @@ pub(super) fn command(value: &Value) -> Option<Output> {
     Some(output)
 }
 
-#[derive(Deserialize)]
-struct Terminal {
-    text: String,
-    first_line: u64,
-    next_line: u64,
-    cursor_semantics: String,
-    truncated: bool,
-    alt_screen: bool,
-}
-
 fn terminal_output(value: Terminal) -> Option<Output> {
-    if value.cursor_semantics != "inclusive snapshot; replace overlapping lines" {
+    if value.cursor_semantics != Terminal::CURSOR_SEMANTICS {
         return None;
     }
     let mut output = Output::plain("Terminal output", value.text);
@@ -172,18 +152,6 @@ pub(super) fn terminal(value: &Value) -> Option<Output> {
     terminal_output(serde_json::from_value(value.clone()).ok()?)
 }
 
-#[derive(Deserialize)]
-struct Observation {
-    text: String,
-    first_line: u64,
-    next_line: u64,
-    cursor_semantics: String,
-    truncated: bool,
-    alt_screen: bool,
-    completion: String,
-    completed: bool,
-    exit_status: Option<u32>,
-}
 pub(super) fn observation(value: &Value) -> Option<Output> {
     let value: Observation = serde_json::from_value(value.clone()).ok()?;
     let status = match (value.completion.as_str(), value.completed) {
@@ -195,14 +163,7 @@ pub(super) fn observation(value: &Value) -> Option<Output> {
     if value.exit_status.is_some() {
         return None;
     }
-    let mut output = terminal_output(Terminal {
-        text: value.text,
-        first_line: value.first_line,
-        next_line: value.next_line,
-        cursor_semantics: value.cursor_semantics,
-        truncated: value.truncated,
-        alt_screen: value.alt_screen,
-    })?;
+    let mut output = terminal_output(value.terminal)?;
     output.parameters.push(status.into());
     output.parameters.push("Exit status: unknown".into());
     Some(output)

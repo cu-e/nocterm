@@ -39,16 +39,11 @@ trait PageState: Sized + 'static {
         cx: &mut Context<Self>,
     ) {
         let key = key.into();
-        let field = SettingsTextField::new(
+        let field = SettingsTextField::section(
             self.settings().clone(),
             key.clone(),
-            move |document| read(document.get::<S>()),
-            move |document, text| {
-                let mut section = document.get::<S>().clone();
-                write(&mut section, text).map_err(nocterm_store::StoreError::edit)?;
-                document.set(section);
-                Ok(())
-            },
+            read,
+            write,
             window,
             cx,
         );

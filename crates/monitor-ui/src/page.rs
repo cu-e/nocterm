@@ -341,12 +341,6 @@ impl Render for MonitorPage {
                 })
                 .collect::<Vec<_>>()
         };
-        let status_bar = rows(
-            "monitor-status",
-            &monitor.status_bar,
-            |monitor| &mut monitor.status_bar,
-            cx,
-        );
         let details = rows(
             "monitor-details",
             &monitor.details,
@@ -363,7 +357,6 @@ impl Render for MonitorPage {
             ))
             .child(form::section("General", general, cx))
             .child(form::section("Refresh", refresh, cx))
-            .child(form::section("Status bar", status_bar, cx))
             .child(form::section("Details", details, cx))
     }
 }

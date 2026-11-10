@@ -11,9 +11,7 @@ fn password() -> Secret {
     Secret::new("unique test master passphrase")
 }
 fn binding() -> CredentialBinding {
-    CredentialBinding::Password {
-        target: Target::new("vault-user", "vault-secret-host", 22),
-    }
+    CredentialBinding::password([Target::new("vault-user", "vault-secret-host", 22)])
 }
 fn created(path: &Path) -> Vault {
     let mut vault = Vault::new(path);
@@ -172,9 +170,7 @@ fn credential_binding_and_private_permissions_are_enforced() {
     let id = vault
         .put(None, "one".into(), binding(), Secret::new("secret"))
         .unwrap();
-    let other = CredentialBinding::Password {
-        target: Target::new("other", "elsewhere", 22),
-    };
+    let other = CredentialBinding::password([Target::new("other", "elsewhere", 22)]);
     assert!(matches!(vault.get(id, &other), Err(VaultError::Binding)));
     assert!(matches!(
         vault.put(Some(id), "other".into(), other, Secret::new("other")),
@@ -238,6 +234,12 @@ fn bounded_file_reads_reject_oversized_envelopes_and_non_files() {
     fs::remove_file(&path).unwrap();
     fs::create_dir(&path).unwrap();
     assert!(matches!(vault.unlock(password()), Err(VaultError::Format)));
+    #[cfg(unix)]
+    {
+        fs::remove_dir(&path).unwrap();
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        assert!(matches!(vault.unlock(password()), Err(VaultError::Format)));
+    }
 }
 
 #[cfg(unix)]

@@ -8,6 +8,8 @@
 //! Invariants: final work is immutable before App teardown; one disk gate orders
 //! normal and final writes; durable state advances only after successful writes;
 //! ready-key capacity bounds dispatch tokens and never drops accepted dirty keys.
+//! A borrowed retained-values observer includes latest and older active generations;
+//! consumers may account payload bytes without duplicating the keyed ownership map.
 //! Checked settings edits reject their whole ordered candidate before revision/publication.
 //! Edit/backend causes retain their concrete errors through core shared ownership.
 //! Joined failures preserve their original primary cause and separate secondary diagnostic.

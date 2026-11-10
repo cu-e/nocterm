@@ -5,6 +5,24 @@ use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
 use nocterm_ai::model::tools::ToolRecord;
 use nocterm_ai::thread::Entry;
 
+#[gpui_kit::test]
+fn borrowed_local_rows_keep_their_copy_and_fork_actions(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    exchange(&f, "Local question", "Local answer", cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find(("fork-message", 0usize)).is_some());
+        window.hover(("agent-entry", 0usize), cx);
+        window.click(("copy-message", 0usize), cx);
+        assert_eq!(
+            cx.read_from_clipboard().unwrap().text().as_deref(),
+            Some("Local question")
+        );
+    })
+    .unwrap();
+}
+
 fn transcript(f: &Fixture, cx: &mut TestAppContext) -> Entity<crate::thread::AgentThread> {
     new_chat(f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
@@ -317,7 +335,7 @@ fn streaming_and_new_messages_preserve_reader_anchor_and_new_chat_clears_navigat
 
 #[gpui_kit::test]
 fn navigation_pill_fits_narrow_chat_in_both_themes_and_keeps_rows_virtual(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 14., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 14., workspace_resolver(), image_deps());
     let thread = transcript(&f, cx);
     thread.update(cx, |thread, cx| {
         let mut entries = thread.history_entries().to_vec();
@@ -522,6 +540,41 @@ fn streaming_keeps_reader_scroll_until_jump_to_latest(cx: &mut TestAppContext) {
     })
     .unwrap();
     complete_active(&f, cx);
+}
+
+#[gpui_kit::test]
+fn a_code_block_streamed_in_chunks_copies_its_whole_code(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    cx.update(|cx| cx.set_reduce_motion(true));
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("Show debounce".into(), cx));
+    cx.run_until_parked();
+    let session = cx.update(|cx| thread.read(cx).session().clone().unwrap());
+    let code = "export function debounce() {\n  return null;\n}";
+    for chunk in [
+        "Here it is:\n\n```typescript\nexport function debounce() {\n",
+        "  return null;\n}\n```\n",
+    ] {
+        f.events
+            .try_send(AgentEvent::Session(SessionNotice::new(
+                session.clone(),
+                SessionUpdate::AgentMessageChunk(Content::text(chunk)),
+            )))
+            .unwrap();
+        cx.run_until_parked();
+        for _ in 0..3 {
+            // Plain draws, which reuse the cached transcript unless it was told to redraw.
+            cx.update_window(f.handle, |_, window, cx| window.draw(cx).clear(cx))
+                .unwrap();
+            cx.run_until_parked();
+        }
+    }
+    cx.update_window(f.handle, |_, window, cx| {
+        window.click("copy", cx);
+        assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), code);
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]

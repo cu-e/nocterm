@@ -17,12 +17,12 @@ pub(super) fn run_group_action(
 ) {
     let (done, key, title) = connections.update(cx, |connections, cx| match action {
         GroupAction::Ungroup => (
-            connections.ungroup(group.clone(), cx),
+            connections.ungroup_of(expected, group.clone(), cx),
             "connections-ungroup",
             "Could not ungroup connections",
         ),
         GroupAction::Delete => (
-            connections.delete_group(group.clone(), expected, cx),
+            connections.delete_group_of(group.clone(), expected, cx),
             "connections-delete-group",
             "Could not delete group",
         ),

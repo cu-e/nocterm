@@ -1,9 +1,13 @@
-//! Native local PTY, structured commands and detached external editors.
-//! Owns: native launch, bounded I/O, exclusive pinned output logs and process ownership.
+//! Native local PTY, structured commands, detached external editors and the local wall clock.
+//! Owns: native launch, bounded I/O, exclusive pinned output logs, process ownership and
+//! reading the system time and time zone.
 //! Does not own: session contracts, filesystem traversal, editor selection or views.
 //! Ports used: session channels. Ports provided: Transport, HostExec, ProgramOpener,
-//! recording::OutputLogFactory. Output-log operations run only on their caller executor.
+//! recording::OutputLogFactory, nocterm_core::clock::WallClock (`SystemClock`). Output-log
+//! operations run only on their caller executor.
 //! Settings section: local options are composed by the app. Globals: none.
+//! Linux PTY reads wait for descriptor readiness, owner closure or the owned leader's pidfd;
+//! kernels denying pidfds and other platforms retain bounded process-status polling.
 //! Invariants: PTY/exec cancellation owns process cleanup; external editors instead
 //! retain a bounded independent wait owner and survive receipt/application exit.
 
@@ -21,14 +25,21 @@ use std::{
 use futures::{FutureExt, executor::block_on, select};
 use nocterm_session::{
     CloseReason, Command, ConnectRequest, Event, PtySize, Session, SessionError, ShellLaunch,
-    Transport, channel,
+    Transport,
 };
 use portable_pty::{CommandBuilder, PtySize as NativeSize, native_pty_system};
 
+mod clock;
+#[cfg(target_os = "linux")]
 mod exec;
+mod integration;
 mod program_opener;
+#[cfg(target_os = "linux")]
+mod readiness;
 mod recording;
 
+pub use clock::SystemClock;
+#[cfg(target_os = "linux")]
 pub use exec::LocalExec;
 pub use program_opener::{LocalProgramOpener, MAX_OPEN_PROGRAMS};
 pub use recording::LocalOutputLogFactory;
@@ -37,9 +48,58 @@ pub use recording::LocalOutputLogFactory;
 #[derive(Clone, Debug)]
 pub struct LocalTransport(pub ShellLaunch);
 
+impl LocalTransport {
+    /// Carries native launch preparation to the existing startup worker.
+    pub fn prepared(
+        launch: ShellLaunch,
+        preparation: Option<Arc<dyn nocterm_session::ShellLaunchPreparation>>,
+    ) -> Arc<dyn Transport> {
+        Arc::new(PreparedLocalTransport {
+            launch,
+            preparation,
+        })
+    }
+}
+struct PreparedLocalTransport {
+    launch: ShellLaunch,
+    preparation: Option<Arc<dyn nocterm_session::ShellLaunchPreparation>>,
+}
+impl Transport for PreparedLocalTransport {
+    fn open(&self, request: ConnectRequest) -> Session {
+        self.open_with(request, Default::default())
+    }
+    fn open_with(
+        &self,
+        request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+    ) -> Session {
+        open_prepared(
+            self.launch.clone(),
+            false,
+            request.term,
+            request.size,
+            options.source().clone(),
+            self.preparation.clone(),
+        )
+    }
+}
+
 impl Transport for LocalTransport {
     fn open(&self, request: ConnectRequest) -> Session {
         open(self.0.clone(), false, request.term, request.size)
+    }
+    fn open_with(
+        &self,
+        request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+    ) -> Session {
+        open_scoped(
+            self.0.clone(),
+            false,
+            request.term,
+            request.size,
+            options.source().clone(),
+        )
     }
 }
 
@@ -51,22 +111,83 @@ impl Transport for IsolatedLocalTransport {
     fn open(&self, request: ConnectRequest) -> Session {
         open(self.0.clone(), true, request.term, request.size)
     }
+    fn open_with(
+        &self,
+        request: ConnectRequest,
+        options: nocterm_session::ConnectionOpenOptions,
+    ) -> Session {
+        open_scoped(
+            self.0.clone(),
+            true,
+            request.term,
+            request.size,
+            options.source().clone(),
+        )
+    }
 }
 
 /// Starts `launch` on a new PTY, on a thread of its own.
 fn open(launch: ShellLaunch, isolated: bool, term: String, pty: PtySize) -> Session {
+    open_scoped(launch, isolated, term, pty, Default::default())
+}
+fn open_scoped(
+    launch: ShellLaunch,
+    isolated: bool,
+    term: String,
+    pty: PtySize,
+    source: nocterm_session::ConnectionSource,
+) -> Session {
+    open_prepared(launch, isolated, term, pty, source, None)
+}
+
+fn open_prepared(
+    launch: ShellLaunch,
+    isolated: bool,
+    term: String,
+    pty: PtySize,
+    source: nocterm_session::ConnectionSource,
+    preparation: Option<Arc<dyn nocterm_session::ShellLaunchPreparation>>,
+) -> Session {
+    if let Err(error) = source.check() {
+        return Session::failed(error.into());
+    }
     if let Err(error) = launch.validate() {
         return Session::failed(SessionError::InvalidLaunch(error));
     }
-    let (session, driver) = channel(None);
-    let session = session.with_exec(Arc::new(LocalExec));
+    let (session, driver) = nocterm_session::channel_with_source(None, source.clone());
+    let session = session.with_exec(Arc::new(exec::ScopedLocalExec::new(source)));
     thread::spawn(move || {
+        if driver.closed().now_or_never().is_some() {
+            block_on(driver.emit(Event::Closed(CloseReason::ClosedByUser)));
+            return;
+        }
+        let prepared = driver
+            .source()
+            .check()
+            .map_err(SessionError::from)
+            .and_then(|()| {
+                let launch = match preparation {
+                    Some(preparation) => preparation
+                        .prepare(launch)
+                        .map_err(SessionError::InvalidLaunch)?,
+                    None => launch,
+                };
+                launch.validate().map_err(SessionError::InvalidLaunch)?;
+                Ok(launch)
+            });
+        let launch = match prepared {
+            Ok(launch) => launch,
+            Err(error) => {
+                block_on(driver.emit(Event::Closed(CloseReason::Failed(error))));
+                return;
+            }
+        };
         if let Err(error) = start(launch, isolated, term, pty, driver.clone()) {
-            block_on(
-                driver.emit(Event::Closed(CloseReason::Failed(SessionError::Other(
-                    error.to_string(),
-                )))),
-            );
+            let error = match error {
+                LaunchError::Source(error) => SessionError::Source(error),
+                other => SessionError::Other(other.to_string()),
+            };
+            block_on(driver.emit(Event::Closed(CloseReason::Failed(error))));
         }
     });
     session
@@ -83,6 +204,8 @@ fn size(s: PtySize) -> NativeSize {
 
 #[derive(Debug, thiserror::Error)]
 enum LaunchError {
+    #[error(transparent)]
+    Source(#[from] nocterm_session::ConnectionSourceError),
     #[error("native PTY error: {0}")]
     Pty(String),
     #[error("native PTY has no file descriptor")]
@@ -91,6 +214,9 @@ enum LaunchError {
     Fcntl(String),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+    #[cfg(target_os = "linux")]
+    #[error(transparent)]
+    Descriptor(#[from] filedescriptor::Error),
 }
 
 #[expect(clippy::too_many_lines, reason = "predates the limit")]
@@ -101,6 +227,7 @@ fn start(
     pty: PtySize,
     driver: nocterm_session::SessionDriver,
 ) -> Result<(), LaunchError> {
+    driver.source().check()?;
     let pair = native_pty_system()
         .openpty(size(pty))
         .map_err(|e| LaunchError::Pty(e.to_string()))?;
@@ -134,6 +261,13 @@ fn start(
         .master
         .take_writer()
         .map_err(|e| LaunchError::Pty(e.to_string()))?;
+    #[cfg(target_os = "linux")]
+    let (mut readiness, close_wake) = readiness::Readiness::new(pair.master.as_ref())?;
+    driver.source().check()?;
+    if driver.closed().now_or_never().is_some() {
+        block_on(driver.emit(Event::Closed(CloseReason::ClosedByUser)));
+        return Ok(());
+    }
     let mut child = pair
         .slave
         .spawn_command(command)
@@ -148,6 +282,13 @@ fn start(
     let shell_group = child_pid.map(|pid| pid as i32);
     #[cfg(not(unix))]
     let shell_group = None;
+    #[cfg(target_os = "linux")]
+    if let Err(error) = readiness.observe_exit(child.process_id()) {
+        let mut failed_killer = child.clone_killer();
+        kill_process(failed_killer.as_mut(), &master, shell_group);
+        let _ = child.wait();
+        return Err(error.into());
+    }
     let (done_tx, done_rx) = async_channel::bounded::<()>(1);
     let command_driver = driver.clone();
     let closed_by_user = Arc::new(AtomicBool::new(false));
@@ -158,6 +299,10 @@ fn start(
     let close_master = master.clone();
     let command_master = master.clone();
     thread::spawn(move || {
+        // Dropping this pipe wakes a readiness wait even when a descendant
+        // still holds the slave and killing the shell produces no PTY EOF.
+        #[cfg(target_os = "linux")]
+        let _wake = close_wake;
         let requested = block_on(async {
             select! {
                 _ = close_driver.closed().fuse() => true,
@@ -190,6 +335,9 @@ fn start(
                     }
                 }
                 Some(Command::Resize(s)) => {
+                    if command_driver.source().check().is_err() {
+                        break;
+                    }
                     let _ = command_master
                         .lock()
                         .unwrap_or_else(|e| e.into_inner())
@@ -208,6 +356,8 @@ fn start(
         kill_process(disconnected_killer.as_mut(), &master, shell_group);
     }
     let mut buffer = [0; 8192];
+    #[cfg(target_os = "linux")]
+    let mut read_failure = None;
     loop {
         // Closing is independent of slave EOF: a disowned/HUP-ignoring
         // background job can legitimately retain the terminal descriptor.
@@ -225,6 +375,14 @@ fn start(
                     done_tx.close();
                     break;
                 }
+                #[cfg(target_os = "linux")]
+                if let Err(error) = readiness.wait() {
+                    read_failure = Some(error);
+                    let mut failed_killer = child.clone_killer();
+                    kill_process(failed_killer.as_mut(), &master, shell_group);
+                    break;
+                }
+                #[cfg(not(target_os = "linux"))]
                 thread::sleep(Duration::from_millis(10));
             }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
@@ -251,6 +409,10 @@ fn start(
     done_tx.close();
     // Keep ephemeral scripts alive until the shell has exited.
     drop(integration);
+    #[cfg(target_os = "linux")]
+    if let Some(error) = read_failure {
+        return Err(error.into());
+    }
     block_on(
         driver.emit(Event::Closed(if closed_by_user.load(Ordering::Acquire) {
             CloseReason::ClosedByUser
@@ -288,6 +450,7 @@ fn write_input(
                 "PTY closed",
             ));
         }
+        driver.source().check().map_err(std::io::Error::other)?;
         match writer.write(&bytes[offset..]) {
             Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
             Ok(count) => offset += count,
@@ -305,6 +468,7 @@ fn write_input(
                 "PTY closed",
             ));
         }
+        driver.source().check().map_err(std::io::Error::other)?;
         match writer.flush() {
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(10))
@@ -365,24 +529,8 @@ fn prepare_integration(
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("");
-    let (name, script) = match stem {
-        "bash" => (
-            "bashrc",
-            include_str!("../../../assets/shell-integration/bash.bash"),
-        ),
-        "zsh" => (
-            ".zshrc",
-            include_str!("../../../assets/shell-integration/zsh.zsh"),
-        ),
-        "fish" => (
-            "integration.fish",
-            include_str!("../../../assets/shell-integration/fish.fish"),
-        ),
-        "pwsh" | "powershell" => (
-            "integration.ps1",
-            include_str!("../../../assets/shell-integration/powershell.ps1"),
-        ),
-        _ => return Ok(None),
+    let Some((name, script)) = integration::bundled(stem) else {
+        return Ok(None);
     };
     let directory = tempfile::tempdir()?;
     let path = directory.path().join(name);

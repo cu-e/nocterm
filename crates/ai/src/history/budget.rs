@@ -8,11 +8,15 @@ pub struct PreparedBudget {
     entries: Arc<Vec<usize>>,
     memory: Arc<Vec<usize>>,
     prompts: Arc<Vec<usize>>,
+    preview: super::catalog_header::Preview,
 }
 impl PreparedBudget {
     pub(super) fn new(chat: &SavedChat) -> Result<Self, HistoryCodecError> {
         Ok(Self {
             resident_bytes: 0,
+            preview: super::catalog_header::Preview::persisted(
+                &chat.entries[SavedChat::saved_entry_start(chat.entries.len())..],
+            ),
             memory: Arc::new(
                 chat.entries
                     .iter()
@@ -43,6 +47,7 @@ impl PreparedBudget {
 pub struct HistoryBudget {
     memory: Vec<usize>,
     entries: Vec<usize>,
+    preview: super::catalog_header::Preview,
 }
 impl HistoryBudget {
     pub fn resident_bytes(&self) -> usize {
@@ -50,11 +55,15 @@ impl HistoryBudget {
     }
     pub fn restored(prepared: Option<&PreparedBudget>) -> Self {
         Self {
+            preview: prepared.map_or_else(Default::default, |prepared| prepared.preview.clone()),
             memory: prepared.map_or_else(Vec::new, |prepared| (*prepared.memory).clone()),
             entries: prepared.map_or_else(Vec::new, |prepared| (*prepared.entries).clone()),
         }
     }
     pub fn refresh(&mut self, entries: &[Entry], dirty: &[usize]) -> Result<(), HistoryCodecError> {
+        self.preview = super::catalog_header::Preview::persisted(
+            &entries[SavedChat::saved_entry_start(entries.len())..],
+        );
         let old = self.entries.len();
         self.entries.resize(entries.len(), 0);
         self.memory.resize(entries.len(), 0);
@@ -74,11 +83,15 @@ impl HistoryBudget {
         metadata: &SavedChat,
         prompts: impl Iterator<Item = usize>,
     ) -> Result<(), HistoryCodecError> {
-        let base = size::structural_size(&wire::Wire::new(metadata, None::<&[super::SavedPrompt]>))
-            .map_err(HistoryCodecError::from)?;
         let rows = &self.memory[self.memory.len().saturating_sub(MAX_SAVED_ENTRIES)..];
         let (count, prompts) =
             prompts.fold((0, 0), |(count, total), bytes| (count + 1, total + bytes));
+        let base = size::structural_size(&wire::Wire::budget(
+            metadata,
+            None::<&[super::SavedPrompt]>,
+            self.preview.clone().with_prompts(count != 0),
+        ))
+        .map_err(HistoryCodecError::from)?;
         super::check_memory(
             base + rows.iter().sum::<usize>() + prompts + if count == 0 { 0 } else { 2048 },
         )
@@ -89,32 +102,30 @@ impl HistoryBudget {
         metadata: &SavedChat,
         prompts: impl Iterator<Item = usize>,
     ) -> Result<(), HistoryCodecError> {
-        let mut metadata_size =
-            size::encoded_len(&wire::Wire::new(metadata, None::<&[super::SavedPrompt]>))
-                .map_err(HistoryCodecError::from)?;
+        let prompts = prompts.collect::<Vec<_>>();
+        let preview = self.preview.clone().with_prompts(!prompts.is_empty());
+        let mut metadata_size = size::encoded_len(&wire::Wire::budget(
+            metadata,
+            None::<&[super::SavedPrompt]>,
+            preview.clone(),
+        ))
+        .map_err(HistoryCodecError::from)?;
         let entries = &self.entries[self.entries.len().saturating_sub(MAX_SAVED_ENTRIES)..];
         metadata_size += entries.iter().sum::<usize>() + entries.len().saturating_sub(1);
-        let prompts = prompts.collect::<Vec<_>>();
         if !prompts.is_empty() {
-            // The same serializer provides the field/empty-array framing; no mirrored field formula.
-            let mut with_queue = SavedChat::for_identity(
-                metadata.agent_id.clone(),
-                metadata.id.clone(),
-                metadata.updated,
-            );
-            with_queue.queue.push(super::SavedPrompt {
-                id: 0,
-                text: String::new(),
-                images: Vec::new(),
-                attachments: Vec::new(),
-            });
-            let framing = size::encoded_len(&wire::Wire::new(
-                &with_queue,
+            // Keep the authoritative projection fixed while measuring queue framing.
+            let framing = size::encoded_len(&wire::Wire::budget(
+                metadata,
                 Some(&Vec::<super::SavedPrompt>::new()),
+                preview.clone(),
             ))
             .map_err(HistoryCodecError::from)?
-                - size::encoded_len(&wire::Wire::new(&with_queue, None::<&[super::SavedPrompt]>))
-                    .map_err(HistoryCodecError::from)?;
+                - size::encoded_len(&wire::Wire::budget(
+                    metadata,
+                    None::<&[super::SavedPrompt]>,
+                    preview,
+                ))
+                .map_err(HistoryCodecError::from)?;
             metadata_size += framing + prompts.iter().sum::<usize>() + prompts.len() - 1;
         }
         check_size(metadata_size)
@@ -134,14 +145,14 @@ mod tests {
             "00000000-0000-4000-8000-000000000064".into(),
             1,
         );
-        chat.title = Some("title\u{0}\n".into());
-        chat.name = Some("name".into());
+        chat.header.title = Some("title\u{0}\n".into());
+        chat.header.name = Some("name".into());
         chat.session_id = Some("session".into());
         chat.workdir = Some("/tmp/界".into());
         chat.model = Some("model".into());
-        chat.pinned = true;
+        chat.header.pinned = true;
         chat.pending_history = true;
-        chat.updated = u64::MAX;
+        chat.header.updated = u64::MAX;
         chat.draft = Some("literal draft\n\0界\"\\".into());
         chat.attachments = vec![
             SavedAttachment::LocalTerminal("local".into()),
@@ -231,5 +242,60 @@ mod tests {
                 )
                 .is_err()
         );
+    }
+    #[test]
+    fn fallback_title_budget_tracks_image_replacement_dirty_rows_and_an_empty_window() {
+        fn exact_boundary(budget: &HistoryBudget, chat: &SavedChat) {
+            let mut with_queue = chat.clone();
+            with_queue.queue = vec![SavedPrompt {
+                id: 1,
+                text: String::new(),
+                images: Vec::new(),
+                attachments: Vec::new(),
+            }];
+            let framing = super::super::encode(&with_queue).unwrap().len();
+            let mut prompt = with_queue.queue.remove(0);
+            prompt.text = "a".repeat(MAX_FILE_BYTES as usize - framing);
+            let mut metadata = chat.clone();
+            metadata.entries.clear();
+            metadata.queue.clear();
+            assert!(
+                budget
+                    .validate(
+                        &metadata,
+                        std::iter::once(super::super::prompt_size(&prompt).unwrap())
+                    )
+                    .is_ok()
+            );
+            prompt.text.push('a');
+            assert!(matches!(
+                budget.validate(
+                    &metadata,
+                    std::iter::once(super::super::prompt_size(&prompt).unwrap())
+                ),
+                Err(HistoryCodecError::EncodedLimit)
+            ));
+        }
+        let mut chat = SavedChat::for_identity(
+            "agent".into(),
+            "00000000-0000-4000-8000-000000000001".into(),
+            1,
+        );
+        chat.entries.push(Entry::User(vec![
+            Content::Image(crate::model::content::Image::new(
+                "A".repeat(super::super::MAX_SAVED_IMAGE_BYTES + 1),
+                "image/png",
+            )),
+            Content::text("question after image"),
+        ]));
+        let mut budget = HistoryBudget::default();
+        budget.refresh(&chat.entries, &[]).unwrap();
+        exact_boundary(&budget, &chat);
+        chat.entries = vec![Entry::User(vec![Content::text("changed first question")])];
+        budget.refresh(&chat.entries, &[0]).unwrap();
+        exact_boundary(&budget, &chat);
+        chat.entries.clear();
+        budget.refresh(&chat.entries, &[]).unwrap();
+        exact_boundary(&budget, &chat);
     }
 }

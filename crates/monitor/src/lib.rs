@@ -1,10 +1,13 @@
 //! Host resource monitoring, independent of any UI.
 //!
-//! Owns: collection requests, framed counter parsing, rates and bounded history.
+//! Owns: host and own-cgroup collection requests, bounded framed parsing, controller
+//! membership/mount validation, rates and bounded history.
 //! Does not own: native process execution, GUI timers, host connections or views.
 //! Ports used: HostExec. Ports provided: none. Settings section: none. Globals: none.
 //! Invariants: only requested metrics enter the collection script; history is
-//! capacity bounded and successive counter samples determine rates.
+//! capacity bounded and successive counter samples determine rates. Container CPU is
+//! measured against one CPU; memory limits may be unlimited or unobservable. Host-only
+//! metrics never substitute for missing cgroup counters.
 //!
 //! A host is asked about itself through a [`HostExec`]: one long-running
 //! script per watch, written for the host's [`Platform`], prints a frame of
@@ -24,7 +27,9 @@
 //! Invariant: sampling and schema rules accept supplied facts without native I/O.
 pub mod format;
 
+mod container;
 mod frame;
+pub use container::{ContainerCounters, ContainerSnapshot};
 mod history;
 mod linux;
 mod metric;

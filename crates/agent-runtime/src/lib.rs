@@ -4,11 +4,22 @@
 //! keyed write admission, lazy history hydration and usage projections.
 //! Does not own: settings storage, history/favorites files, ACP subprocesses or views.
 //! Ports used: AgentConnector, ToolBridge, AgentStateRepository, ChatRepository,
-//! AccountUsageSource, WorkdirResolver, explicit SettingsHandle and host-supplied ShutdownCoordinator
+//! WorkdirResolver, CommandJobsFactory, explicit SettingsHandle and host-supplied ShutdownCoordinator
 //! at installation.
-//! Ports provided: SessionClient/SessionEvent, HistoryReader and synchronous quit capture.
+//! Ports provided: SessionClient/SessionEvent, HistoryReader, HolderEvent (what windows hold,
+//! reveal and move requests) and synchronous quit capture.
 //! Settings section: ai consumer. Globals: none.
-//! Invariants: one current document owner per ID; delete seals an ID; persistence
+//! Invariants: one current document owner per scoped ChatKey; noncloneable reservations
+//! precede entity construction, and explicit restart replaces only its expected owner. A
+//! chat moves to another window only while it neither works nor shows in its own.
+//! Scope-bound handles/readers and callbacks retain original ownership. Catalog payloads
+//! share one installation 32-slot limit, including retained snapshots, archived row references
+//! and pending work across every Local environment. Handles retain authenticated account
+//! leases independently of General/Project context; unavailable accounts have no fallback.
+//! Hydration admission includes all contexts/windows/accounts, remaining prepared
+//! records and immutable active/latest writer values; shown chats cannot be evicted.
+//! All contexts use the same local agent launcher. Delete seals
+//! only its scoped key; persistence
 //! admission and physical publication are separate revision-bearing events. Registry
 //! stamps change only after writer acceptance; final work reads no App and joins
 //! captured admission failures with publication failures. Shared cleanup diagnostics
@@ -18,17 +29,24 @@ use nocterm_ai::model::auth::{AuthFlow, AuthMethod};
 use nocterm_ai::model::controls::ConfigOption;
 use nocterm_ai::model::session::SessionUpdate;
 
+mod error;
+pub use error::{AgentActivationError, ChatOpenError};
+mod execution;
 mod handle;
 pub use handle::RuntimeHandle;
+mod holders;
+pub use holders::HolderEvent;
 mod admission;
 mod bridge;
 mod catalog;
 mod client;
+pub mod history_admission;
 mod releases;
 mod usage;
-pub use catalog::PreparedHistory;
+pub use catalog::{CatalogLoadError, CatalogRow, CatalogSnapshot, PreparedHistory};
 mod connections;
 mod documents;
+pub use documents::{DocumentClaim, DocumentClaimOutcome};
 mod lease;
 mod lifecycle;
 mod process_cleanup;
@@ -36,7 +54,7 @@ mod startup;
 mod state;
 use futures::future::BoxFuture;
 mod storage;
-pub use client::{Client, ClientState, SessionClient, SessionEvent};
+pub use client::{Client, ClientState, HistoryUsage, SessionClient, SessionEvent};
 use gpui::{App, Context, Entity, EntityId, Task};
 pub use lease::SessionLease;
 use nocterm_ai::{
@@ -44,7 +62,9 @@ use nocterm_ai::{
     ToolBridge,
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
-pub use storage::{AgentPersistenceError, AgentStorage, HistoryReader};
+pub use storage::{
+    AgentPersistenceError, AgentStorage, HistoryReader, LoadedHistory, PreparedHistoryRead,
+};
 
 pub struct TerminalAuthRequest {
     pub program: String,
@@ -60,9 +80,10 @@ pub struct RuntimeServices {
     pub agents: nocterm_agent_directory::AgentsHandle,
     pub connector: Arc<dyn AgentConnector>,
     pub bridge: Arc<dyn ToolBridge>,
+    pub command_jobs: Arc<dyn nocterm_session::command_jobs::CommandJobsFactory>,
+    /// Starts and follows the file transfers chats run for their agents.
+    pub transfers: Arc<dyn nocterm_transfers::TransferRequests>,
     pub storage: AgentStorage,
-    /// Account usage is read through a host-injected native capability.
-    pub usage_source: Arc<dyn nocterm_ai::usage::AccountUsageSource>,
     pub workdir_resolver: Arc<dyn nocterm_ai::workspace::WorkdirResolver>,
     pub workdir: PathBuf,
     /// Whether the host can run an agent's sign-in command in a terminal.
@@ -75,11 +96,7 @@ pub struct RuntimeServices {
     pub shared_dirs: Vec<PathBuf>,
 }
 struct Connection {
-    chat_id: String,
-    launch: AgentLaunch,
-    workdir: PathBuf,
-    /// Whether the process runs isolated; a changed setting restarts it.
-    isolated: bool,
+    identity: execution::ExecutionIdentity,
     commands: Option<Arc<dyn AgentCommands>>,
     info: Option<AgentInfo>,
     users: HashMap<EntityId, Client>,
@@ -119,11 +136,10 @@ impl Runtime {
         let state = state::AgentStateStore::new(&services.storage, cx);
         let chats = documents::ChatStore::new(&mut services.storage, cx);
         let releases = releases::LeaseInbox::new(cx);
-        let usage = usage::UsageLimits::new(services.usage_source.clone());
         Self {
             state,
             chats,
-            usage,
+            usage: Default::default(),
             services,
             connections: Default::default(),
             admission: Default::default(),
@@ -142,7 +158,7 @@ impl Runtime {
         let keys: Vec<_> = self
             .connections
             .iter()
-            .filter(|(_, connection)| agents.get(&connection.launch.id).is_none())
+            .filter(|(_, connection)| agents.get(&connection.identity.launch().id).is_none())
             .map(|(key, _)| *key)
             .collect();
         for key in keys {
@@ -175,7 +191,7 @@ impl Runtime {
         let keys: Vec<_> = self
             .connections
             .iter()
-            .filter(|(_, connection)| connection.isolated != isolated)
+            .filter(|(_, connection)| connection.identity.isolation_changed(isolated))
             .map(|(key, _)| *key)
             .collect();
         for key in keys {
@@ -258,23 +274,18 @@ impl Runtime {
         self.state.error(cx)
     }
     pub fn history_reader(&self) -> HistoryReader {
-        self.chats.reader()
+        self.chats
+            .reader(nocterm_ai::history::ContextId::General.into())
+    }
+    pub(crate) fn scoped_history_reader(
+        &self,
+        scope: nocterm_ai::local_environment::ChatScope,
+    ) -> HistoryReader {
+        self.chats.reader(scope)
     }
     /// The plan limits last reported for `agent`.
     pub fn limits(&self, agent: &str) -> Option<&nocterm_ai::usage::Limits> {
         self.usage.get(agent)
-    }
-    /// Reads `agent`'s plan limits again, from agents that keep them in their
-    /// own files. Others report them along with usage.
-    pub fn refresh_limits(&mut self, agent: &str, cx: &mut Context<Self>) {
-        if self.shutting_down {
-            return;
-        }
-        let Some(agent) = self.services.agents.get(agent, cx) else {
-            return;
-        };
-        self.usage
-            .refresh(nocterm_ai::usage::UsageAgent::new(&agent), cx);
     }
     pub fn start_bridge(&mut self, cx: &mut Context<Self>) {
         if self.shutting_down {
@@ -288,6 +299,18 @@ impl Runtime {
         client: &Client,
         cx: &mut Context<Self>,
     ) -> Result<BridgeRegistration, nocterm_ai::connection::BridgeRegistrationError> {
+        self.register_scoped_bridge(nocterm_ai::history::ContextId::General.into(), client, cx)
+    }
+    pub(crate) fn register_scoped_bridge(
+        &mut self,
+        scope: nocterm_ai::local_environment::ChatScope,
+        client: &Client,
+        cx: &mut Context<Self>,
+    ) -> Result<BridgeRegistration, nocterm_ai::connection::BridgeRegistrationError> {
+        let state = client
+            .state(cx)
+            .ok_or(nocterm_ai::connection::BridgeRegistrationError::ClientClosed)?;
+        state.origin().require_chat_scope(&scope)?;
         if !self.ai_enabled(cx) {
             return Err(nocterm_ai::connection::BridgeRegistrationError::AiDisabled);
         }
@@ -305,7 +328,7 @@ impl Runtime {
             return None;
         };
         let connection = self.connections.get(key)?;
-        let launch = &connection.launch;
+        let launch = connection.identity.launch();
         let mut args = launch.args.clone();
         args.extend(setup.args.iter().cloned());
         let mut env = nocterm_ai::env::sanitized_environment(launch, std::env::vars());
@@ -324,7 +347,7 @@ impl Runtime {
             program: launch.command.clone(),
             args,
             env,
-            cwd: connection.workdir.clone(),
+            cwd: connection.identity.workdir().to_owned(),
             title: format!("Sign in: {}", method.label),
         })
     }
@@ -334,13 +357,32 @@ impl Runtime {
         chat_id: String,
         launch: AgentLaunch,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Result<(), AgentActivationError> {
+        self.connect_scoped(
+            nocterm_ai::history::ContextId::General.into(),
+            client,
+            chat_id,
+            launch,
+            cx,
+        )
+    }
+    pub(crate) fn connect_scoped(
+        &mut self,
+        scope: nocterm_ai::local_environment::ChatScope,
+        client: Client,
+        chat_id: String,
+        launch: AgentLaunch,
+        cx: &mut Context<Self>,
+    ) -> Result<(), AgentActivationError> {
+        let state = client.state(cx).ok_or(AgentActivationError::ClientClosed)?;
+        documents::ChatStore::require_client_scope(scope.clone(), &client, cx)?;
+        let origin = execution::admitted_origin(state.origin(), &chat_id)?;
         if self.shutting_down || !self.ai_enabled(cx) {
-            return;
+            return Ok(());
         }
-        let workdir = client
-            .state(cx)
-            .and_then(|state| state.workdir)
+        let workdir = origin
+            .provider_resume()
+            .map(std::path::Path::to_owned)
             .unwrap_or_else(|| {
                 self.ai(cx)
                     .working_directory
@@ -355,15 +397,17 @@ impl Runtime {
                 ),
                 cx,
             );
-            return;
+            return Ok(());
         }
         let isolated = self.ai(cx).sandbox == nocterm_ai::SandboxMode::Workspace;
-        let key = self.connections.reserve_key(&launch, &workdir, isolated);
-        let registration = match self.register_bridge(&client, cx) {
+        let identity =
+            execution::ExecutionIdentity::new(origin, launch.clone(), workdir.clone(), isolated);
+        let key = self.connections.reserve_key(&identity);
+        let registration = match self.register_scoped_bridge(scope, &client, cx) {
             Ok(registration) => registration,
             Err(error) => {
                 client.emit(SessionEvent::Failed(error.to_string()), cx);
-                return;
+                return Ok(());
             }
         };
         let lease = SessionLease::new(client.id(), key, registration, self.releases.sender());
@@ -385,10 +429,7 @@ impl Runtime {
         self.connections.insert(
             key,
             Connection {
-                chat_id,
-                launch: launch.clone(),
-                workdir: workdir.clone(),
-                isolated,
+                identity,
                 commands: None,
                 info: None,
                 users: HashMap::from([(client.id(), client.clone())]),
@@ -411,6 +452,7 @@ impl Runtime {
             }
         });
         self.connections.connecting(key, connecting);
+        Ok(())
     }
     fn accept_startup(
         &mut self,
@@ -420,6 +462,13 @@ impl Runtime {
         effective: PathBuf,
         cx: &mut Context<Self>,
     ) -> bool {
+        if !self
+            .connections
+            .get(key)
+            .is_some_and(|connection| self.chats.source_current(connection.identity.key()))
+        {
+            return false;
+        }
         if !self
             .connections
             .get(key)
@@ -498,9 +547,9 @@ impl Runtime {
             AgentEvent::Barrier(_) => unreachable!("handled before connection routing"),
             AgentEvent::Session(notification) => {
                 if let SessionUpdate::UsageUpdate(update) = &notification.update
-                    && let Some(limit) = self.limit_in(&connection.launch, update)
+                    && let Some(limit) = self.limit_in(connection.identity.launch(), update)
                 {
-                    let agent = connection.launch.id.clone();
+                    let agent = connection.identity.launch().id.clone();
                     self.usage.merge(agent, limit);
                     cx.notify();
                 }
@@ -520,7 +569,7 @@ impl Runtime {
                     .find(|client| {
                         client
                             .state(cx)
-                            .is_some_and(|state| state.session.as_ref() == Some(&request.session))
+                            .is_some_and(|state| state.session().as_ref() == Some(&request.session))
                     })
                     .cloned();
                 // A request no thread takes is answered `Cancelled` on drop.

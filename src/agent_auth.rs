@@ -5,6 +5,7 @@ use nocterm_agent::{TerminalAuthError, TerminalAuthRequest};
 use nocterm_session::{CloseReason, ShellLaunch};
 use nocterm_workspace::Workspace;
 use std::sync::Arc;
+use std::{cell::RefCell, rc::Rc};
 
 pub(crate) fn opener(installed: nocterm_terminal::Installed) -> nocterm_agent::TerminalAuthOpener {
     Arc::new(move |workspace, request, window, cx| open(&installed, workspace, request, window, cx))
@@ -18,6 +19,7 @@ pub(crate) fn open(
     cx: &mut App,
 ) -> oneshot::Receiver<Result<(), TerminalAuthError>> {
     let (send, receive) = oneshot::channel();
+    let completion = Rc::new(RefCell::new(Some(send)));
     let launch = ShellLaunch {
         program: Some(request.program),
         args: request.args,
@@ -26,11 +28,14 @@ pub(crate) fn open(
         integration: false,
     };
     if let Err(error) = launch.validate() {
-        let _ = send.send(Err(error.into()));
+        if let Some(send) = completion.borrow_mut().take() {
+            let _ = send.send(Err(error.into()));
+        }
         return receive;
     }
     let transport = Arc::new(nocterm_local::IsolatedLocalTransport(launch.clone()));
-    let _ = workspace.update(cx, |workspace, cx| {
+    let ended = completion.clone();
+    let opened = workspace.update(cx, |workspace, cx| {
         let command = nocterm_terminal::LocalCommand::new(
             launch,
             request.title,
@@ -41,10 +46,24 @@ pub(crate) fn open(
                     CloseReason::ClosedByUser => Err(TerminalAuthError::Canceled),
                     _ => Err(TerminalAuthError::Failed),
                 };
-                let _ = send.send(outcome);
+                if let Some(send) = ended.borrow_mut().take() {
+                    let _ = send.send(outcome);
+                }
             },
         );
-        nocterm_terminal::open_local_command(installed, workspace, command, window, cx);
+        if let Err(error) =
+            nocterm_terminal::open_local_command(installed, workspace, command, window, cx)
+            && let Some(send) = completion.borrow_mut().take()
+        {
+            let _ = send.send(Err(TerminalAuthError::Opening(
+                nocterm_core::SharedCause::new(error),
+            )));
+        }
     });
+    if opened.is_err()
+        && let Some(send) = completion.borrow_mut().take()
+    {
+        let _ = send.send(Err(TerminalAuthError::Canceled));
+    }
     receive
 }

@@ -156,7 +156,7 @@ fn native_inactive_alias_updates_authoritative_central_context_after_local_focus
         window.render_frame(cx);
         assert!(window.focused_input(cx).is_some());
         assert_eq!(
-            ws.read(cx).active_item().unwrap().item_id(),
+            ws.read(cx).active_item(cx).unwrap().item_id(),
             first.entity_id()
         );
         assert_eq!(ws.read(cx).active_session(cx).unwrap().target.host, "first");

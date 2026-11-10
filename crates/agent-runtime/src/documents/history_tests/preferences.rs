@@ -100,14 +100,14 @@ async fn captured_chat_failures_preserve_original_primary_and_independent_diagno
     let (runtime, _directory, repository) = fixture(cx);
     let first = snapshot();
     let mut metadata = first.metadata.clone();
-    metadata.id = "00000000-0000-0000-0000-000000000002".into();
+    metadata.header.id = "00000000-0000-0000-0000-000000000002".into();
     let second = Arc::new(SharedChat {
         metadata,
         queue: Vec::new(),
     });
     for chat in [&first, &second] {
         repository.reject(
-            StorageOperation::Save(chat.id.clone()),
+            StorageOperation::Save(chat.header.id.clone()),
             AgentStorageError::Interrupted,
         );
         let client = ProbeClient::new(cx, chat.clone());
@@ -157,6 +157,6 @@ async fn captured_chat_failures_preserve_original_primary_and_independent_diagno
         panic!("expected aggregate clone")
     };
     assert!(Arc::ptr_eq(diagnostic, cloned_diagnostic));
-    assert!(repository.encoded(&first.id).is_none());
-    assert!(repository.encoded(&second.id).is_none());
+    assert!(repository.encoded(&first.header.id).is_none());
+    assert!(repository.encoded(&second.header.id).is_none());
 }

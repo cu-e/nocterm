@@ -38,6 +38,9 @@ fn log_size(value: &str) -> Result<u32, SessionOptionsInputError> {
         .map_err(SessionOptionsInputError::LogSize)
 }
 
+/// The proxy choice that routes the first connection through a Nocterm hub.
+const HUB: &str = "Nocterm hub";
+
 type Choice = Entity<SelectState<SearchableVec<&'static str>>>;
 pub struct SessionOptionsEditor {
     inherit: bool,
@@ -48,6 +51,7 @@ pub struct SessionOptionsEditor {
     custom: Entity<InputState>,
     host: Entity<InputState>,
     port: Entity<InputState>,
+    hub: Entity<InputState>,
     directory: Entity<InputState>,
     limit: Entity<InputState>,
     remote_dns: bool,
@@ -105,11 +109,12 @@ impl SessionOptionsEditor {
             cx,
         );
         let proxy = choice(
-            vec!["Direct", "HTTP CONNECT", "SOCKS5"],
+            vec!["Direct", "HTTP CONNECT", "SOCKS5", HUB],
             match options.proxy {
                 None if inherit => "Inherit",
                 Some(ProxyConfig::HttpConnect { .. }) => "HTTP CONNECT",
                 Some(ProxyConfig::Socks5 { .. }) => "SOCKS5",
+                Some(ProxyConfig::Hub { .. }) => HUB,
                 _ => "Direct",
             },
             window,
@@ -125,6 +130,10 @@ impl SessionOptionsEditor {
             window,
             cx,
         );
+        let hub_address = match &options.proxy {
+            Some(ProxyConfig::Hub { address }) => address.clone(),
+            _ => String::new(),
+        };
         let (proxy_host, proxy_port, remote_dns) = match options.proxy {
             Some(ProxyConfig::HttpConnect { host, port }) => (host, port, true),
             Some(ProxyConfig::Socks5 {
@@ -141,6 +150,7 @@ impl SessionOptionsEditor {
         let custom = field(options.term.unwrap_or_default(), window, cx);
         let host = field(proxy_host, window, cx);
         let port = field(proxy_port.to_string(), window, cx);
+        let hub = field(hub_address, window, cx);
         let directory = field(
             log.directory
                 .map(|p| p.to_string_lossy().into_owned())
@@ -156,7 +166,7 @@ impl SessionOptionsEditor {
                 |_, _, _: &SelectEvent<SearchableVec<&'static str>>, cx| cx.notify(),
             ));
         }
-        for input in [&custom, &host, &port, &directory, &limit] {
+        for input in [&custom, &host, &port, &hub, &directory, &limit] {
             subscriptions.push(cx.subscribe(input, |_, _, _: &InputEvent, cx| cx.notify()));
         }
         Self {
@@ -168,6 +178,7 @@ impl SessionOptionsEditor {
             custom,
             host,
             port,
+            hub,
             directory,
             limit,
             remote_dns,
@@ -193,6 +204,9 @@ impl SessionOptionsEditor {
         let proxy = match Self::selected(&self.proxy, cx) {
             "Inherit" => None,
             "Direct" => Some(ProxyConfig::Direct),
+            HUB => Some(ProxyConfig::Hub {
+                address: self.hub.read(cx).value().trim().to_owned(),
+            }),
             kind => {
                 let host = self.host.read(cx).value().trim().to_owned();
                 let port = proxy_port(self.port.read(cx).value().as_ref())?;
@@ -239,6 +253,7 @@ impl SessionOptionsEditor {
                 &self.custom,
                 &self.host,
                 &self.port,
+                &self.hub,
                 &self.directory,
                 &self.limit,
             ]
@@ -279,6 +294,8 @@ impl Render for SessionOptionsEditor {
             .when(matches!(proxy,"HTTP CONNECT"|"SOCKS5"),|form|form.child(Self::field("Proxy host",&self.host)).child(Self::field("Proxy port",&self.port))
                 .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Proxy authentication is not supported yet."))
                 .when(proxy=="SOCKS5",|form|form.child(gpui_kit::component::button::Button::new("proxy-dns").label(if self.remote_dns {"DNS through proxy"}else{"DNS on this computer"}).on_click(cx.listener(|this,_,_,cx|{this.remote_dns = !this.remote_dns;cx.notify();})))))
+            .when(proxy==HUB,|form|form.child(Self::field("Hub address",&self.hub))
+                .child(div().text_xs().text_color(cx.theme().muted_foreground).child("The hub relays the first connection and sees the address, not the traffic. Host keys and sign-in stay on this computer; sign in to the hub first.")))
             .child(div().text_sm().child("Session output logging"))
             .child(Select::new(&self.logging).id("session-logging").w_full())
             .when(logging!="Inherit",|form|form.child(Self::field("Log directory (empty: default)",&self.directory)).child(Self::field("Maximum log size (MiB)",&self.limit)).child(div().text_xs().text_color(cx.theme().muted_foreground).child("Logs contain received terminal output, including escape sequences and any sensitive text the remote program prints. Authentication prompts and sent input are excluded.")))
@@ -430,6 +447,55 @@ mod tests {
                 editor.reset(Default::default(), window, cx);
                 assert_eq!(editor.options(cx).unwrap(), SessionOptions::default());
             });
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn a_hub_route_keeps_its_address_and_needs_one(cx: &mut TestAppContext) {
+        let (handle, editor) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::init(
+                crate::DesignTokens::builtin(),
+                (nocterm_store::SettingsConfig::in_memory(Default::default())).install(cx),
+                cx,
+            );
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| SessionOptionsEditor::new(Default::default(), false, window, cx))
+            })
+            .unwrap()
+        });
+        let hub = |address: &str| SessionOptions {
+            proxy: Some(ProxyConfig::Hub {
+                address: address.into(),
+            }),
+            ..Default::default()
+        };
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            for options in [hub("hub.example.com:7443"), hub("hub.example.com")] {
+                editor.update(cx, |editor, cx| editor.reset(options.clone(), window, cx));
+                // Without inherit the other fields read back as their defaults.
+                assert_eq!(editor.read(cx).options(cx).unwrap().proxy, options.proxy);
+            }
+            editor.update(cx, |editor, cx| {
+                editor.reset(Default::default(), window, cx)
+            });
+            window.within("session-proxy").click("input", cx);
+            for _ in 0..3 {
+                window.press("down", cx);
+            }
+            window.press("enter", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, _, cx| {
+            assert!(matches!(
+                editor.read(cx).options(cx),
+                Err(SessionOptionsInputError::Validation(
+                    SessionOptionsError::Proxy(nocterm_session::ProxyError::EmptyHubAddress)
+                ))
+            ));
         })
         .unwrap();
     }

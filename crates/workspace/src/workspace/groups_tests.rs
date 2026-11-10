@@ -173,7 +173,7 @@ fn a_tab_split_off_leaves_its_group_and_a_group_closes_together(cx: &mut TestApp
         ws.close_tab_group(b, window, cx)
     });
     assert_eq!(bars(cx, &workspace), [vec![d], vec![c]]);
-    workspace.read_with(cx, |ws, _| assert_eq!(ws.tab_group_count(), 0));
+    workspace.read_with(cx, |ws, cx| assert_eq!(ws.tab_group_count(cx), 0));
 }
 
 #[gpui_kit::test]
@@ -223,8 +223,8 @@ fn a_program_joins_the_session_on_its_host_it_was_opened_from(cx: &mut TestAppCo
     });
     let logs = workspace.read_with(cx, |ws, cx| ws.tabs(cx).last().unwrap().id());
     assert_eq!(bars(cx, &workspace), [vec![parent, logs, other]]);
-    workspace.read_with(cx, |ws, _| {
-        assert_eq!(ws.tab_group_items(parent), [parent, logs]);
+    workspace.read_with(cx, |ws, cx| {
+        assert_eq!(ws.tab_group_items(parent, cx), [parent, logs]);
     });
 
     with(cx, window, &workspace, |ws, window, cx| {

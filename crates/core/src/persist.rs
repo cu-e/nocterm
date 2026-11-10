@@ -13,7 +13,9 @@ use serde::{Serialize, de::DeserializeOwned};
 use toml_edit::{DocumentMut, Item, Table};
 
 pub mod queue;
+mod revisioned;
 mod shutdown;
+pub use revisioned::RevisionedFile;
 
 pub use shutdown::{ShutdownDeadline, WriteGate};
 
@@ -30,6 +32,10 @@ pub enum PersistError {
         path: PathBuf,
         source: Box<toml::de::Error>,
     },
+    /// An observed document changed before this owner published its next edit.
+    Conflict {
+        path: PathBuf,
+    },
     Serialize {
         path: PathBuf,
         source: Box<toml::ser::Error>,
@@ -39,6 +45,11 @@ pub enum PersistError {
 impl fmt::Display for PersistError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Conflict { path } => write!(
+                formatter,
+                "{} changed outside this owner; reload before saving",
+                path.display()
+            ),
             Self::Io { path, source } => write!(formatter, "{}: {source}", path.display()),
             Self::Parse { path, source } => write!(formatter, "{}: {source}", path.display()),
             Self::Serialize { path, source } => write!(formatter, "{}: {source}", path.display()),
@@ -48,6 +59,7 @@ impl fmt::Display for PersistError {
 impl std::error::Error for PersistError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Conflict { .. } => None,
             Self::Io { source, .. } => Some(source),
             Self::Parse { source, .. } => Some(source.as_ref()),
             Self::Serialize { source, .. } => Some(source.as_ref()),
@@ -101,25 +113,58 @@ pub fn save_text(path: &Path, contents: &str) -> Result<(), PersistError> {
 /// is first copied to `<name>.bak`, so a hand-edited file is never lost to a
 /// syntax error.
 pub fn save_preserving<T: Serialize>(path: &Path, value: &T) -> Result<(), PersistError> {
-    let fresh = serialize(path, value)?
-        .parse::<DocumentMut>()
-        .expect("serialised TOML is valid TOML");
+    save_preserving_owned(path, value, |_| true)
+}
 
-    let mut document = match read(path)? {
-        None => DocumentMut::new(),
-        Some(text) => match text.parse::<DocumentMut>() {
-            Ok(document) => document,
+/// Replaces owned top-level tables while preserving the current unowned tables.
+/// The formatting document is acquired and parsed once for the whole merge.
+pub fn save_preserving_owned<T: Serialize>(
+    path: &Path,
+    value: &T,
+    owns: impl Fn(&str) -> bool,
+) -> Result<(), PersistError> {
+    let fresh = fresh_document(path, value)?;
+    let original = read(path)?;
+    let existing = original.is_some();
+    let mut document = formatting_document(path, original.as_deref())?;
+    merge_document(fresh, owns, existing, &mut document);
+    write_atomic(path, &document.to_string()).map_err(|source| PersistError::io(path, source))
+}
+
+fn formatting_document(path: &Path, original: Option<&str>) -> Result<DocumentMut, PersistError> {
+    match original {
+        None => Ok(DocumentMut::new()),
+        Some(text) => match text.parse() {
+            Ok(document) => Ok(document),
             Err(_) => {
                 let backup = backup_path(path);
                 crate::fs::write_private_atomic(&backup, text.as_bytes())
                     .map_err(|error| PersistError::io(&backup, error.into_io_error()))?;
-                DocumentMut::new()
+                Ok(DocumentMut::new())
             }
         },
-    };
+    }
+}
 
+fn fresh_document<T: Serialize>(path: &Path, value: &T) -> Result<DocumentMut, PersistError> {
+    Ok(serialize(path, value)?
+        .parse()
+        .expect("serialised TOML is valid TOML"))
+}
+
+fn merge_document(
+    mut fresh: DocumentMut,
+    owns: impl Fn(&str) -> bool,
+    existing: bool,
+    document: &mut DocumentMut,
+) {
+    if existing {
+        fresh.as_table_mut().retain(|key, _| owns(key));
+        for (key, item) in document.iter().filter(|(key, _)| !owns(key)) {
+            fresh.insert(key, item.clone());
+        }
+    }
     sync_table(document.as_table_mut(), fresh.as_table());
-    write_atomic(path, &document.to_string()).map_err(|source| PersistError::io(path, source))
 }
 
 fn read(path: &Path) -> Result<Option<String>, PersistError> {

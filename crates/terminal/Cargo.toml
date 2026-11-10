@@ -10,16 +10,20 @@ publish = false
 layer = "feature"
 
 [dependencies]
+nocterm-hubs-model.workspace = true
 nocterm-terminal-model.workspace = true
 
-encoding_rs.workspace = true
 regex.workspace = true
 nocterm-session.workspace = true
+nocterm-ssh-keys.workspace = true
+nocterm-project-model.workspace = true
+nocterm-project-providers.workspace = true
 nocterm-settings.workspace = true
 nocterm-store.workspace = true
 nocterm-ui.workspace = true
 nocterm-vt.workspace = true
 nocterm-workspace.workspace = true
+nocterm-workspace-ports.workspace = true
 
 gpui-kit.workspace = true
 tracing.workspace = true
@@ -29,6 +33,8 @@ thiserror.workspace = true
 workspace = true
 
 [dev-dependencies]
+nocterm-hubs-model = { workspace = true, features = ["test-support"] }
+nocterm-workspace = { workspace = true, features = ["test-support"] }
 nocterm-theme-service.workspace = true
 nocterm-themes.workspace = true
 tempfile.workspace = true

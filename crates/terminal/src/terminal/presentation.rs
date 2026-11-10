@@ -8,6 +8,7 @@ pub(super) struct TerminalScreen {
     find_task: Option<Task<()>>,
     program_title: Option<String>,
     sync_timer: Option<Task<()>>,
+    navigation: Option<(u64, Vec<nocterm_vt::SearchMatch>)>,
 }
 impl TerminalScreen {
     pub(super) fn new(options: EmulatorOptions) -> Self {
@@ -18,6 +19,7 @@ impl TerminalScreen {
             find_task: None,
             program_title: None,
             sync_timer: None,
+            navigation: None,
         }
     }
     pub(super) fn emulator(&self) -> &Emulator {
@@ -41,6 +43,27 @@ impl TerminalScreen {
     }
     pub(super) fn set_palette(&mut self, palette: Palette) {
         self.emulator.set_palette(palette);
+    }
+    /// Clears the screen the way a new emulator of the current size would be
+    /// and paints `bytes` on it, as the host holds the screen right now.
+    ///
+    /// Scrollback, modes, selection, a running search, a held synchronized
+    /// update and the program's title are discarded; the emulator's change
+    /// counters keep counting forward, so caches keyed by them miss. Of what
+    /// the picture provokes only a title survives: a snapshot asks no
+    /// questions, rings no bell and writes no clipboard. Returns what the host
+    /// must do.
+    pub(super) fn restore(&mut self, bytes: &[u8]) -> Vec<Effect> {
+        self.emulator.reset();
+        self.find_task = None;
+        self.find.searching = false;
+        self.sync_timer = None;
+        self.program_title = None;
+        self.emulator
+            .advance(bytes)
+            .into_iter()
+            .filter(|effect| matches!(effect, Effect::Title(_)))
+            .collect()
     }
     pub(super) fn advance(&mut self, bytes: &[u8]) -> Vec<Effect> {
         self.emulator.advance(bytes)
@@ -161,6 +184,23 @@ impl TerminalScreen {
     }
 
     pub(super) fn find_next(&mut self, previous: bool, cx: &mut Context<Terminal>) {
+        if let Some((generation, matches)) = &self.navigation
+            && *generation == self.emulator.generation()
+            && !matches.is_empty()
+        {
+            let current = self.find.result.ordinal.saturating_sub(1) as usize;
+            let index = if previous {
+                (current + matches.len() - 1) % matches.len()
+            } else {
+                (current + 1) % matches.len()
+            };
+            let found = matches[index];
+            self.find.result.active = Some(found);
+            self.find.result.ordinal = index as u64 + 1;
+            self.emulator.show_search_match(found);
+            self.emit_output(cx);
+            return;
+        }
         let anchor = self.find.result.active.map(|m| m.start);
         self.scan_find(
             if previous {
@@ -175,6 +215,7 @@ impl TerminalScreen {
     }
 
     pub(super) fn clear_find(&mut self, cx: &mut Context<Terminal>) {
+        self.navigation = None;
         self.find_task = None;
         self.find = FindState {
             options: self.find.options,
@@ -210,6 +251,7 @@ impl TerminalScreen {
         cx: &mut Context<Terminal>,
     ) {
         self.find_task = None;
+        self.navigation = None;
         self.find.error = None;
         self.find.result = SearchResult::default();
         self.emulator.clear_search();
@@ -280,6 +322,10 @@ impl TerminalScreen {
             self.emit_output(cx);
         }
         if let SearchProgress::Complete(result) = progress {
+            self.navigation = run
+                .scan
+                .take_navigation_matches()
+                .map(|matches| (self.emulator.generation(), matches));
             self.find.result = result;
             self.find.searching = false;
             self.find_task = None;
@@ -325,9 +371,7 @@ impl SearchRun {
                         // A batch can contain many short logical lines; no per-line timer.
                     }
                     Ok(SearchProgress::Searching) => {
-                        cx.background_executor()
-                            .timer(Duration::from_millis(1))
-                            .await
+                        super::pump::yield_once().await;
                     }
                     Ok(SearchProgress::Invalidated) => {
                         self.restart = true;

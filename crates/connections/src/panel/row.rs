@@ -1,28 +1,70 @@
 //! The same passive server row supplies sidebar content and its drag appearance.
 use super::*;
+use crate::agent_access::{AgentAccessState, AgentServer};
 use gpui_kit::{Div, ObjectFit, base::ElementExt as _};
 use nocterm_ui::{DragSource, IconName};
 
 #[derive(Clone)]
-struct RowVisual {
-    profile: Profile,
-    os: Option<&'static Os>,
+pub(super) struct RowVisual {
+    id: ProfileId,
+    name: SharedString,
+    target: SharedString,
+    description: Option<SharedString>,
+    icon: Option<Arc<Image>>,
+    color: Option<u32>,
     flag: Option<(String, Arc<Image>)>,
+    group: Option<String>,
+    tooltip: Option<String>,
+    /// What the hub's agents found on the server, in a hub window that lets them sign in to it.
+    agents: Option<AgentAccessState>,
 }
 
 impl RowVisual {
-    fn new(profile: &Profile, installed: &Installed, cx: &App) -> Self {
+    pub(super) fn new(profile: &Profile, installed: &Installed, cx: &App) -> Self {
         Self {
-            profile: profile.clone(),
-            os: installed.shown_os(profile, cx),
+            id: profile.id,
+            name: profile.name.clone().into(),
+            target: profile.target.to_string().into(),
+            description: (!profile.description.is_empty())
+                .then(|| description_preview(&profile.description).into()),
+            icon: installed.icon(profile, cx),
+            color: profile.icon_color.as_deref().and_then(os::rgb),
+            group: profile.group.clone(),
+            tooltip: (!profile.description.is_empty())
+                .then(|| description_tooltip(&profile.description)),
             flag: installed
                 .shown_country(profile, cx)
                 .and_then(|code| Some((code.to_uppercase(), installed.flag(&code, cx)?))),
+            agents: installed
+                .inputs()
+                .agent_access()
+                .and_then(|access| access.state(&AgentServer::of(profile), cx)),
         }
     }
 
+    /// The agent access state beside the name: quiet while agents sign in, a warning otherwise.
+    fn agents_badge(&self, cx: &App) -> Option<impl IntoElement + use<>> {
+        let state = self.agents?;
+        let theme = cx.theme();
+        let color = if state.is_ready() {
+            theme.muted_foreground
+        } else {
+            theme.warning
+        };
+        Some(
+            div()
+                .id(SharedString::from(format!("connection-agents-{}", self.id)))
+                .test_support()
+                .aria_label(state.label())
+                .flex_shrink_0()
+                .text_xs()
+                .text_color(color)
+                .child(state.label()),
+        )
+    }
+
     fn buttons(&self) -> (Button, Button) {
-        let id = self.profile.id;
+        let id = self.id;
         (
             Button::new(SharedString::from(format!("edit-{id}")))
                 .ghost()
@@ -38,7 +80,6 @@ impl RowVisual {
     #[expect(clippy::too_many_lines, reason = "predates the limit")]
     fn render(&self, hovered: bool, actions: AnyElement, cx: &App) -> Div {
         let theme = cx.theme();
-        let profile = &self.profile;
         h_flex()
             .w_full()
             .gap_2()
@@ -49,20 +90,23 @@ impl RowVisual {
             .hover(|row| row.bg(theme.sidebar_accent))
             .child(
                 div()
-                    .id(SharedString::from(format!(
-                        "connection-icon-{}",
-                        profile.id
-                    )))
+                    .id(SharedString::from(format!("connection-icon-{}", self.id)))
                     .test_support()
                     .flex_shrink_0()
-                    .child(server_icon(
-                        self.os,
-                        profile
-                            .icon_color
-                            .as_deref()
-                            .filter(|color| os::is_valid_color(color)),
-                        theme.muted_foreground,
-                    )),
+                    .child(match &self.icon {
+                        Some(icon) => img(icon.clone())
+                            .size_4()
+                            .flex_shrink_0()
+                            .into_any_element(),
+                        None => {
+                            Icon::new(IconName::Server)
+                                .small()
+                                .text_color(self.color.map_or(theme.muted_foreground, |rgb| {
+                                    gpui_kit::rgb(rgb).into()
+                                }))
+                                .into_any_element()
+                        }
+                    }),
             )
             .child(
                 v_flex()
@@ -74,21 +118,18 @@ impl RowVisual {
                             .min_w_0()
                             .child(
                                 div()
-                                    .id(SharedString::from(format!(
-                                        "connection-name-{}",
-                                        profile.id
-                                    )))
+                                    .id(SharedString::from(format!("connection-name-{}", self.id)))
                                     .test_support()
                                     .text_sm()
                                     .truncate()
-                                    .child(profile.name.clone()),
+                                    .child(self.name.clone()),
                             )
                             .when_some(self.flag.clone(), |line, (country, flag)| {
                                 line.child(
                                     div()
                                         .id(SharedString::from(format!(
                                             "connection-flag-{}",
-                                            profile.id
+                                            self.id
                                         )))
                                         .test_support()
                                         .flex_shrink_0()
@@ -113,32 +154,30 @@ impl RowVisual {
                                             })
                                         }),
                                 )
-                            }),
+                            })
+                            .children(self.agents_badge(cx)),
                     )
                     .child(
                         div()
-                            .id(SharedString::from(format!(
-                                "connection-target-{}",
-                                profile.id
-                            )))
+                            .id(SharedString::from(format!("connection-target-{}", self.id)))
                             .test_support()
                             .text_xs()
                             .truncate()
                             .text_color(theme.muted_foreground)
-                            .child(profile.target.to_string()),
+                            .child(self.target.clone()),
                     )
-                    .when(!profile.description.is_empty(), |column| {
+                    .when_some(self.description.clone(), |column, description| {
                         column.child(
                             div()
                                 .id(SharedString::from(format!(
                                     "connection-description-{}",
-                                    profile.id
+                                    self.id
                                 )))
                                 .test_support()
                                 .text_xs()
                                 .truncate()
                                 .text_color(theme.muted_foreground)
-                                .child(description_preview(&profile.description)),
+                                .child(description),
                         )
                     }),
             )
@@ -199,28 +238,37 @@ impl ConnectionsPanel {
             )
     }
 
-    pub(super) fn render_row(&self, profile: &Profile, cx: &mut Context<Self>) -> impl IntoElement {
-        let id = profile.id;
-        let visual = RowVisual::new(profile, &self.installed, cx);
+    /// A connection's row. Without `writable` it can only be opened: no buttons, no dragging.
+    pub(super) fn render_row(
+        &self,
+        visual: RowVisual,
+        writable: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let id = visual.id;
         let source = DragSource::default();
         let source_visual = visual.clone();
-        let group = profile.group.clone();
+        let group = visual.group.clone();
+        let tooltip = visual.tooltip.clone();
         let (edit, delete) = visual.buttons();
         let actions = h_flex()
             .invisible()
             .group_hover(ROW_GROUP, |buttons| buttons.visible())
-            .child(edit.tooltip("Edit").on_click(cx.listener(
-                move |this, _: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.edit(id, window, cx);
-                },
-            )))
-            .child(delete.tooltip("Delete").on_click(cx.listener(
-                move |this, _: &ClickEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.confirm_delete(id, window, cx);
-                },
-            )))
+            .when(writable, |actions| {
+                actions
+                    .child(edit.tooltip("Edit").on_click(cx.listener(
+                        move |this, _: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            this.edit(id, window, cx);
+                        },
+                    )))
+                    .child(delete.tooltip("Delete").on_click(cx.listener(
+                        move |this, _: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            this.confirm_delete(id, window, cx);
+                        },
+                    )))
+            })
             .into_any_element();
         div()
             .id(SharedString::from(format!("connection-{id}")))
@@ -233,18 +281,19 @@ impl ConnectionsPanel {
                 let source = source.clone();
                 move |bounds, window, _| source.capture(bounds, window)
             })
-            .on_drag(DraggedProfile(id), move |_, _, _, cx| {
-                cx.stop_propagation();
-                let visual = visual.clone();
-                cx.new(|_| source.preview(move |_, cx| visual.preview(cx)))
+            .when(writable, |row| {
+                row.on_drag(DraggedProfile(id), move |_, _, _, cx| {
+                    cx.stop_propagation();
+                    let visual = visual.clone();
+                    cx.new(|_| source.preview(move |_, cx| visual.preview(cx)))
+                })
+                .on_drop(cx.listener(
+                    move |this, dragged: &DraggedProfile, window, cx| {
+                        this.move_profile(dragged, group.clone(), Some(id), window, cx)
+                    },
+                ))
             })
-            .on_drop(
-                cx.listener(move |this, dragged: &DraggedProfile, window, cx| {
-                    this.move_profile(dragged, group.clone(), Some(id), window, cx)
-                }),
-            )
-            .when(!profile.description.is_empty(), |row| {
-                let description = description_tooltip(&profile.description);
+            .when_some(tooltip, |row, description| {
                 row.tooltip(move |_, cx| {
                     cx.new(|_| gpui_kit::component::tooltip::Tooltip::new(description.clone()))
                         .into()

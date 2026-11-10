@@ -50,7 +50,7 @@ fn delayed_secret_prompt_preserves_other_tab_focus_and_restores_input_on_activat
             });
             workspace
                 .read(cx)
-                .active_item()
+                .active_item(cx)
                 .unwrap()
                 .view()
                 .downcast::<TerminalView>()

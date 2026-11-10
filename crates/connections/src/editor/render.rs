@@ -55,14 +55,21 @@ impl Render for ConnectionEditor {
             (window.viewport_size().height - rems(10.).to_pixels(window.rem_size())).max(px(0.));
         let nav_width = rems(layout.connection_nav_width);
         let page = match self.section {
-            EditorSection::Connection => self.connection.page(
-                &self.launch,
-                &self.appearance,
-                self.edit.id(),
-                self.edit.editing(),
-                &self.deps,
-                cx,
-            ),
+            EditorSection::Connection => {
+                let mut page = self.connection.page(
+                    &self.launch,
+                    &self.appearance,
+                    self.edit.id(),
+                    self.edit.editing(),
+                    &self.deps,
+                    cx,
+                );
+                let agents = self.agent_access.row(self.edit.original(), cx);
+                if let Some(row) = agents {
+                    page.insert(1, form::section("Agents", [row], cx));
+                }
+                page
+            }
             EditorSection::Authentication => self.authentication.page(cx),
             EditorSection::JumpHosts => {
                 let labels = self.jump_hosts.labels(&self.deps, cx);
@@ -103,6 +110,7 @@ impl Render for ConnectionEditor {
                     .min_h_0()
                     .pr_2()
                     .overflow_y_scroll()
+                    .track_scroll(&self.scroll)
                     .children(page),
             )
     }

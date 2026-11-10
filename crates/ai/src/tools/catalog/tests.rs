@@ -10,18 +10,35 @@ fn fixtures() -> Vec<Value> {
     serde_json::from_str(include_str!("../fixtures/calls.json")).unwrap()
 }
 
+/// Every tool offered, as while a terminal with file tools is attached.
+const ALL: ToolOffer = ToolOffer { files: true };
+
 fn session() -> McpSession {
     let mut session = McpSession::default();
-    session.handle(r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#);
+    session.handle(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+        ToolOffer::default(),
+    );
     session
 }
 
 fn invoke(session: &mut McpSession, name: &str, arguments: &Value, id: Value) -> McpStep {
+    invoke_under(session, name, arguments, id, ALL)
+}
+
+fn invoke_under(
+    session: &mut McpSession,
+    name: &str,
+    arguments: &Value,
+    id: Value,
+    offer: ToolOffer,
+) -> McpStep {
     session.handle(
         &json!({"jsonrpc":"2.0","id":id,"method":"tools/call", "params":{
             "name":name,"arguments":arguments
         }})
         .to_string(),
+        offer,
     )
 }
 
@@ -36,6 +53,16 @@ fn correct_variant(name: &str, call: &TerminalCall) -> bool {
             | ("exec_command", TerminalCall::ExecCommand(_))
             | ("read_command", TerminalCall::ReadCommand(_))
             | ("cancel_command", TerminalCall::CancelCommand(_))
+            | ("transfer_files", TerminalCall::TransferFiles(_))
+            | ("read_transfer", TerminalCall::ReadTransfer(_))
+            | ("cancel_transfer", TerminalCall::CancelTransfer(_))
+            | ("list_files", TerminalCall::ListFiles(_))
+            | ("read_file", TerminalCall::ReadFile(_))
+            | ("write_file", TerminalCall::WriteFile(_))
+            | ("edit_file", TerminalCall::EditFile(_))
+            | ("make_directory", TerminalCall::MakeDirectory(_))
+            | ("delete_path", TerminalCall::DeletePath(_))
+            | ("move_path", TerminalCall::MovePath(_))
     )
 }
 
@@ -43,19 +70,85 @@ fn correct_variant(name: &str, call: &TerminalCall) -> bool {
 fn tools_list_preserves_original_order_descriptions_and_schemas() {
     let expected: Value =
         serde_json::from_str(include_str!("../fixtures/tools-list.json")).unwrap();
-    let McpStep::Reply(actual) =
-        session().handle(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#)
-    else {
+    let McpStep::Reply(actual) = session().handle(
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
+        ToolOffer::default(),
+    ) else {
         panic!("expected tools/list reply");
     };
-    assert_eq!(actual, expected);
+    assert_eq!(
+        actual, expected,
+        "without file terminals the list is as before"
+    );
+}
+
+#[test]
+fn file_tools_are_listed_and_admitted_only_while_offered() {
+    let listed = |offer| {
+        let McpStep::Reply(reply) =
+            session().handle(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, offer)
+        else {
+            panic!("expected tools/list reply");
+        };
+        reply["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let without = listed(ToolOffer::default());
+    let with = listed(ToolOffer::new(true));
+    assert!(!without.iter().any(|name| name == "read_file"));
+    assert_eq!(&with[..without.len()], without.as_slice());
+    assert_eq!(
+        &with[without.len()..],
+        [
+            "list_files",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "make_directory",
+            "delete_path",
+            "move_path"
+        ]
+    );
+    let arguments = json!({"terminal_id":"t3","path":"/server.properties"});
+    let McpStep::Rejected { error, .. } = invoke_under(
+        &mut session(),
+        "read_file",
+        &arguments,
+        json!(5),
+        ToolOffer::default(),
+    ) else {
+        panic!("a tool that is not offered is refused");
+    };
+    assert!(error.contains("file_tools"), "{error}");
+    assert!(matches!(
+        invoke_under(&mut session(), "read_file", &arguments, json!(6), ALL),
+        McpStep::Call {
+            call: TerminalCall::ReadFile(_),
+            ..
+        }
+    ));
+    let McpStep::Reply(initialized) = McpSession::default().handle(
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize"}"#,
+        ToolOffer::default(),
+    ) else {
+        panic!("expected initialize reply");
+    };
+    assert_eq!(
+        initialized["result"]["capabilities"]["tools"]["listChanged"],
+        json!(true),
+        "the agent is told the list may change"
+    );
 }
 
 #[test]
 fn every_variant_round_trips_through_a_unique_catalogue_entry() {
     let fixtures = fixtures();
     let names: BTreeSet<_> = TOOLS.iter().map(|spec| spec.name).collect();
-    assert_eq!(TOOLS.len(), 8);
+    assert_eq!(TOOLS.len(), 18);
     assert_eq!(TOOLS.len(), names.len());
     assert_eq!(fixtures.len(), names.len());
     assert_eq!(
@@ -112,7 +205,7 @@ fn mcp_preserves_original_arguments_ids_and_optional_defaults_for_all_tools() {
         }
     }
     assert!(
-        matches!(session.handle(r#"{"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"list_terminals"}}"#),
+        matches!(session.handle(r#"{"jsonrpc":"2.0","id":42,"method":"tools/call","params":{"name":"list_terminals"}}"#, ToolOffer::default()),
         McpStep::Call { call: TerminalCall::ListTerminals, arguments, .. } if arguments == json!({}))
     );
 }
@@ -137,6 +230,16 @@ fn catalogue_and_mcp_reject_unknown_tools_bad_shapes_and_extra_fields() {
         ),
         ("open_terminal", json!({"server_id":null})),
         ("read_command", json!({"terminal_id":"t1"})),
+        (
+            "transfer_files",
+            json!({"source_terminal_id":"t1","sources":"/a","destination_terminal_id":"t2","destination":"/b"}),
+        ),
+        (
+            "transfer_files",
+            json!({"source_terminal_id":"t1","sources":["/a"],"destination_terminal_id":"t2","destination":"/b","extra":true}),
+        ),
+        ("read_transfer", json!({"transfer_id":7})),
+        ("cancel_transfer", json!({})),
     ] {
         assert!(
             get(name)
@@ -207,5 +310,19 @@ fn both_metadata_versions_use_the_same_shape_parser_without_losing_outcomes() {
                 serde_json::to_value(display.outcome).unwrap()
             );
         }
+    }
+}
+
+#[test]
+fn canonical_tool_arguments_round_trip_through_every_existing_catalog_schema() {
+    let fixtures: Value = serde_json::from_str(include_str!("../fixtures/calls.json")).unwrap();
+    for fixture in fixtures.as_array().unwrap() {
+        let name = fixture["name"].as_str().unwrap();
+        let spec = get(name).unwrap();
+        let call = (spec.parse)(fixture["arguments"].clone()).unwrap();
+        let arguments = call.arguments().unwrap();
+        let restored = (spec.parse)(arguments.clone()).unwrap();
+        assert_eq!(restored.arguments().unwrap(), arguments);
+        assert_eq!(restored.name(), name);
     }
 }

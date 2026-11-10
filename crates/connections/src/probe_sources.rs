@@ -7,6 +7,7 @@ use nocterm_connections_store::{
     ProbeSourceIdentity, ProbeSourceLease,
 };
 use nocterm_session::{RemoteFs, Target};
+use nocterm_ssh_keys::authorized_keys::{ConnectedHost, HostIdentity};
 use nocterm_workspace::{ConnectionFactSession, ExpectedSession, Workspace};
 use std::{
     cell::{Cell, RefCell},
@@ -14,6 +15,10 @@ use std::{
     rc::Rc,
     sync::{Arc, Weak},
 };
+/// Told once for every session of a saved connection that comes up, with its file system.
+pub trait HostObserver {
+    fn connected(&self, host: ConnectedHost, source: ProbeSourceLease, cx: &mut App);
+}
 struct OriginalSource {
     original: Rc<dyn ConnectionFactSession>,
     expected: ExpectedSession,
@@ -100,6 +105,18 @@ impl ProjectedSource {
             fs: snapshot.session.fs?,
         })
     }
+    fn announcement(&self) -> ConnectedHost {
+        ConnectedHost {
+            connection: self.association.to_string(),
+            identity: HostIdentity {
+                user: self.target.user.clone(),
+                host: self.target.host.clone(),
+                host_key: String::new(),
+            },
+            port: self.target.port,
+            fs: self.fs.clone(),
+        }
+    }
     fn fresh_slot(&self) -> SourceSlot {
         let authority = OriginalSource {
             original: self.original.clone(),
@@ -136,14 +153,19 @@ impl SourceSlot {
     }
 }
 impl ProbeSource {
-    fn reproject(&mut self, connections: &Entity<Connections>, cx: &App) -> Vec<ProbeRequest> {
+    fn reproject(
+        &mut self,
+        connections: &Entity<Connections>,
+        arrived: &mut Vec<(ConnectedHost, ProbeSourceLease)>,
+        cx: &App,
+    ) -> Vec<ProbeRequest> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Vec::new();
         };
         let projected: Vec<_> = workspace
             .read(cx)
-            .items()
-            .filter_map(|item| ProjectedSource::read(item, connections, cx))
+            .items(cx)
+            .filter_map(|item| ProjectedSource::read(item.as_ref(), connections, cx))
             .collect();
         let present: HashSet<_> = projected.iter().map(|row| row.expected.item()).collect();
         self.leases.retain(|id, slot| {
@@ -167,7 +189,9 @@ impl ProbeSource {
                     {
                         old.lease.revoke();
                     }
-                    self.leases.insert(id, projection.fresh_slot());
+                    let slot = projection.fresh_slot();
+                    arrived.push((projection.announcement(), slot.lease.clone()));
+                    self.leases.insert(id, slot);
                 }
                 self.leases
                     .get(&id)
@@ -180,8 +204,12 @@ impl ProbeSource {
 pub(crate) struct ProbeSources {
     sources: RefCell<Vec<ProbeSource>>,
     rotation: Cell<usize>,
+    observer: RefCell<Option<Rc<dyn HostObserver>>>,
 }
 impl ProbeSources {
+    pub(crate) fn bind_observer(&self, observer: Rc<dyn HostObserver>) {
+        self.observer.borrow_mut().get_or_insert(observer);
+    }
     pub(crate) fn register(&self, workspace: WeakEntity<Workspace>) {
         let mut sources = self.sources.borrow_mut();
         if !sources
@@ -201,6 +229,7 @@ impl ProbeSources {
         facts: &Entity<FactsService>,
         cx: &mut App,
     ) {
+        let observer = self.observer.borrow().clone();
         let mut sources = self.sources.borrow_mut();
         sources.retain(|source| source.workspace.upgrade().is_some());
         let count = sources.len();
@@ -208,7 +237,13 @@ impl ProbeSources {
         for offset in 0..count {
             let index = (start + offset) % count;
             let source = &mut sources[index];
-            let requests = source.reproject(connections, cx);
+            let mut arrived = Vec::new();
+            let requests = source.reproject(connections, &mut arrived, cx);
+            if let Some(observer) = observer.as_ref() {
+                for (host, source) in arrived {
+                    observer.connected(host, source, cx);
+                }
+            }
             let length = requests.len();
             if length == 0 {
                 source.cursor = 0;

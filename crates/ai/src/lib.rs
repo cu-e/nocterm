@@ -1,27 +1,33 @@
-//! Agent contracts, neutral protocol records, bounded context rules and version-one history formats.
+//! Agent contracts, neutral protocol records, bounded context rules and scoped history formats.
 //!
 //! Owns: neutral `model` records (the only agent vocabulary other crates see), agent
 //! profiles, catalog and settings resolution (`agents`), configuration rules, transcript reduction, session/tool rules, pure sandbox policy,
-//! bounded history codecs and capability/storage ports.
+//! bounded history codecs, immutable scoped execution origins and capability/storage ports.
+//! The terminal tool catalog includes file transfers and shared agent-facing terminal,
+//! command, observation and transfer reports; display data never grants execution authority.
+//! File tools for terminals that run no programs are pure rules over a captured `RemoteFs`;
+//! catalog groups and the chat's `ToolOffer` decide which tools the bridge lists and admits.
+//! Image data is immutable and shared across projections; live transcript admission uses incremental pre-mutation costs.
 //! Does not own: per-chat configuration/composer state, native workspace/sandbox lookup,
 //! history/favorites files or persistence scheduling; native capabilities and repositories are adapters.
 //! Ports used: none for history codecs. Ports provided: metadata::ChatMetadataSource,
 //! AgentConnector, ToolBridge,
-//! AgentStateRepository, ChatRepository, usage::AccountUsageSource,
+//! AgentStateRepository, ChatRepository and bounded PreparedChatLoad,
 //! workspace::WorkdirResolver, sandbox::SandboxProbe and
 //! images::{ImageInspector, ImageThumbnailer}.
 //! Image preflight and encoded admission are pure; native decoding is injected.
 //! ImageCodecCause reuses core shared causes without exposing a native codec type.
-//! Account usage diagnostics retain typed native I/O causes through foundation SharedError;
-//! narrow domain constructors preserve operation category and path.
 //! Workspace preparation and sandbox spawn diagnostics retain typed shared native I/O;
 //! adapter constructors preserve classification without changing policy or mount authority.
 //! Settings section: ai. Globals: none.
 //! Invariants: saved records validate identity/version and encoded/structural limits.
 //! Snapshot framing and transcript timestamps accept supplied identity/time.
 //! Native chat allocation and wall-clock facts are provided by ChatMetadataSource.
-//! No agent protocol SDK type appears in this crate; persisted records serialize as the
-//! version-one transcript JSON and `nocterm-acp` maps the SDK to them (ADR 0058).
+//! No agent protocol SDK type appears in this crate; `nocterm-acp` maps the SDK to neutral records.
+//! Legacy transcripts preserve their version-one bytes. Newly framed documents use version
+//! three with explicit device/account environment and independent context ownership.
+//! LocalAccountSource leases are captured from an authenticated native owner; persistence identity
+//! never grants execution access. Version-two records remain ThisComputer only.
 //! Agent launch settings validation is pure; native text parsing and page controls belong to Agent.
 //! No concrete agent is named here: built-in profiles are injected as an `AgentCatalog`.
 pub mod agents;
@@ -30,11 +36,14 @@ pub mod commands;
 pub mod connection;
 pub mod context;
 pub mod env;
+pub mod execution_origin;
 pub mod favorites;
 pub mod history;
 pub mod images;
+pub mod local_environment;
 pub mod mcp;
 pub mod metadata;
+pub mod prompt_files;
 pub mod redact;
 pub mod sandbox;
 pub mod session;

@@ -1,4 +1,6 @@
-//! Saved chats: one JSON file per chat in a private directory.
+//! Pure saved-chat formats: byte-stable v1 and explicitly scoped v2 envelopes.
+//! V2 starts with a canonical catalog header bounded to 16 KiB; full hydration
+//! checks its projection against the payload. Storage supplies scope/path authority.
 //!
 //! A chat keeps what the panel showed — the user's messages, the agent's
 //! replies and tool calls — and the agent session it belonged to, so it can be
@@ -16,21 +18,35 @@ mod budget;
 mod catalog;
 mod codec;
 mod error;
-pub use codec::{decode, encode, encode_shared, prepare, structural_bytes};
+pub use codec::{decode, encode, encode_shared, prepare, prepare_owned, structural_bytes};
 pub use error::HistoryCodecError;
 mod decode;
 mod loading;
 mod preflight;
 pub use catalog::{ChatSummary, FileStamp, decode_summary};
 pub use loading::{HistoryGate, HistoryPermit};
+mod catalog_header;
+mod header;
+mod incoming;
+mod prefix;
 mod size;
+mod version;
 mod wire;
 pub use budget::{HistoryBudget, PreparedBudget};
-const VERSION: u32 = 1;
+pub use catalog_header::CatalogHeader;
+pub use header::SavedHeader;
+pub use nocterm_project_model::ContextId;
+pub use prefix::{MAX_HEADER_BYTES, decode_catalog_header};
+pub use version::TranscriptVersion;
+const VERSION: u32 = 2;
+const ENVIRONMENT_VERSION: u32 = 3;
+const LEGACY_VERSION: u32 = 1;
 /// Images larger than this are left out of saved chats.
 const MAX_SAVED_IMAGE_BYTES: usize = 512 * 1024;
+const OMITTED_IMAGE_TEXT: &str = "[Image not kept in history]";
 /// Only the most recent entries of a very long chat are kept.
-const MAX_SAVED_ENTRIES: usize = 2_000;
+/// Maximum persisted transcript rows, shared by pre-copy admission.
+pub const MAX_SAVED_ENTRIES: usize = 2_000;
 /// Larger files are not read back.
 pub const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
 /// At most this many chats are restored, newest first.
@@ -59,85 +75,60 @@ pub struct SavedPrompt {
     pub attachments: Vec<SavedAttachment>,
 }
 
-/// One saved chat.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// One saved chat. Its identity and catalog metadata share one header.
+#[derive(Clone, Debug)]
 pub struct SavedChat {
     pub version: u32,
-    /// Names the file; a UUID.
-    pub id: String,
-    /// The registry id of the agent the chat was held with.
-    pub agent_id: String,
-    /// The title the agent gave the chat.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    /// The name the user gave the chat, over the agent's title.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
-    /// Pinned chats are listed first and always restored.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub pinned: bool,
+    pub header: SavedHeader,
     /// The agent's session, for resuming it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
-    /// The directory the session was opened in; resuming needs the same one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// The provider's local resume directory, not project root authority.
     pub workdir: Option<PathBuf>,
-    /// The model of the last prompt.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// The configuration the chat last had (model, effort, mode, …) by
-    /// option id; given to every session the chat opens.
-    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub config: crate::session_config::Choices,
-    /// The mode the chat last had, for agents that report modes apart from
-    /// their configuration options.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
-    /// Saved transcript still needs delivery to the current agent session.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pending_history: bool,
-    /// Unsent composer text, preserved literally and kept out of the transcript.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Unsent composer text, preserved literally outside the transcript.
     pub draft: Option<String>,
-    /// Seconds since the Unix epoch.
-    pub updated: u64,
-    #[serde(deserialize_with = "decode::entries")]
     pub entries: Vec<Entry>,
-    #[serde(
-        default,
-        skip_serializing_if = "Vec::is_empty",
-        deserialize_with = "decode::prompts"
-    )]
     pub queue: Vec<SavedPrompt>,
-    #[serde(
-        default,
-        skip_serializing_if = "Vec::is_empty",
-        deserialize_with = "decode::attachments"
-    )]
     pub attachments: Vec<SavedAttachment>,
     /// When each entry began, aligned with `entries`.
-    #[serde(
-        default,
-        skip_serializing_if = "Vec::is_empty",
-        deserialize_with = "decode::times"
-    )]
     pub times: Vec<u64>,
-    #[serde(skip)]
     prepared: Option<PreparedBudget>,
-    #[serde(skip)]
     archived_draft: bool,
+}
+impl Serialize for SavedChat {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        wire::Wire::complete(self).serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for SavedChat {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        incoming::deserialize(deserializer)
+    }
 }
 
 impl SavedChat {
     /// An empty framing value for an already allocated identity and supplied timestamp.
     pub fn for_identity(agent_id: String, id: String, updated: u64) -> Self {
+        Self::for_scope(
+            agent_id,
+            id,
+            updated,
+            nocterm_project_model::ContextId::General,
+        )
+    }
+    /// Frame a newly allocated chat with an explicit durable owner.
+    pub fn for_scope(
+        agent_id: String,
+        id: String,
+        updated: u64,
+        scope: nocterm_project_model::ContextId,
+    ) -> Self {
         Self {
             version: VERSION,
-            id,
-            agent_id,
-            title: None,
-            name: None,
-            pinned: false,
+            header: SavedHeader::new(agent_id, id, updated, scope),
             session_id: None,
             workdir: None,
             model: None,
@@ -145,7 +136,6 @@ impl SavedChat {
             mode: None,
             pending_history: false,
             draft: None,
-            updated,
             entries: Vec::new(),
             queue: Vec::new(),
             attachments: Vec::new(),
@@ -155,18 +145,65 @@ impl SavedChat {
         }
     }
 
+    /// Explicit environment-scoped local documents use version three; no data is uploaded.
+    pub fn for_environment(
+        agent_id: String,
+        id: String,
+        updated: u64,
+        scope: crate::local_environment::ChatScope,
+    ) -> Self {
+        let mut chat = Self::for_scope(agent_id, id, updated, scope.context());
+        chat.version = ENVIRONMENT_VERSION;
+        chat.header.environment = scope.environment().clone();
+        chat
+    }
+    pub fn archive_draft_in_environment(
+        id: String,
+        agent_id: String,
+        text: String,
+        updated: u64,
+        scope: crate::local_environment::ChatScope,
+    ) -> Self {
+        let mut chat = Self::for_environment(agent_id, id, updated, scope);
+        chat.draft = (!text.is_empty()).then_some(text);
+        chat.archived_draft = true;
+        chat
+    }
     /// A draft edit made before the archived transcript has been hydrated.
     pub fn archive_draft(id: String, agent_id: String, text: String, updated: u64) -> Self {
-        let mut chat = Self::for_identity(agent_id, id, updated);
+        Self::archive_draft_in_scope(
+            id,
+            agent_id,
+            text,
+            updated,
+            nocterm_project_model::ContextId::General,
+        )
+    }
+    /// A literal draft patch carries the same durable owner as its original document.
+    pub fn archive_draft_in_scope(
+        id: String,
+        agent_id: String,
+        text: String,
+        updated: u64,
+        scope: nocterm_project_model::ContextId,
+    ) -> Self {
+        let mut chat = Self::for_scope(agent_id, id, updated, scope);
         chat.draft = (!text.is_empty()).then_some(text);
-        chat.updated = updated;
+        chat.header.updated = updated;
         chat.archived_draft = true;
         chat
     }
     /// The pending archived draft fields; no transcript is fabricated from this patch.
     pub fn draft_patch(&self) -> Option<(Option<String>, u64)> {
         self.archived_draft
-            .then(|| (self.draft.clone(), self.updated))
+            .then(|| (self.draft.clone(), self.header.updated))
+    }
+    /// Admit identity and format ownership before exposing an in-memory record.
+    pub fn validate_identity(&self) -> Result<(), HistoryCodecError> {
+        codec::validate_id(&self.header.id)?;
+        header::resolve_scope(self.version, Some(self.header.scope))?;
+        header::validate_environment(self.version, &self.header.environment)?;
+        Ok(())
     }
     /// Reject a prompt before accepting it if it could not be read back.
     pub fn validate_size(&self) -> Result<(), HistoryCodecError> {
@@ -238,12 +275,40 @@ pub struct SharedChat {
     pub metadata: SavedChat,
     pub queue: Vec<std::sync::Arc<SavedPrompt>>,
 }
+impl SharedChat {
+    /// Conservative structural ownership cost, including full retained media and
+    /// shared queue records. No encoded transcript buffer is allocated.
+    pub fn retained_bytes(&self) -> Result<usize, HistoryCodecError> {
+        let metadata = size::structural_size(&wire::Wire::complete(&self.metadata))?;
+        self.queue.iter().try_fold(metadata, |bytes, prompt| {
+            Ok(bytes.saturating_add(prompt_memory(prompt)?))
+        })
+    }
+}
 impl std::ops::Deref for SharedChat {
     type Target = SavedChat;
     fn deref(&self) -> &Self::Target {
         &self.metadata
     }
 }
+
+/// Exact compact JSON byte size, without allocating the encoded payload.
+/// This counts an already decoded value; it does not parse or authenticate input.
+pub fn json_size(value: &impl serde::Serialize) -> Result<usize, HistoryCodecError> {
+    size::encoded_len(value).map_err(HistoryCodecError::from)
+}
+
+/// Conservative retained ownership cost, without allocating an encoded buffer.
+/// Consumers must still bound native input before decoding or materializing it.
+pub fn retained_value_bytes(value: &impl serde::Serialize) -> Result<usize, HistoryCodecError> {
+    size::structural_size(value).map_err(HistoryCodecError::from)
+}
+
+/// Exact JSON string size, using the same allocation-free codec counter.
+pub fn text_size(text: &str) -> Result<usize, HistoryCodecError> {
+    size::encoded_len(&text).map_err(HistoryCodecError::from)
+}
+
 pub fn content_size(content: &Content) -> Result<usize, HistoryCodecError> {
     size::encoded_len(content).map_err(HistoryCodecError::from)
 }
@@ -253,5 +318,7 @@ pub fn prompt_size(prompt: &SavedPrompt) -> Result<usize, HistoryCodecError> {
 
 #[cfg(test)]
 mod draft_tests;
+#[cfg(test)]
+mod scope_tests;
 #[cfg(test)]
 mod version_one_tests;

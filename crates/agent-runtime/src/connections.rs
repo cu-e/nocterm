@@ -1,33 +1,26 @@
 //! Connection membership and retained process-cleanup ownership.
 use super::{Client, Connection};
 use gpui::{EntityId, Task};
-use nocterm_ai::{AgentCommands, AgentInfo, AgentLaunch};
+use nocterm_ai::{AgentCommands, AgentInfo, execution_origin::ChatKey};
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::Arc,
 };
 
 #[derive(Default)]
 pub(super) struct ConnectionManager {
     active: HashMap<u64, Connection>,
-    closing: HashMap<u64, String>,
+    closing: HashMap<u64, ChatKey>,
     cleanup: HashMap<u64, Arc<super::process_cleanup::ProcessCleanup>>,
     serial: u64,
     startups: HashMap<u64, super::startup::Completion>,
 }
 impl ConnectionManager {
-    pub(super) fn reserve_key(
-        &mut self,
-        launch: &AgentLaunch,
-        workdir: &Path,
-        isolated: bool,
-    ) -> u64 {
+    pub(super) fn reserve_key(&mut self, identity: &super::execution::ExecutionIdentity) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        launch.hash(&mut hasher);
-        workdir.hash(&mut hasher);
-        isolated.hash(&mut hasher);
+        identity.hash(&mut hasher);
         self.serial().hash(&mut hasher);
         hasher.finish()
     }
@@ -62,7 +55,7 @@ impl ConnectionManager {
         };
         connection.commands = Some(commands.clone());
         connection.info = Some(info);
-        connection.workdir = workdir;
+        connection.identity.prepared_directory(workdir);
         connection._events = Some(events);
         let clients = connection.users.values().cloned().collect();
         self.retain_cleanup(key, commands);
@@ -74,10 +67,10 @@ impl ConnectionManager {
     pub(super) fn active(&self) -> bool {
         !self.active.is_empty() || !self.closing.is_empty()
     }
-    pub(super) fn same_chat(&self, id: &str) -> bool {
+    pub(super) fn same_chat(&self, id: &ChatKey) -> bool {
         self.active
             .values()
-            .any(|connection| connection.chat_id == id)
+            .any(|connection| connection.identity.key() == id)
             || self.closing.values().any(|chat| chat == id)
     }
     pub(super) fn closing_keys(&self) -> impl Iterator<Item = &u64> {
@@ -95,7 +88,7 @@ impl ConnectionManager {
         let mut connection = self.active.remove(&key)?;
         connection.cancellation.cancel();
         connection.users.remove(&owner);
-        self.closing.insert(key, connection.chat_id.clone());
+        self.closing.insert(key, connection.identity.key().clone());
         let commands = commands.or_else(|| connection.commands.take());
         if commands.is_none()
             && let Some(completion) = connection.startup_completion.as_ref()

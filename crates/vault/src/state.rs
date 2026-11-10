@@ -214,7 +214,7 @@ impl VaultState {
             .iter()
             .find(|record| record.info.id == id)
             .ok_or(VaultError::NotFound)?;
-        if &record.info.binding != binding {
+        if !record.info.binding.answers(binding) {
             return Err(VaultError::Binding);
         }
         Ok(record.secret.clone())
@@ -249,6 +249,31 @@ impl VaultState {
         } else {
             records.push(new);
         }
+        validate_records(&records)?;
+        self.prepare_records(records, nonces)
+    }
+    /// Renames the record `id` and binds it as `binding`, which a record may become while its
+    /// secret stays ([`CredentialBinding::may_become`]).
+    pub fn prepare_update(
+        &self,
+        id: CredentialId,
+        label: String,
+        binding: CredentialBinding,
+        nonces: SealNonces,
+    ) -> Result<PreparedWrite, VaultError> {
+        if label.len() > 1024 {
+            return Err(VaultError::Limit);
+        }
+        let mut records = clone_records(&self.state()?.records);
+        let record = records
+            .iter_mut()
+            .find(|record| record.info.id == id)
+            .ok_or(VaultError::NotFound)?;
+        if !record.info.binding.may_become(&binding) {
+            return Err(VaultError::Binding);
+        }
+        record.info.label = label;
+        record.info.binding = binding;
         validate_records(&records)?;
         self.prepare_records(records, nonces)
     }

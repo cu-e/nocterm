@@ -12,23 +12,25 @@ use crate::SettingsDocument;
 /// improves in a later release reaches everyone who never touched it.
 #[derive(Debug, Clone)]
 pub struct SettingsFile {
-    path: PathBuf,
+    file: persist::RevisionedFile,
 }
 
 impl SettingsFile {
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            file: persist::RevisionedFile::new(path),
+        }
     }
 
     pub fn path(&self) -> &Path {
-        &self.path
+        self.file.path()
     }
 
     /// Reads the file's tables. A file that does not exist yields the
     /// defaults. Only a file that is not TOML at all, or cannot be read, is
     /// an error; each section is checked when it is registered.
     pub fn load(&self) -> Result<SettingsDocument, PersistError> {
-        let table = persist::load::<toml::Table>(&self.path)?.unwrap_or_default();
+        let table = self.file.load::<toml::Table>()?.unwrap_or_default();
         Ok(SettingsDocument::from_table(table))
     }
 
@@ -37,12 +39,8 @@ impl SettingsFile {
     /// A table the document does not write from a section, because it could
     /// not be read or nothing claims it, is left as the file now has it.
     pub fn save(&self, settings: &SettingsDocument) -> Result<(), PersistError> {
-        let mut table = settings.to_table();
-        if let Ok(Some(current)) = persist::load::<toml::Table>(&self.path) {
-            table.retain(|key, _| settings.owns(key));
-            table.extend(current.into_iter().filter(|(key, _)| !settings.owns(key)));
-        }
-        persist::save_preserving(&self.path, &table)
+        self.file
+            .save_preserving_owned(&settings.to_table(), |key| settings.owns(key))
     }
 }
 

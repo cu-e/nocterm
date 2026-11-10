@@ -32,44 +32,59 @@ const START_TIMEOUT: Duration = Duration::from_secs(15);
 /// The extended-data stream SSH carries standard error on.
 const STDERR: u32 = 1;
 
-enum Job {
-    Exec {
-        request: ExecRequest,
-        answer: oneshot::Sender<Result<ExecOutput, ExecError>>,
-    },
-    Terminal {
-        request: TerminalRequest,
-        driver: SessionDriver,
-    },
+struct Job {
+    request: ExecRequest,
+    answer: oneshot::Sender<Result<ExecOutput, ExecError>>,
+}
+struct TerminalJob {
+    request: TerminalRequest,
+    driver: SessionDriver,
 }
 
 /// Runs programs on the host of one SSH session.
 #[derive(Clone)]
 pub(crate) struct SshExec {
     requests: mpsc::Sender<Job>,
+    terminals: mpsc::Sender<TerminalJob>,
     runtime: runtime::Handle,
+    source: nocterm_session::ConnectionSource,
 }
 
 /// The connection's end of [`SshExec`].
 pub(crate) struct ExecRequests {
     requests: mpsc::Receiver<Job>,
+    terminals: mpsc::Receiver<TerminalJob>,
+    source: nocterm_session::ConnectionSource,
 }
 
-pub(crate) fn channel(runtime: runtime::Handle) -> (SshExec, ExecRequests) {
+pub(crate) fn channel(
+    runtime: runtime::Handle,
+    source: nocterm_session::ConnectionSource,
+) -> (SshExec, ExecRequests) {
     let (requests, receiver) = mpsc::channel(REQUEST_BACKLOG);
+    let (terminals, terminal_receiver) = mpsc::channel(REQUEST_BACKLOG);
     (
-        SshExec { requests, runtime },
-        ExecRequests { requests: receiver },
+        SshExec {
+            requests,
+            terminals,
+            runtime,
+            source: source.clone(),
+        },
+        ExecRequests {
+            requests: receiver,
+            terminals: terminal_receiver,
+            source,
+        },
     )
 }
 
 impl HostExec for SshExec {
     fn exec(&self, request: ExecRequest) -> ExecFuture<ExecOutput> {
         let requests = self.requests.clone();
-        Box::pin(async move {
+        self.source.guard(async move {
             let (answer, answered) = oneshot::channel();
             requests
-                .send(Job::Exec { request, answer })
+                .send(Job { request, answer })
                 .await
                 .map_err(|_| ExecError::Disconnected)?;
             answered.await.map_err(|_| ExecError::Disconnected)?
@@ -77,10 +92,10 @@ impl HostExec for SshExec {
     }
 
     fn terminal(&self, request: TerminalRequest) -> Session {
-        let (session, driver) = nocterm_session::channel(None);
-        let requests = self.requests.clone();
+        let (session, driver) = nocterm_session::channel_with_source(None, self.source.clone());
+        let requests = self.terminals.clone();
         self.runtime.spawn(async move {
-            let job = Job::Terminal {
+            let job = TerminalJob {
                 request,
                 driver: driver.clone(),
             };
@@ -116,23 +131,22 @@ pub(crate) async fn serve(
             _ = &mut shutdown => break,
             Some(_) = running.join_next(), if !running.is_empty() => {}
             Some(_) = terminals.join_next(), if !terminals.is_empty() => {}
-            job = requests.requests.recv(), if running.len() < CONCURRENT_PROGRAMS => {
-                match job {
-                    None => break,
-                    Some(Job::Exec { request, answer }) => {
-                        running.spawn(run(handle.clone(), request, answer));
-                    }
-                    Some(Job::Terminal { request, driver }) => {
-                        terminals.spawn(terminal(
-                            handle.clone(),
-                            observed.clone(),
-                            request,
-                            driver,
-                            stopped.clone(),
-                        ));
-                    }
-                }
+            job = requests.terminals.recv() => {
+                let Some(TerminalJob { request, driver }) = job else { break; };
+                let source=requests.source.clone();
+                let handle=handle.clone(); let observed=observed.clone(); let stopped=stopped.clone();
+                terminals.spawn(async move { let _=source.guard::<_,ExecError,_>(async move { terminal(
+                    handle, observed, request, driver, stopped,
+                ).await; Ok(()) }).await; });
+            }            job = requests.requests.recv(), if running.len() < CONCURRENT_PROGRAMS => {
+                let Some(Job { request, answer }) = job else { break; };
+                let handle=handle.clone();
+                let source=requests.source.clone();
+                running.spawn(async move {
+                    let _=source.guard::<_,ExecError,_>(run(handle, request, answer, source.clone())).await;
+                });
             }
+
         }
     }
     running.abort_all();
@@ -145,31 +159,33 @@ async fn run(
     handle: Arc<Handle<Client>>,
     request: ExecRequest,
     mut answer: oneshot::Sender<Result<ExecOutput, ExecError>>,
-) {
+    source: nocterm_session::ConnectionSource,
+) -> Result<(), ExecError> {
     let started = tokio::select! {
         biased;
-        () = answer.cancellation() => return,
+        () = answer.cancellation() => return Ok(()),
         started = timeout(START_TIMEOUT, start(&handle, &request)) => started,
     };
     let mut channel = match started {
         Ok(Ok(channel)) => channel,
         Ok(Err(error)) => {
             let _ = answer.send(Err(ExecError::Failed(error.to_string())));
-            return;
+            return Ok(());
         }
         Err(_) => {
             let _ = answer.send(Err(ExecError::Failed(
                 "the host did not start the program".into(),
             )));
-            return;
+            return Ok(());
         }
     };
-    let (sink, output) = ExecOutput::channel();
+    let (sink, output) = ExecOutput::channel_with_source(source);
     if answer.send(Ok(output)).is_ok() {
         forward(channel, request.stdin, sink).await;
     } else {
         let _ = channel.channel().close().await;
     }
+    Ok(())
 }
 
 async fn start(

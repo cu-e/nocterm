@@ -138,6 +138,46 @@ fn authenticates_routes_and_revokes_pending_calls() {
     }
     assert!(pending.respond.is_canceled());
 }
+fn listed(socket: &mut Socket, reader: &mut BufReader<Socket>, id: u64) -> Vec<String> {
+    writeln!(
+        socket,
+        "{}",
+        serde_json::json!({"jsonrpc":"2.0","id":id,"method":"tools/list"})
+    )
+    .unwrap();
+    let response: Value =
+        serde_json::from_str(&bounded_line(reader, 1024 * 1024).unwrap().unwrap()).unwrap();
+    response["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_owned())
+        .collect()
+}
+#[test]
+fn a_chat_offering_file_tools_tells_its_agent_to_list_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = bridge(&dir);
+    let registration = server.register().unwrap();
+    let (mut socket, mut reader) = authenticated(&registration);
+    initialize(&mut socket, &mut reader);
+    assert!(!listed(&mut socket, &mut reader, 2).contains(&"read_file".to_owned()));
+    registration.offer(ToolOffer::new(true));
+    let notice: Value =
+        serde_json::from_str(&bounded_line(&mut reader, 1024 * 1024).unwrap().unwrap()).unwrap();
+    assert_eq!(notice["method"], "notifications/tools/list_changed");
+    assert!(notice.get("id").is_none());
+    assert!(listed(&mut socket, &mut reader, 3).contains(&"read_file".to_owned()));
+    registration.offer(ToolOffer::new(true));
+    registration.offer(ToolOffer::default());
+    let notice: Value =
+        serde_json::from_str(&bounded_line(&mut reader, 1024 * 1024).unwrap().unwrap()).unwrap();
+    assert_eq!(
+        notice["method"], "notifications/tools/list_changed",
+        "the same offer again sends nothing; a change does"
+    );
+    assert!(!listed(&mut socket, &mut reader, 4).contains(&"read_file".to_owned()));
+}
 #[test]
 fn rejects_bad_tokens_and_limits_thread_connections() {
     let dir = tempfile::tempdir().unwrap();
@@ -214,21 +254,15 @@ fn actual_stdio_relay_roundtrip() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
+    let catalog: std::collections::BTreeSet<_> =
+        ToolOffer::default().tools().map(|spec| spec.name).collect();
     assert_eq!(
-        names,
-        [
-            "list_terminals",
-            "open_terminal",
-            "read_terminal",
-            "send_input",
-            "run_command",
-            "exec_command",
-            "read_command",
-            "cancel_command",
-        ]
-        .into_iter()
-        .collect(),
+        names, catalog,
+        "a chat offers its terminal tools from the start"
     );
+    for transfer in ["transfer_files", "read_transfer", "cancel_transfer"] {
+        assert!(names.contains(transfer));
+    }
 }
 #[test]
 fn bounds_unauthenticated_connections_and_protocol_lines() {

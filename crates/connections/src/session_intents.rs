@@ -1,12 +1,41 @@
 //! Feature-owned conversion and foreground open intent; background routes skip recents.
 use crate::Installed;
-use gpui_kit::{App, SharedString, WeakEntity, Window};
+use gpui_kit::{App, EntityId, SharedString, WeakEntity, Window};
 use nocterm_connections_model::{
     jump_route::{JumpRouteError, resolve_jump_route},
     profiles::{Profile, ProfileId, Profiles, Recent},
 };
 use nocterm_session::Target;
 use nocterm_workspace::{SessionSpec, Workspace};
+
+/// Resolve the original saved workspace server without opening a connection.
+/// Profile grouping is insufficient: its destination and ordered route must
+/// still match the saved workspace exactly before any authentication or I/O.
+pub fn resolve_parent_spec(
+    host: &nocterm_project_model::HostLocator,
+    profiles: &Profiles,
+) -> Result<SessionSpec, nocterm_workspace_ports::ProjectConnectionError> {
+    use nocterm_project_model::HostLocator;
+    use nocterm_workspace_ports::ProjectConnectionError;
+    let HostLocator::Ssh {
+        profile,
+        target,
+        via,
+    } = host
+    else {
+        return Err(ProjectConnectionError::UnsupportedHost);
+    };
+    let saved = profiles
+        .iter()
+        .find(|saved| saved.id.to_string() == *profile)
+        .ok_or(ProjectConnectionError::MissingProfile)?;
+    let spec = spec_for_profile(saved, profiles).map_err(ProjectConnectionError::invalid_route)?;
+    if spec.target != *target || spec.address().via != *via {
+        return Err(ProjectConnectionError::ChangedTargetOrRoute);
+    }
+    Ok(spec)
+}
+
 /// The session to open for `profile`, with its jump hosts resolved against
 /// `profiles`. Fails when a jump host is gone, loops back, or the route is too long.
 pub fn spec_for_profile(
@@ -89,6 +118,29 @@ pub(crate) fn open_profile(
             false
         }
     }
+}
+/// Opens a saved connection without a tab and returns the session's item, or reports why its
+/// route cannot be resolved. It signs in as a tab would and is not recorded among recents.
+pub(crate) fn open_background(
+    installed: &Installed,
+    workspace: &WeakEntity<Workspace>,
+    profile: &Profile,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<EntityId> {
+    let spec = match spec_for_profile(profile, installed.connections().read(cx).profiles(cx)) {
+        Ok(spec) => spec,
+        Err(error) => {
+            report_route_error(&error, window, cx);
+            return None;
+        }
+    };
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.open_background_session(spec, window, cx)
+        })
+        .ok()
+        .flatten()
 }
 /// Records the foreground intent before asking the existing workspace session factory.
 pub fn connect(

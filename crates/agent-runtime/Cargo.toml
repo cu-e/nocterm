@@ -13,7 +13,10 @@ layer = "service"
 test-support = []
 
 [dependencies]
+nocterm-hubs-model.workspace = true
 nocterm-ai.workspace = true
+nocterm-session.workspace = true
+nocterm-transfers.workspace = true
 nocterm-agent-directory.workspace = true
 nocterm-core.workspace = true
 nocterm-store.workspace = true
@@ -24,7 +27,10 @@ tracing.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+nocterm-hubs-model = { workspace = true, features = ["test-support"] }
+nocterm-session = { workspace = true, features = ["test-support"] }
 nocterm-agent-providers.workspace = true
+nocterm-transfers = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true

@@ -8,7 +8,11 @@ use nocterm_transfers::{
     CollisionPolicy, DiscoveryLimits, DownloadRequest, QueueLimits, StreamLimits, TransferCause,
     TransferError, TransferLimits, TransferService, TransferState,
 };
-use std::ffi::OsStr;
+use std::{
+    ffi::OsStr,
+    sync::{Arc, Mutex, mpsc},
+    time::Duration,
+};
 
 #[test]
 fn many_files_stream_with_bounded_readers_and_exact_accepted_bytes() {
@@ -495,4 +499,42 @@ fn failed_and_cancelled_downloads_report_explicit_stage_cleanup_failure() {
         assert_eq!(fixture.local.activity().live_uploads, 0);
         assert_eq!(fixture.remote.activity().live_downloads, 0);
     }
+}
+
+#[test]
+fn cancelling_while_a_local_write_is_pending_still_cancels_the_stage() {
+    let fixture = Fixture::new();
+    fixture.remote.seed_file("/file", b"private").unwrap();
+    // The first batch takes two reads (data, end); the second batch's read stays pending.
+    for gate in [Gate::open(), Gate::open(), Gate::pending()] {
+        fixture
+            .remote
+            .suspend_next(FsOperation::Read, "/file", gate);
+    }
+    let (started, write_started) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let released = Mutex::new(released);
+    let started = Mutex::new(started);
+    fixture
+        .local
+        .observe_local(Arc::new(move |operation, _: &std::path::Path| {
+            if operation == FsOperation::Write {
+                let _ = started.lock().unwrap().send(());
+                let _ = released.lock().unwrap().recv();
+            }
+        }));
+    let id = fixture.download(vec!["/file".into()], CollisionPolicy::Skip);
+    write_started
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the local write starts while the next read is pending");
+    fixture.runtime.cancel(id).unwrap();
+    // Let the cancelled read unwind before the write returns its stage.
+    std::thread::sleep(Duration::from_millis(100));
+    release.send(()).unwrap();
+    let progress = fixture.finished(id);
+    assert_eq!(progress.state, TransferState::Cancelled);
+    assert_eq!(fixture.local.activity().canceled_uploads, 1);
+    assert_eq!(fixture.local.activity().abandoned_uploads, 0);
+    assert!(LocalFs::open_source(fixture.local.as_ref(), &native("output/file")).is_err());
+    assert_eq!(fixture.remote.activity().live_downloads, 0);
 }
