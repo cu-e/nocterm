@@ -352,6 +352,14 @@ jobs:
       - name: Check the application builds for Windows
         if: runner.os == 'Windows'
         run: cargo check --locked -p nocterm
+      # Held directories, chat history and agent launch have Windows-only code paths:
+      # run them against the real filesystem and process APIs there.
+      - name: Test Windows held directories, chat history and agent launch
+        if: runner.os == 'Windows'
+        run: |
+          cargo clippy --locked -p nocterm-localfs -p nocterm-agent-storage -p nocterm-agent-runtime --all-targets -- -D warnings
+          cargo test --locked -p nocterm-localfs -p nocterm-ai -p nocterm-agent-storage
+          cargo test --locked -p nocterm --test native_chat_history
 
   # The one check to require in branch protection: it passes only when every
   # job above passed or was skipped by design, so adding a job never needs a
