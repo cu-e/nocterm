@@ -196,9 +196,12 @@ through operations; lossy strings are presentation only.
 
 Read-only browsing may follow directory links and accepts linked parent navigation.
 Strict traversal, source streams and mutations reject linked ancestors and pin each
-Unix directory. Walks and removals have entry/depth limits; cancellation can leave
-an explicitly reported partial removal. Portable targets check reparse/link state
-but do not claim Unix held-handle race guarantees. Staged publication distinguishes
+directory: Unix holds descriptors and uses `*at` calls; Windows holds a handle to every
+ancestor without delete sharing and refuses reparse points
+([ADR 0162](../adr/0162-windows-holds-directory-handles-for-strict-local-capabilities.md)).
+Walks and removals have entry/depth limits; cancellation can leave an explicitly
+reported partial removal. Other portable targets check reparse/link state but do not
+claim held-handle race guarantees. Staged publication distinguishes
 failure before commit from a durability warning after successful publication.
 Successful publication relinquishes its temporary name before returning; Drop
 cannot remove a later owner of that name. Explicit cancellation confirms removal

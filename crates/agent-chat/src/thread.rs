@@ -46,6 +46,7 @@ mod tool_runtime;
 pub use restart::RestartData;
 mod document;
 pub(crate) mod local_payloads;
+mod save_failure;
 mod saved;
 mod sign_in_wait;
 mod title;

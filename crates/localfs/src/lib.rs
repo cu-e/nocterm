@@ -5,8 +5,9 @@
 //! Does not own: views, transfer scheduling or remote filesystem protocols.
 //! Ports used: none. Ports provided: `LocalFs`, `LocalMutations`.
 //! Settings sections: none. Globals: none.
-//! Invariants: strict operations pin every Unix ancestor; read-only browsing alone
-//! may follow links. Portable traversal rechecks paths and retains its active-ancestor
+//! Invariants: strict operations pin every ancestor (Unix descriptors; Windows handles
+//! held without delete sharing, ADR 0162); read-only browsing alone may follow links.
+//! Portable traversal on other targets rechecks paths and retains its active-ancestor
 //! race limitation. Publication errors precede commit; durability warnings follow it.
 //! A committed stage relinquishes its temporary name before it can be reused.
 mod cursor;

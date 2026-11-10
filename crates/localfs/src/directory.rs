@@ -8,6 +8,8 @@ use std::{
 mod portable;
 #[cfg(unix)]
 mod unix;
+#[cfg(windows)]
+mod windows;
 
 /// The single private acquisition/publication capability. Browse handles cannot
 /// escape to the public strict-capability contract.
@@ -16,6 +18,9 @@ pub(crate) struct DirectoryCapability {
     path: PathBuf,
     #[cfg(unix)]
     handle: Arc<std::fs::File>,
+    /// Strict Windows capabilities hold their whole ancestry; browse ones hold nothing.
+    #[cfg(windows)]
+    held: Option<Arc<windows::Held>>,
     identity: DirectoryIdentity,
 }
 impl DirectoryCapability {
@@ -25,7 +30,11 @@ impl DirectoryCapability {
         {
             unix::strict(path)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            windows::strict(path)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             portable::strict(path)
         }
@@ -63,7 +72,11 @@ impl DirectoryCapability {
         {
             unix::child(self, name, create)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            windows::child(self, name, create)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             portable::child(self, name, create)
         }
@@ -111,7 +124,11 @@ impl LocalDirectory for DirectoryCapability {
         {
             unix::remove_file(self, name)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            windows::remove_file(self, name)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             portable::remove_file(self, name)
         }

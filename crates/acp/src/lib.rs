@@ -10,6 +10,8 @@
 //! Invariants: SDK types never leave this crate; relay registrations authenticate callers; revocation closes owned sockets.
 //! The bridge lists and admits only the tools a registration's chat offers, and tells its
 //! connected agents when the offer changes without blocking the chat.
+//! Windows agents and taskkill start without a console window; bare commands fall back to
+//! the usual Node.js locations after PATH (ADR 0163).
 //! Native taskkill diagnostics retain the original I/O error through shared typed causes;
 //! the public process shutdown port retains its existing string diagnostic.
 mod bridge;

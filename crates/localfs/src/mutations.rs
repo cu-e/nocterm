@@ -30,8 +30,8 @@ pub(crate) fn rename(path: &Path, name: &OsStr) -> LocalResult<()> {
     #[cfg(windows)]
     {
         let _ = old;
-        return atomicwrites::move_atomic(path, &directory.path().join(name))
-            .map_err(|error| LocalFsError::from_io(path, error));
+        atomicwrites::move_atomic(path, &directory.path().join(name))
+            .map_err(|error| LocalFsError::from_io(path, error))
     }
     #[cfg(not(any(
         target_os = "linux",

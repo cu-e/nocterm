@@ -21,6 +21,7 @@ nix = { version = "0.28", features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
 atomicwrites = "0.4.4"
+winapi-util = "0.1.11"
 windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
 
 [lints]
