@@ -63,7 +63,8 @@ use nocterm_ai::{
 };
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 pub use storage::{
-    AgentPersistenceError, AgentStorage, HistoryReader, LoadedHistory, PreparedHistoryRead,
+    AgentPersistenceError, AgentStorage, HistoryReader, LoadedHistory, PersistenceFailure,
+    PreparedHistoryRead,
 };
 
 pub struct TerminalAuthRequest {

@@ -40,13 +40,17 @@ pub enum AgentStorageError {
         expected: Arc<crate::local_environment::LocalEnvironment>,
         actual: Arc<crate::local_environment::LocalEnvironment>,
     },
-    #[error("This environment requires held native storage directory capabilities")]
+    #[error(
+        "The local filesystem cannot hold the directories this chat environment's history requires"
+    )]
     EnvironmentUnsupported(Arc<crate::local_environment::LocalEnvironment>),
     #[error("The hub account could not be captured")]
     AccountCapture(#[from] nocterm_hubs_model::HubError),
     #[error("The captured account source is no longer available")]
     AccountSource(#[from] nocterm_hubs_model::source_identity::LocalAccountSourceError),
-    #[error("This context requires held native storage directory capabilities: {0:?}")]
+    #[error(
+        "The local filesystem cannot hold the directories this context's history requires: {0:?}"
+    )]
     ScopeUnsupported(nocterm_project_model::ContextId),
     #[error("The local history filesystem operation failed: {0}")]
     Filesystem(#[source] nocterm_core::SharedError<nocterm_session::local_fs::LocalFsError>),
