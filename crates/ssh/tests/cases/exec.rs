@@ -147,3 +147,35 @@ async fn cancelled_queued_program_never_executes() {
     session.close();
     closed(&session, no_prompts).await;
 }
+
+#[tokio::test]
+async fn a_terminal_can_start_when_background_program_capacity_is_full() {
+    let Some(sshd) = Sshd::start() else { return };
+    let transport = sshd.transport("plain");
+    let session = transport.open(sshd.request());
+    connect(&session, accept).await;
+    let exec = session.exec().unwrap();
+    let mut held = Vec::new();
+    for _ in 0..8 {
+        let mut output = exec
+            .exec(ExecRequest::new("sh").args(["-c", "echo ready; sleep 60"]))
+            .await
+            .unwrap();
+        assert!(output.next().await.is_some());
+        held.push(output);
+    }
+    let terminal = exec.terminal(TerminalRequest {
+        program: ExecRequest::new("sh").args(["-c", "echo terminal-ready"]),
+        term: "xterm".into(),
+        size: PtySize::default(),
+    });
+    connect(&terminal, no_prompts).await;
+    output_containing(&terminal, "terminal-ready").await;
+    assert_eq!(
+        closed(&terminal, no_prompts).await,
+        CloseReason::Exited(Some(0))
+    );
+    drop(held);
+    session.close();
+    closed(&session, no_prompts).await;
+}

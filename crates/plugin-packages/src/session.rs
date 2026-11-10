@@ -11,7 +11,7 @@ use nocterm_plugin_model::PluginId;
 
 use crate::{parse::sha256, store::read_package};
 
-/// Reads packages from disk like [`PackageStore`], but publishes, loads and removes them in
+/// Reads packages from disk like [`PackageStore`](crate::PackageStore), but publishes, loads and removes them in
 /// memory only: no package directory is ever created, so a developer session leaves nothing
 /// behind.
 pub struct SessionStore {
@@ -20,7 +20,8 @@ pub struct SessionStore {
 }
 
 impl SessionStore {
-    /// `reserved_names` are the names a package may not take, as for [`PackageStore::new`].
+    /// `reserved_names` are the names a package may not take, as for
+    /// [`PackageStore::new`](crate::PackageStore::new).
     pub fn new(reserved_names: Vec<String>) -> Self {
         Self {
             reserved_names,

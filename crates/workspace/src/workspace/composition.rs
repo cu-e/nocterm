@@ -4,7 +4,9 @@ use crate::ContextSelectionError;
 use crate::plugin::LOCAL_TERMINAL;
 use crate::{LocalTerminalTarget, Panel, ProgramSpec};
 use nocterm_session::{HostAddress, ShellLaunch};
-use registration::{PanelRegistration, PanelSource, RegistrationError, WidgetRegistration};
+use registration::{
+    PanelRegistration, PanelSource, RegistrationError, ToolbarRegistration, WidgetRegistration,
+};
 use shell_layout::LayoutChange;
 use surface::admission::SurfaceItemAdmission;
 
@@ -300,14 +302,37 @@ impl Workspace {
         let set = self.shell.set().clone();
         self.registrations.admit_widget(&set, registration.id())?;
         let id = registration.id().clone();
-        let (factory, zone_hook) = registration.into_parts();
-        self.chrome.status_bar_mut().add(id, factory, zone_hook);
+        let (factory, zone_hook, visibility_hook) = registration.into_parts();
+        self.chrome
+            .status_bar_mut()
+            .add(id, factory, zone_hook, visibility_hook);
         self.sync_status_widgets(window, cx);
         cx.notify();
         Ok(())
     }
-    /// Creates the views of the widgets the arrangement places and drops those it does not.
+    /// Registers a toolbar for the edges of the tab area. Its view exists while the arrangement
+    /// shows it.
+    pub fn register_toolbar(
+        &mut self,
+        registration: ToolbarRegistration,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), RegistrationError> {
+        self.layout_settings_changed(window, cx);
+        let set = self.shell.set().clone();
+        self.registrations.admit_toolbar(&set, registration.id())?;
+        let id = registration.id().clone();
+        self.chrome
+            .toolbars_mut()
+            .add(id, registration.into_factory());
+        self.sync_status_widgets(window, cx);
+        cx.notify();
+        Ok(())
+    }
+    /// Creates the views of the widgets and toolbars the arrangement places and drops those it
+    /// does not.
     pub(super) fn sync_status_widgets(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        super::chrome::sync_toolbars(self, window, cx);
         let pending = self.chrome.status_bar().pending(self.shell.current());
         for (id, factory) in pending {
             let view = factory(&*self, window, cx);
@@ -315,7 +340,7 @@ impl Workspace {
         }
         self.chrome
             .status_bar_mut()
-            .release_unplaced(self.shell.current());
+            .release_unplaced(self.shell.current(), cx);
         self.chrome
             .status_bar_mut()
             .follow_zones(self.shell.current(), cx);

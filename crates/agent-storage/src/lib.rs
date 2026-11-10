@@ -1,17 +1,16 @@
 //! Bounded filesystem repositories for agent history and preferences.
-//! Owns: private files, transcript/catalog discovery, sidecar stamps, draft merges
+//! Owns: private files, transcript/catalog discovery, draft merges
 //! and native chat identity/time facts.
 //! Does not own: conversation rules, views, scheduling or shutdown deadlines.
 //! Ports used/provided: injected session LocalFs/LocalDirectory; AI
 //! AgentStateRepository, ChatRepository and
-//! ChatMetadataSource.
+//! ChatMetadataSource and bounded PreparedChatLoad using core allocation leases.
 //! Settings section: none. Globals: none.
-//! Invariants: (scope, ID) selects one held namespace; v2 bounded catalog headers
-//! are authoritative before sidecars. General v1 retains full bounded scans. The
-//! configured private root has trusted ancestry; generated descendants never use
-//! absolute operations. Project storage requires held identity; portable General
-//! retains the adapter's documented active-ancestor limitation. Cache errors never
-//! revoke publication.
+//! Invariants: (environment, context, ID) selects one held v3 namespace. Bounded
+//! authoritative headers precede full reads; obsolete sidecars are ignored. Old v1/v2 history is
+//! ThisComputer only and retains its bytes and paths. The configured private root
+//! has trusted ancestry; generated descendants use held operations. Portable
+//! identities support only old General history.
 mod catalog;
 mod chats;
 mod input;

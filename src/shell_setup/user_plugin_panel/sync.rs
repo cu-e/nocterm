@@ -9,16 +9,21 @@ use gpui_kit::{
 use nocterm_plugin_api::{ContributionContext, Kind, LocalId, Zone};
 use nocterm_plugin_host::{Call, PluginHost};
 use nocterm_plugin_model::{
-    ContributionId, ContributionKind, PluginId, UserContribution, developer_label, user_label,
+    ContributionId, ContributionKind, PluginId, ToolbarTabs, UserContribution, developer_label,
+    user_label,
 };
 use nocterm_plugin_ports::PluginProviders;
 use nocterm_plugin_view::FrameKind;
 use nocterm_ui::{PluginSetHandle, PluginSource as _, contribution_icon};
-use nocterm_workspace::{PanelRegistration, ShellCapabilities, WidgetRegistration, Workspace};
+use nocterm_workspace::{
+    PanelRegistration, ShellCapabilities, ToolbarRegistration, WidgetRegistration, Workspace,
+};
 
 use super::{
     Badges,
-    content::Content,
+    bars::UserPluginBar,
+    content::{Content, FrameSpec},
+    driver::RefreshDriver,
     views::{UserPluginPanel, UserPluginWidget},
 };
 
@@ -33,6 +38,7 @@ struct Registered {
 #[derive(Clone)]
 struct Parts {
     host: gpui_kit::Entity<PluginHost>,
+    driver: gpui_kit::Entity<RefreshDriver>,
     providers: PluginProviders,
     badges: Badges,
     dev: bool,
@@ -42,14 +48,21 @@ struct Parts {
 }
 
 impl Parts {
-    fn content<T: 'static>(&self, kind: FrameKind, cx: &mut Context<T>) -> Content {
+    fn content<T: 'static>(
+        &self,
+        kind: FrameKind,
+        cx: &mut Context<T>,
+    ) -> gpui_kit::Entity<Content> {
         Content::new(
             self.host.clone(),
+            self.driver.clone(),
             self.call.clone(),
-            &self.plugin,
-            kind,
+            FrameSpec {
+                name: &self.plugin,
+                kind,
+                dev: self.dev,
+            },
             self.providers.clone(),
-            self.dev,
             cx,
         )
     }
@@ -58,6 +71,7 @@ impl Parts {
 /// The user contributions registered in one window.
 pub(in crate::shell_setup) struct WindowSync {
     host: gpui_kit::Entity<PluginHost>,
+    driver: gpui_kit::Entity<RefreshDriver>,
     source: PluginSetHandle,
     providers: PluginProviders,
     badges: Badges,
@@ -70,6 +84,7 @@ pub(in crate::shell_setup) struct WindowSync {
 impl WindowSync {
     pub(in crate::shell_setup) fn new(
         host: gpui_kit::Entity<PluginHost>,
+        driver: gpui_kit::Entity<RefreshDriver>,
         source: PluginSetHandle,
         providers: PluginProviders,
         badges: Badges,
@@ -78,6 +93,7 @@ impl WindowSync {
     ) -> Self {
         Self {
             host,
+            driver,
             source,
             providers,
             badges,
@@ -148,6 +164,7 @@ impl WindowSync {
         let contribution = &made.contribution;
         let parts = Parts {
             host: self.host.clone(),
+            driver: self.driver.clone(),
             providers: self.providers.clone(),
             badges: self.badges.clone(),
             dev: self.dev,
@@ -162,7 +179,19 @@ impl WindowSync {
                 cx,
             ),
             ContributionKind::Widget => workspace.register_widget(
-                WidgetRegistration::user(contribution.id(), move |_, _, cx| widget_of(&parts, cx)),
+                WidgetRegistration::user(contribution.id(), move |_, _, cx| widget_of(&parts, cx))
+                    .with_visibility::<UserPluginWidget>(|widget, visible, cx| {
+                    widget.set_visible(visible, cx)
+                }),
+                window,
+                cx,
+            ),
+            ContributionKind::Toolbar if contribution.tabs() == Some(ToolbarTabs::Own) => workspace
+                .register_toolbar(ToolbarRegistration::own_tabs(contribution.id()), window, cx),
+            ContributionKind::Toolbar => workspace.register_toolbar(
+                ToolbarRegistration::user(contribution.id(), move |workspace, _, cx| {
+                    toolbar_of(&parts, workspace, cx)
+                }),
                 window,
                 cx,
             ),
@@ -188,11 +217,38 @@ fn panel_of(parts: &Parts, cx: &mut Context<Workspace>) -> gpui_kit::Entity<User
     panel
 }
 
+/// A toolbar along every tab: a strip across the top or the bottom of the tab area, or a rail
+/// along a side, as the window's arrangement places it now; the workspace draws it anew when it
+/// turns.
+fn toolbar_of(
+    parts: &Parts,
+    workspace: &Workspace,
+    cx: &mut Context<Workspace>,
+) -> gpui_kit::Entity<UserPluginBar> {
+    let along = match workspace.toolbar_edge(parts.contribution.id()) {
+        Some(nocterm_plugin_model::Edge::Left) => Zone::Left,
+        Some(nocterm_plugin_model::Edge::Right) => Zone::Right,
+        _ => Zone::Center,
+    };
+    let mut parts = parts.clone();
+    parts.call.context.zone = along;
+    let content = parts.content(
+        if along == Zone::Center {
+            FrameKind::Strip
+        } else {
+            FrameKind::Rail
+        },
+        cx,
+    );
+    content.update(cx, |content, cx| content.visible(true, false, cx));
+    cx.new(|_| UserPluginBar::new(content))
+}
+
 fn widget_of(parts: &Parts, cx: &mut Context<Workspace>) -> gpui_kit::Entity<UserPluginWidget> {
     cx.new(|cx| {
         let content = parts.content(FrameKind::Bar, cx);
         let label = widget_label(&parts.plugin, parts.contribution.title(), parts.dev);
-        UserPluginWidget::new(content, label.into(), cx)
+        UserPluginWidget::new(content, label.into())
     })
 }
 
@@ -220,10 +276,7 @@ fn call_of(window: WindowId, plugin: &PluginId, contribution: &UserContribution)
         plugin: plugin.clone(),
         local: LocalId::parse(local).ok()?,
         context: ContributionContext {
-            kind: match contribution.kind() {
-                ContributionKind::Panel => Kind::Panel,
-                ContributionKind::Widget => Kind::Widget,
-            },
+            kind: Kind::of_model(contribution.kind()),
             zone: match placement.zone {
                 nocterm_plugin_model::Zone::Left => Zone::Left,
                 nocterm_plugin_model::Zone::Center => Zone::Center,
@@ -231,6 +284,7 @@ fn call_of(window: WindowId, plugin: &PluginId, contribution: &UserContribution)
             },
         },
         in_focus: false,
+        terminal: None,
     })
 }
 

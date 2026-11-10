@@ -13,6 +13,7 @@ pub struct TerminalCapabilities {
     reconnect: Option<Rc<dyn RemoteReconnect>>,
     paste: Option<Rc<dyn UserTerminalPaste>>,
     project_parent: Option<Rc<dyn crate::ProjectParentCapture>>,
+    files: Option<Rc<dyn TerminalFiles>>,
 }
 impl TerminalCapabilities {
     pub fn new(state: Rc<dyn TerminalState>) -> Self {
@@ -27,6 +28,7 @@ impl TerminalCapabilities {
             reconnect: None,
             paste: None,
             project_parent: None,
+            files: None,
         }
     }
     pub fn with_fact_session(mut self, port: Rc<dyn ConnectionFactSession>) -> Self {
@@ -94,5 +96,52 @@ impl TerminalCapabilities {
     }
     pub fn project_parent(&self) -> Option<&Rc<dyn crate::ProjectParentCapture>> {
         self.project_parent.as_ref()
+    }
+    pub fn with_files(mut self, port: Rc<dyn TerminalFiles>) -> Self {
+        self.files = Some(port);
+        self
+    }
+    pub fn files(&self) -> Option<&Rc<dyn TerminalFiles>> {
+        self.files.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::TerminalCapability;
+
+    struct Silent;
+    impl TerminalState for Silent {
+        fn info(&self, _: &App) -> Option<TerminalInfo> {
+            None
+        }
+    }
+    impl TerminalFiles for Silent {
+        fn filesystem(
+            &self,
+            _: ExpectedSession,
+            _: &App,
+        ) -> Result<TerminalFilesystem, TerminalError> {
+            Ok(TerminalFilesystem::Local)
+        }
+    }
+
+    #[test]
+    fn files_are_advertised_only_when_the_provider_registers_them() {
+        let silent = Rc::new(Silent);
+        let bare = TerminalCapabilities::new(silent.clone());
+        assert!(bare.files().is_none());
+        let with = bare.with_files(silent);
+        assert!(with.files().is_some());
+    }
+
+    #[test]
+    fn a_missing_files_capability_names_file_transfer() {
+        let error = TerminalError::Unsupported(TerminalCapability::Files);
+        assert_eq!(
+            error.to_string(),
+            "This terminal does not support file transfer."
+        );
     }
 }

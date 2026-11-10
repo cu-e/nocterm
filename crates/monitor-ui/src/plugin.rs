@@ -20,6 +20,7 @@ pub const SUMMARY: SystemContribution = SystemContribution {
     },
     panel: None,
     preview: None,
+    edge: None,
     pinned: false,
 };
 

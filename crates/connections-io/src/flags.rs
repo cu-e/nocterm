@@ -1,17 +1,19 @@
 //! A downloaded flag is usable even when atomic cache publication fails.
-use crate::http::{self, MAX_FLAG_BYTES};
+use crate::http::{HttpClient, MAX_FLAG_BYTES};
 use nocterm_connections_model::observation::{CountryCode, FlagRepository, ObservationError};
-use std::{io::Read as _, path::PathBuf};
+use std::{io::Read as _, path::PathBuf, sync::Arc};
 
 pub(crate) struct CachedFlags {
     directory: PathBuf,
     endpoint: Option<String>,
+    client: Arc<HttpClient>,
 }
 impl CachedFlags {
-    pub(crate) fn new(directory: PathBuf) -> Self {
+    pub(crate) fn new(directory: PathBuf, client: Arc<HttpClient>) -> Self {
         Self {
             directory,
             endpoint: Some("https://flagcdn.com/".into()),
+            client,
         }
     }
     #[cfg(test)]
@@ -19,6 +21,7 @@ impl CachedFlags {
         Self {
             directory,
             endpoint,
+            client: Arc::default(),
         }
     }
 }
@@ -40,7 +43,9 @@ impl FlagRepository for CachedFlags {
         let Some(endpoint) = &self.endpoint else {
             return Ok(None);
         };
-        let bytes = http::get(&format!("{endpoint}{}.svg", code.as_str()), MAX_FLAG_BYTES)?;
+        let bytes = self
+            .client
+            .get(&format!("{endpoint}{}.svg", code.as_str()), MAX_FLAG_BYTES)?;
         if !is_svg(&bytes) {
             return Err(ObservationError::Decode(Box::new(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,

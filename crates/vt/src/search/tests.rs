@@ -35,6 +35,22 @@ fn finish_options(
 }
 
 #[test]
+fn completed_search_retains_only_a_bounded_navigation_list() {
+    let mut e = Emulator::new(TermSize::new(80, 3, 0, 0), EmulatorOptions::default());
+    e.advance(b"target target");
+    let mut scan = e.search("target", SearchDirection::Next, None).unwrap();
+    assert!(scan.take_navigation_matches().is_none());
+    while !matches!(scan.step(&e, 4096), SearchProgress::Complete(_)) {}
+    let matches = scan.take_navigation_matches().unwrap();
+    assert_eq!(matches.len(), 2);
+    assert!(matches[0].start < matches[1].start);
+    e.advance(&b" target".repeat(MAX_NAVIGATION_MATCHES + 1));
+    let mut scan = e.search("target", SearchDirection::Next, None).unwrap();
+    while !matches!(scan.step(&e, 4096), SearchProgress::Complete(_)) {}
+    assert!(scan.take_navigation_matches().is_none());
+}
+
+#[test]
 fn unicode_case_folding_keeps_overlap_and_cell_positions() {
     let mut e = Emulator::new(TermSize::new(80, 3, 0, 0), EmulatorOptions::default());
     e.advance("Кот кОт КОТ Σσς KkK aAa".as_bytes());

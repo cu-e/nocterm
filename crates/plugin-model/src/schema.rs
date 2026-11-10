@@ -58,6 +58,17 @@ impl SettingsSchema {
         self.fields().find(|field| field.key == key)
     }
 
+    /// `values` without the secret fields: what a plugin may read of its settings.
+    pub fn without_secrets(&self, values: &SettingValues) -> SettingValues {
+        let mut visible = SettingValues::default();
+        for (key, value) in values.iter() {
+            if !self.field(key).is_some_and(|field| field.kind.is_secret()) {
+                visible.insert(key, value.clone());
+            }
+        }
+        visible
+    }
+
     /// The default value of every field.
     pub fn defaults(&self) -> SettingValues {
         let mut values = SettingValues::default();
@@ -142,16 +153,25 @@ pub enum FieldKind {
         default: i32,
         unit: Option<Cow<'static, str>>,
     },
-    /// Single-line text. Never masked; the value is data, not a secret.
+    /// Single-line text.
     Text {
         default: Cow<'static, str>,
         /// In characters, 1 to [`MAX_TEXT_LEN`].
         max_len: u16,
         placeholder: Option<Cow<'static, str>>,
+        /// A credential the user enters for a user plugin: masked in the form, empty by default,
+        /// and never shown to the plugin, which only names it for the host to send. A system
+        /// plugin keeps its values in `settings.toml` and may not declare one.
+        secret: bool,
     },
 }
 
 impl FieldKind {
+    /// Whether the field holds a credential the plugin never sees.
+    pub fn is_secret(&self) -> bool {
+        matches!(self, Self::Text { secret: true, .. })
+    }
+
     /// The value a field of this kind has before the user sets it.
     pub fn default_value(&self) -> SettingValue {
         match self {

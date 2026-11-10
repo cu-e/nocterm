@@ -279,3 +279,63 @@ fn the_pinned_notice_bar_stays_in_the_right_zone_in_every_arrangement(cx: &mut T
         .unwrap();
     }
 }
+
+/// A status bar view that counts its renders.
+struct Counting(Rc<Cell<usize>>);
+impl Render for Counting {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.0.set(self.0.get() + 1);
+        div().id("counting").test_support().child("counting")
+    }
+}
+
+#[gpui_kit::test]
+fn another_widgets_change_reuses_a_widget_and_the_workspaces_draws_it(cx: &mut TestAppContext) {
+    let (handle, workspace) = with_everything(cx);
+    let renders = Rc::new(Cell::new(0));
+    let other = Rc::new(std::cell::RefCell::new(None::<Entity<Marker>>));
+    let counting = WidgetRegistration::new(WIDGET, {
+        let renders = renders.clone();
+        move |_, _, cx| cx.new(|_| Counting(renders.clone()))
+    });
+    let marker = WidgetRegistration::new(RIGHT_WIDGET, {
+        let other = other.clone();
+        move |_, _, cx| {
+            let view = cx.new(|_| Marker("trailing-marker"));
+            *other.borrow_mut() = Some(view.clone());
+            view
+        }
+    });
+    for registration in [counting, marker] {
+        let registered = run(cx, handle, &workspace, |workspace, window, cx| {
+            window.resize(size(px(1400.), px(700.)));
+            workspace.register_widget(registration, window, cx)
+        });
+        assert_eq!(registered, Ok(()));
+    }
+    let draw = |cx: &mut TestAppContext| {
+        cx.update_window(handle, |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+    };
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    let drawn = renders.get();
+    let other = other
+        .borrow()
+        .clone()
+        .expect("the trailing widget was created");
+    cx.update(|cx| other.update(cx, |_, cx| cx.notify()));
+    draw(cx);
+    assert_eq!(
+        renders.get(),
+        drawn,
+        "another widget's change reuses this one"
+    );
+    cx.update_window(handle, |_, window, _| {
+        assert!(window.find("counting").bounds().size.width > px(0.));
+    })
+    .unwrap();
+    cx.update(|cx| workspace.update(cx, |_, cx| cx.notify()));
+    draw(cx);
+    assert!(renders.get() > drawn, "the workspace's change draws it");
+}

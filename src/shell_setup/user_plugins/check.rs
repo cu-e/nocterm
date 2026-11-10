@@ -145,6 +145,7 @@ fn render_all(package: &Package) -> Result<(), CheckError> {
         let (kind, zone) = match contribution.kind() {
             ContributionKind::Panel => (Kind::Panel, Zone::Left),
             ContributionKind::Widget => (Kind::Widget, Zone::Right),
+            ContributionKind::Toolbar => (Kind::Toolbar, Zone::Center),
         };
         let snapshot = Snapshot::new(ContributionContext { kind, zone });
         let view = instance

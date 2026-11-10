@@ -137,6 +137,7 @@ fn describe(field: &FieldSpec) -> (&'static str, String, String) {
             default,
             max_len,
             placeholder,
+            ..
         } => (
             "text",
             if default.is_empty() {
@@ -175,6 +176,7 @@ fn contributions(text: &mut String, contributions: &[&SystemContribution]) {
             match contribution.kind {
                 ContributionKind::Panel => "panel",
                 ContributionKind::Widget => "widget",
+                ContributionKind::Toolbar => "toolbar",
             },
             cell(contribution.title),
             match placement.zone {

@@ -2,45 +2,28 @@
 
 use std::{rc::Rc, sync::Arc};
 
-use gpui::{Context, WindowId};
+use gpui::{Context, Task, WindowId};
 use nocterm_plugin_api::{
-    ContentHash, ContributionContext, Effects, Event, Grant, LocalId, Manifest, Package,
-    PackageError, PluginPackages, PluginRuntime, Runtime, RuntimeError, View,
+    ContentHash, Effects, Event, Grant, Manifest, Package, PackageError, PluginInstance,
+    PluginPackages, PluginRuntime, Runtime, RuntimeError, View,
 };
 use nocterm_plugin_model::{PluginId, SettingValues, UserEntry};
 use nocterm_plugin_ports::PluginProviders;
 
 use crate::{
-    AuditEntry, BrokenPackage, CallError, ManageError, PluginData, PluginDataChange, PluginDataDoc,
-    PluginDataError, PluginRecord, PluginRecords, PluginSummary,
-    broker::{Broker, Queued},
+    AuditEntry, BrokenPackage, Call, CallError, HostPorts, ManageError, PluginData,
+    PluginDataChange, PluginDataDoc, PluginRecord, PluginRecords, PluginSummary, PreparedPlugin,
+    RecordsError,
+    broker::{Broker, Checked, Queued},
     cadence::Cadence,
     caps::MAX_ENABLED,
+    deferred::Deferred,
     faults::Faults,
     gesture::Input,
     records::AuditAction,
     registry::{DataState, Installed, Ready, Registry, Status},
     snapshot::{Subject, assemble},
 };
-
-/// What the host is built from. The application composes these; the host never looks them up.
-pub struct HostPorts {
-    pub records: Rc<dyn PluginRecords>,
-    pub data: Rc<dyn PluginData>,
-    pub packages: Arc<dyn PluginPackages>,
-    pub runtime: Arc<dyn PluginRuntime>,
-}
-
-/// One contribution of one plugin in one window, asking for a view or reporting an event.
-#[derive(Clone, Debug)]
-pub struct Call {
-    pub window: WindowId,
-    pub plugin: PluginId,
-    pub local: LocalId,
-    pub context: ContributionContext,
-    /// Whether the contribution's panel has focus, which samples at the faster cadence.
-    pub in_focus: bool,
-}
 
 /// The user plugin host, one per application.
 pub struct PluginHost {
@@ -52,6 +35,9 @@ pub struct PluginHost {
     broker: Broker,
     cadence: Cadence,
     faults: Faults,
+    deferred: Deferred,
+    publication: Option<Task<Result<(), RecordsError>>>,
+    publication_error: Option<RecordsError>,
 }
 
 impl PluginHost {
@@ -65,6 +51,9 @@ impl PluginHost {
             broker: Broker::default(),
             cadence: Cadence::default(),
             faults: Faults::default(),
+            deferred: Deferred::new(ports.net),
+            publication: None,
+            publication_error: None,
         }
     }
 
@@ -88,6 +77,32 @@ impl PluginHost {
         if trimmed {
             self.save(cx);
         }
+    }
+
+    /// Installs the captured startup results without native reads or runtime compilation.
+    pub fn restore_prepared(
+        &mut self,
+        plugins: Vec<crate::RestoredPlugin>,
+        audit: Vec<AuditEntry>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut registry = Registry::with_audit(audit);
+        let mut trimmed = false;
+        for mut plugin in plugins.into_iter().take(crate::MAX_RECORDS) {
+            if registry.enabled() >= MAX_ENABLED
+                && let Some(id) = plugin.restrict_enabled()
+            {
+                registry.audit(&id, AuditAction::Disabled);
+                trimmed = true;
+            }
+            registry.insert(plugin.into_installed());
+        }
+        registry.touch();
+        self.registry = registry;
+        if trimmed {
+            self.save(cx);
+        }
+        cx.notify();
     }
 
     /// The plugins, for the plugins list.
@@ -163,22 +178,65 @@ impl PluginHost {
         accepted: &[&str],
         cx: &mut Context<Self>,
     ) -> Result<PluginId, ManageError> {
-        let id = package.manifest().plugin().id().clone();
-        if self.registry.get(&id).is_some() {
-            return Err(ManageError::Installed(id));
-        }
-        if self.registry.enabled() >= MAX_ENABLED {
-            return Err(ManageError::TooManyEnabled { max: MAX_ENABLED });
-        }
-        let grant = Grant::consent(&package, accepted)?;
+        self.validate_change(&package, accepted, None)?;
         self.packages.publish(&package, false)?;
-        let record = record_of(&package, accepted, true);
+        self.install_published(PreparedPlugin::new(package, None), accepted, cx)
+    }
+
+    /// Commits already-published bytes after checking current admission again. Performs no package I/O.
+    pub fn install_published(
+        &mut self,
+        prepared: PreparedPlugin,
+        accepted: &[&str],
+        cx: &mut Context<Self>,
+    ) -> Result<PluginId, ManageError> {
+        let (package, instance) = prepared.into_parts();
+        self.validate_change(&package, accepted, None)?;
+        let id = package.manifest().plugin().id().clone();
+        let grant = Grant::consent(&package, accepted)?;
+        let record = PluginRecord::of(&package, accepted, true);
         let data = self.read_data(&id, cx);
-        let status = Status::Ready(Box::new(Ready::new(package, grant, data)));
+        let status = Status::Ready(Box::new(
+            Ready::new(package, grant, data).with_instance(instance),
+        ));
         self.registry.insert(Installed::new(record, status));
         self.registry.audit(&id, AuditAction::Installed);
         self.save(cx);
         Ok(id)
+    }
+
+    /// Validates the captured replacement identity, consent and capacity before native work.
+    pub fn validate_change(
+        &self,
+        package: &Package,
+        accepted: &[&str],
+        expected: Option<&str>,
+    ) -> Result<(), ManageError> {
+        let id = package.manifest().plugin().id().clone();
+        if let Some(expected) = expected {
+            let installed = self
+                .registry
+                .get(&id)
+                .ok_or_else(|| ManageError::Unknown(id))?;
+            if installed.record().hash != expected {
+                return Err(ManageError::Changed);
+            }
+            Grant::consent(package, accepted)?;
+            return Ok(());
+        }
+        if self.registry.get(&id).is_some() {
+            return Err(ManageError::Installed(id));
+        }
+        if self.registry.len() >= crate::records::MAX_RECORDS {
+            return Err(ManageError::TooManyInstalled {
+                max: crate::records::MAX_RECORDS,
+            });
+        }
+        if self.registry.enabled() >= MAX_ENABLED {
+            return Err(ManageError::TooManyEnabled { max: MAX_ENABLED });
+        }
+        Grant::consent(package, accepted)?;
+        Ok(())
     }
 
     /// Replaces an installed plugin by a new package of the same id. The new hash starts not
@@ -191,12 +249,32 @@ impl PluginHost {
         cx: &mut Context<Self>,
     ) -> Result<(), ManageError> {
         let id = package.manifest().plugin().id().clone();
+        if self.registry.get(&id).is_none() {
+            return Err(ManageError::Unknown(id));
+        }
+        Grant::consent(&package, accepted)?;
+        self.packages.publish(&package, true)?;
+        self.replace_published(PreparedPlugin::new(package, None), accepted, keep_data, cx)
+    }
+
+    /// Commits a replacement whose immutable bytes and instance were prepared in the background.
+    pub fn replace_published(
+        &mut self,
+        prepared: PreparedPlugin,
+        accepted: &[&str],
+        keep_data: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<(), ManageError> {
+        let (package, instance) = prepared.into_parts();
+        let id = package.manifest().plugin().id().clone();
         let Some(installed) = self.registry.get(&id) else {
             return Err(ManageError::Unknown(id));
         };
         let enabled = installed.record().enabled;
         let grant = Grant::consent(&package, accepted)?;
-        self.packages.publish(&package, true)?;
+        if !keep_data {
+            self.drop_data(&id, cx)?;
+        }
         self.halt(&id);
         let data = if keep_data {
             let kept = self
@@ -206,12 +284,13 @@ impl PluginHost {
                 .map(Ready::take_data);
             kept.unwrap_or_else(|| self.read_data(&id, cx))
         } else {
-            self.drop_data(&id, cx);
             DataState::Loaded(PluginDataDoc::default())
         };
-        let mut record = record_of(&package, accepted, enabled);
+        let mut record = PluginRecord::of(&package, accepted, enabled);
         record.placeable = false;
-        let status = Status::Ready(Box::new(Ready::new(package, grant, data)));
+        let status = Status::Ready(Box::new(
+            Ready::new(package, grant, data).with_instance(if enabled { instance } else { None }),
+        ));
         self.registry.insert(Installed::new(record, status));
         self.registry.audit(&id, AuditAction::Replaced);
         self.save(cx);
@@ -228,13 +307,29 @@ impl PluginHost {
         if self.registry.get(plugin).is_none() {
             return Err(ManageError::Unknown(plugin.clone()));
         }
+        if remove_data {
+            self.drop_data(plugin, cx)?;
+        }
         self.packages.remove(plugin)?;
+        self.uninstall_record(plugin, false, cx)
+    }
+
+    /// Removes the record first; the caller removes native bytes only after its receipt succeeds.
+    pub fn uninstall_record(
+        &mut self,
+        plugin: &PluginId,
+        remove_data: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<(), ManageError> {
+        if self.registry.get(plugin).is_none() {
+            return Err(ManageError::Unknown(plugin.clone()));
+        }
+        if remove_data {
+            self.drop_data(plugin, cx)?;
+        }
         self.halt(plugin);
         self.broker.forget(plugin);
         self.registry.remove(plugin);
-        if remove_data {
-            self.drop_data(plugin, cx);
-        }
         self.registry.audit(plugin, AuditAction::Removed);
         self.save(cx);
         Ok(())
@@ -246,6 +341,17 @@ impl PluginHost {
         &mut self,
         plugin: &PluginId,
         enabled: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<(), ManageError> {
+        self.set_enabled_prepared(plugin, enabled, None, cx)
+    }
+
+    /// Enables a prepared runtime without compilation or native package loading on this thread.
+    pub fn set_enabled_prepared(
+        &mut self,
+        plugin: &PluginId,
+        enabled: bool,
+        instance: Option<Box<dyn PluginInstance>>,
         cx: &mut Context<Self>,
     ) -> Result<(), ManageError> {
         let was = self
@@ -262,6 +368,9 @@ impl PluginHost {
             installed.record_mut().enabled = enabled;
             if enabled && let Some(ready) = installed.ready_mut() {
                 ready.set_faulted(false);
+                if let Some(instance) = instance {
+                    ready.start_prepared(instance);
+                }
             }
         }
         let action = if enabled {
@@ -280,18 +389,35 @@ impl PluginHost {
         plugin: &PluginId,
         cx: &mut Context<Self>,
     ) -> Result<(), ManageError> {
-        let installed = self
-            .registry
-            .get_mut(plugin)
-            .ok_or_else(|| ManageError::Unknown(plugin.clone()))?;
+        if self.registry.get(plugin).is_none() {
+            return Err(ManageError::Unknown(plugin.clone()));
+        }
         self.data
             .change(plugin.clone(), PluginDataChange::Remove, cx)?;
-        if let Some(ready) = installed.ready_mut() {
-            ready.set_data(PluginDataDoc::default());
+        self.remove_data_published(plugin, cx)
+    }
+    /// Pauses events/effects during an accepted native data mutation without dropping its instance.
+    pub fn hold_data_change(
+        &mut self,
+        plugin: &PluginId,
+        held: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<(), ManageError> {
+        self.registry.hold_data(plugin, held)?;
+        if held {
+            self.broker.drop_plugin(plugin);
         }
-        // An effect still queued must not write a key back after the user removed the data.
+        cx.notify();
+        Ok(())
+    }
+    /// Commits a physically published reset; no second native deletion is queued.
+    pub fn remove_data_published(
+        &mut self,
+        plugin: &PluginId,
+        cx: &mut Context<Self>,
+    ) -> Result<(), ManageError> {
+        self.registry.clear_data(plugin)?;
         self.broker.drop_plugin(plugin);
-        self.registry.audit(plugin, AuditAction::DataRemoved);
         self.save(cx);
         Ok(())
     }
@@ -326,13 +452,16 @@ impl PluginHost {
         values: &SettingValues,
         cx: &mut Context<Self>,
     ) -> Result<(), ManageError> {
+        if self.registry.data_held(plugin) {
+            return Err(ManageError::Changed);
+        }
         let ready = self
             .registry
             .get_mut(plugin)
             .ok_or_else(|| ManageError::Unknown(plugin.clone()))?
             .ready_mut()
             .ok_or_else(|| ManageError::Unknown(plugin.clone()))?;
-        let next = ready.data().with_values(values)?;
+        let next = ready.data().with_values(&ready.bound(values))?;
         self.data
             .change(plugin.clone(), PluginDataChange::Replace(next.clone()), cx)?;
         ready.set_data(next);
@@ -354,7 +483,7 @@ impl PluginHost {
         let now = cx.background_executor().now();
         self.check_running(call)?;
         self.cadence
-            .admit_render(now)
+            .admit_contribution(call, now)
             .map_err(|retry_after_ms| CallError::Throttled { retry_after_ms })?;
         let outcomes = self.broker.outcomes(&call.plugin);
         let answer = self.guest(call, providers, outcomes, now, cx, |instance, snapshot| {
@@ -416,20 +545,70 @@ impl PluginHost {
             return;
         };
         for request in effects.0 {
-            let origin = (call.window, &call.plugin, hash, &call.local);
             self.broker
-                .enqueue(Queued::new(origin, request, token, providers));
+                .enqueue(Queued::new(call, hash, request, token, providers));
         }
         let host = cx.weak_entity();
-        cx.defer(move |cx| {
-            let _ = host.update(cx, |host, cx| host.apply_queued(cx));
+        cx.defer(move |cx| Self::apply_queued(&host, cx));
+    }
+
+    /// Checks the queue inside an update of the host, then has the windows' providers apply what
+    /// it approved after that update: none of them runs while the host is held.
+    fn apply_queued(host: &gpui::WeakEntity<Self>, cx: &mut gpui::App) {
+        let Ok(checked) = host.update(cx, |host, cx| {
+            let now = cx.background_executor().now();
+            let data = host.data.as_ref();
+            let checked =
+                (host.broker).drain(&mut host.registry, &mut host.deferred, data, now, cx);
+            host.deferred.start(cx);
+            checked
+        }) else {
+            return;
+        };
+        let mut outcomes = Vec::with_capacity(checked.len());
+        for item in checked {
+            outcomes.push(match item {
+                Checked::Done(plugin, key, result) => (plugin, key, result),
+                Checked::Approved(item) => {
+                    // An earlier effect of the batch may have taken the plugin out of service.
+                    let runs = host.update(cx, |host, _| {
+                        host.registry
+                            .running(item.plugin(), Some(item.hash()))
+                            .is_some()
+                    });
+                    if !matches!(runs, Ok(true)) {
+                        continue;
+                    }
+                    let plugin = item.plugin().clone();
+                    let (key, result) = item.apply(cx);
+                    (plugin, key, result)
+                }
+            });
+        }
+        let _ = host.update(cx, |host, _| {
+            for (plugin, key, result) in outcomes {
+                host.broker.record(&plugin, key, result);
+            }
         });
     }
 
-    fn apply_queued(&mut self, cx: &mut Context<Self>) {
-        let now = cx.background_executor().now();
-        self.broker
-            .drain(&mut self.registry, self.data.as_ref(), now, cx);
+    /// Reports an event the host raised (a response, a timer, a terminal line) while the plugin
+    /// runs `hash` (any package when `None`), and draws it again.
+    pub fn deliver(
+        &mut self,
+        call: &Call,
+        hash: Option<&ContentHash>,
+        event: Event,
+        providers: &PluginProviders,
+        cx: &mut Context<Self>,
+    ) -> Result<(), CallError> {
+        if self.registry.running(&call.plugin, hash).is_none() {
+            return Err(CallError::NotRunning(call.plugin.clone()));
+        }
+        let handled = self.handle(call, Input::Host, event, providers, cx);
+        self.registry.touch();
+        cx.notify();
+        handled
     }
 
     /// Runs one guest call against a fresh snapshot.
@@ -457,7 +636,8 @@ impl PluginHost {
             call.context,
             call.in_focus,
             providers,
-        );
+        )
+        .for_terminal(call.terminal.as_deref());
         let snapshot = assemble(ready, &subject, &mut self.cadence, outcomes, now, cx);
         run(ready.instance(self.runtime.as_ref())?, &snapshot)
     }
@@ -518,20 +698,23 @@ impl PluginHost {
         Ok(())
     }
 
-    /// Asks the port to delete the plugin's data. Part of an update or an uninstall that has
-    /// already happened, so a refusal is logged and the old file stays for the next attempt.
-    fn drop_data(&self, plugin: &PluginId, cx: &mut Context<Self>) {
-        if let Err(error) = self
-            .data
-            .change(plugin.clone(), PluginDataChange::Remove, cx)
-        {
-            tracing::warn!(plugin = %plugin.as_str(), %error, "plugin data was not removed");
-        }
+    fn drop_data(&self, plugin: &PluginId, cx: &mut Context<Self>) -> Result<(), ManageError> {
+        self.data
+            .change(plugin.clone(), PluginDataChange::Remove, cx)?;
+        Ok(())
+    }
+
+    /// Releases all observations and deferred actions of a window that has closed.
+    pub fn release_window(&mut self, window: WindowId) {
+        self.cadence.release_window(window);
+        self.broker.release_window(window);
+        self.deferred.release_window(window);
     }
 
     /// Everything the host holds for a plugin that must not outlive a state change.
     fn halt(&mut self, plugin: &PluginId) {
         self.broker.drop_plugin(plugin);
+        self.deferred.forget(plugin);
         self.cadence.forget(plugin);
         self.faults.clear(plugin);
         if let Some(ready) = self.registry.get_mut(plugin).and_then(Installed::ready_mut) {
@@ -563,38 +746,35 @@ impl PluginHost {
     }
 
     fn read_data(&self, plugin: &PluginId, cx: &gpui::App) -> DataState {
-        let broken = |error: PluginDataError| DataState::Broken {
-            error,
-            defaults: PluginDataDoc::default(),
-        };
-        match self.data.load(plugin, cx) {
-            Ok(doc) => match doc.check() {
-                Ok(()) => DataState::Loaded(doc),
-                Err(error) => broken(PluginDataError::Bounds(error)),
-            },
-            Err(error) => broken(error),
-        }
+        crate::data::load_state(self.data.as_ref(), plugin, cx)
     }
 
     fn save(&mut self, cx: &mut Context<Self>) {
         self.registry.touch();
         cx.notify();
         let task = self.records.replace(self.registry.to_doc(), cx);
-        cx.spawn(async move |_, _| {
-            if let Err(error) = task.await {
-                tracing::warn!(%error, "plugin records were not saved");
-            }
-        })
-        .detach();
+        let revision = self.registry.revision();
+        self.publication_error = None;
+        self.publication = Some(cx.spawn(async move |host, cx| {
+            let result = task.await;
+            let _ = host.update(cx, |host, cx| {
+                if host.registry.revision() == revision {
+                    host.publication_error = result.as_ref().err().cloned();
+                    cx.notify();
+                }
+            });
+            result
+        }));
     }
-}
 
-fn record_of(package: &Package, accepted: &[&str], enabled: bool) -> PluginRecord {
-    PluginRecord {
-        id: package.manifest().plugin().id().clone(),
-        hash: package.hash().to_string(),
-        enabled,
-        placeable: false,
-        granted_optional: accepted.iter().map(|id| (*id).to_owned()).collect(),
+    /// The last accepted records write. Dropping a receipt never revokes accepted persistence work.
+    pub fn take_publication(&mut self) -> Task<Result<(), RecordsError>> {
+        self.publication
+            .take()
+            .unwrap_or_else(|| Task::ready(Ok(())))
+    }
+
+    pub fn publication_error(&self) -> Option<&RecordsError> {
+        self.publication_error.as_ref()
     }
 }

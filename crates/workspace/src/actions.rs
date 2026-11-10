@@ -155,3 +155,15 @@ pub struct OpenLayoutSettings {
 pub struct OpenPluginPage {
     pub plugin: gpui_kit::SharedString,
 }
+
+/// The name of the action that signs in to a server. Its crate (`hubs-ui`) depends on the
+/// features that ask for it, so they dispatch it by name through [`request_sign_in`].
+pub const SIGN_IN_TO_SERVER_ACTION: &str = "hubs::SignInToServer";
+
+/// Asks the window to start signing in to a server; nothing happens where no sign-in is
+/// registered.
+pub fn request_sign_in(window: &mut gpui_kit::Window, cx: &mut gpui_kit::App) {
+    if let Ok(action) = cx.build_action(SIGN_IN_TO_SERVER_ACTION, None) {
+        window.dispatch_action(action, cx);
+    }
+}

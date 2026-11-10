@@ -123,8 +123,9 @@ fn sources(root: &Path, directory: &Path) -> anyhow::Result<Vec<Source>> {
             let text = fs::read_to_string(&file)?;
             let relative = file.strip_prefix(&base).unwrap_or(&file);
             let test_file = test_directory || is_test_module(relative);
-            let facts = facts::collect(&text, test_file)
-                .with_context(|| format!("parse {}", file.display()))?;
+            let parsed =
+                syn::parse_file(&text).with_context(|| format!("parse {}", file.display()))?;
+            let facts = facts::collect_parsed(&parsed, test_file);
             sources.push(Source {
                 path: file
                     .strip_prefix(root)
@@ -134,7 +135,7 @@ fn sources(root: &Path, directory: &Path) -> anyhow::Result<Vec<Source>> {
                 module: module_name(relative, test_directory),
                 test_file,
                 lines: text.lines().count(),
-                complexity_expects: crate::lint_policy::inspect(&text)?.0,
+                complexity_expects: crate::lint_policy::inspect_parsed(&parsed).0,
                 facts,
             });
         }

@@ -6,7 +6,7 @@ use std::{rc::Rc, sync::Arc};
 use gpui_kit::{
     AnyElement, App, IntoElement, RenderOnce, SharedString, TestSupportExt as _, Window,
     component::{
-        ActiveTheme as _, Disableable as _, Icon, Sizable as _,
+        ActiveTheme as _, Disableable as _, Sizable as _,
         button::{Button, ButtonVariants as _},
         h_flex,
         menu::ContextMenuExt as _,
@@ -16,13 +16,14 @@ use gpui_kit::{
     px,
 };
 use nocterm_plugin_model::{ContributionId, ContributionRef, PluginSet};
-use nocterm_ui::{IconName, contribution_icon};
+use nocterm_ui::{DragSource, IconName, contribution_icon};
 use nocterm_window_layout::{EditOp, Subject};
 
 use crate::{
     commands::Commands,
-    dnd::{self, CHIP_HEIGHT, Dragged, Landing},
-    menu::ItemMenu,
+    dnd::{self, Dragged},
+    face::{BORDER, CHIP_HEIGHT, Face, Look},
+    menu::{MenuOf, Menus},
     snapshot::Snapshot,
 };
 
@@ -44,54 +45,55 @@ impl Tray {
 
     /// A contribution that waits out of the bar: a click puts it back where its hints say, a
     /// drag puts it anywhere.
-    fn entry(&self, contribution: ContributionRef<'_>, cx: &App) -> AnyElement {
+    fn entry(&self, contribution: ContributionRef<'_>, menus: &Menus, cx: &App) -> AnyElement {
         let id = contribution.id().clone();
         let subject = Subject::Contribution(id.clone());
         let disabled = self.snapshot.is_disabled(&id, &self.catalog);
         let editable = self.snapshot.editable();
         let add = self.commands.clone();
-        let menu = ItemMenu::new(
-            &subject,
-            &self.snapshot,
-            &self.catalog,
-            self.commands.clone(),
-        );
         let theme = cx.theme();
         let name: SharedString = if disabled {
             format!("{} (disabled)", contribution.title()).into()
         } else {
             contribution.title().to_owned().into()
         };
-        let chip = h_flex()
+        let title = SharedString::from(contribution.title().to_owned());
+        let face = Face::new(contribution_icon(contribution.icon()), Some(title), false);
+        let chip = face
+            .clone()
+            .fill(h_flex(), cx)
             .id(SharedString::from(format!("layout-tray:{id}")))
             .aria_label(name)
             .test_support()
-            .flex_none()
-            .h(px(CHIP_HEIGHT))
-            .gap_1()
-            .px_1p5()
-            .items_center()
-            .rounded(theme.radius)
             .bg(theme.secondary)
             .when(editable, |chip| {
                 chip.cursor_pointer()
-                    .hover(|style| style.bg(theme.secondary_hover))
+                    .hover(|style| style.bg(theme.secondary_active))
                     .on_click(move |_, window, cx| {
+                        // A release that ends a drag is the drop, not a click.
+                        if cx.has_active_drag() {
+                            return;
+                        }
                         let id = id.clone();
                         add.run(window, cx, move |section, _, cx| {
                             section.edit(EditOp::Restore { id }, cx);
                         });
                     })
             })
-            .when(disabled, |chip| chip.opacity(0.5))
-            .child(Icon::new(contribution_icon(contribution.icon())).small())
-            .child(div().text_xs().child(contribution.title().to_owned()));
+            .when(disabled, |chip| chip.opacity(0.5));
         let chip = if editable {
-            dnd::source(chip, Dragged::contribution(contribution, &self.snapshot))
+            let source = DragSource::default();
+            let measure = source.clone();
+            let chip = dnd::measured(chip, BORDER, move |bounds, window, _| {
+                measure.capture(bounds, window);
+            });
+            let dragged = Dragged::contribution(contribution, None);
+            dnd::source(chip, dragged, source, move || Look::Chip(face.clone()))
         } else {
             chip
         };
-        chip.context_menu(move |popup, window, cx| menu.popup(popup, window, cx))
+        let (menus, of) = (menus.clone(), MenuOf::Item(subject));
+        chip.context_menu(move |popup, window, cx| menus.popup(&of, popup, window, cx))
             .into_any_element()
     }
 
@@ -135,12 +137,17 @@ impl Tray {
 
 impl RenderOnce for Tray {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let menus = Menus::new(
+            self.snapshot.clone(),
+            self.catalog.clone(),
+            self.commands.clone(),
+        );
         let entries: Vec<AnyElement> = self
             .snapshot
             .tray()
             .iter()
             .filter_map(|id| self.catalog.contribution(id))
-            .map(|contribution| self.entry(contribution, cx))
+            .map(|contribution| self.entry(contribution, &menus, cx))
             .chain(
                 self.snapshot
                     .unknown()
@@ -171,7 +178,7 @@ impl RenderOnce for Tray {
             )
             .children(entries);
         if self.snapshot.editable() {
-            dnd::target(tray, Landing::tray(), true, self.commands).into_any_element()
+            dnd::tray(tray, self.commands).into_any_element()
         } else {
             tray.into_any_element()
         }

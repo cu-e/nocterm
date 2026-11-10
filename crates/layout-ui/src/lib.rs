@@ -4,9 +4,9 @@
 //!
 //! Owns: the section's view and its state (the layout shown, the selected item, undo and redo,
 //! renaming a layout or a group and confirming a delete), the drags, menus and keys that edit
-//! the bar (a drop names a place; the rules of the move stay in `nocterm-window-layout`), how
-//! the bar preview fits its one line, and what a sent edit led to (the notice, the selection
-//! that follows it, the history step).
+//! the bar (a drop names a place, found from the pointer against what the preview painted; the
+//! rules of the move stay in `nocterm-window-layout`), how the bar preview fits its one line,
+//! and what a sent edit led to (the notice, the selection that follows it, the history step).
 //! Does not own: the rules of layouts and their edits (`nocterm-window-layout`), the write of
 //! an edit (`nocterm_workspace::edit_layouts`, which refuses a `[layouts]` table that does not
 //! read), what the plugins are or whether they are on (`nocterm-plugin-model`,
@@ -23,9 +23,15 @@
 //! the write, never a guess; editing the layout in use changes the footer at once; editing a
 //! built-in layout in use saves a custom copy that stays in use; history is dropped when
 //! anything else changes the layouts.
+//! Undo is bounded to 100 steps and 8 MiB of cloned snapshots per editor. The layout shown is
+//! resolved once for each settings revision, set of plugins and layout picked, and its bar is
+//! fitted once for each width, so a drag, which draws the window on every move, redraws cheaply.
 
+mod about;
 mod commands;
 mod dnd;
+mod drops;
+mod face;
 mod fit;
 mod history;
 mod keys;

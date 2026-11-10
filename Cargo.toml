@@ -14,8 +14,8 @@ nocterm-ai.workspace = true
 nocterm-agent-providers.workspace = true
 nocterm-image-codec.workspace = true
 nocterm-agent-storage.workspace = true
-nocterm-agent-usage.workspace = true
 nocterm-agent-runtime.workspace = true
+nocterm-agent-tools.workspace = true
 nocterm-acp.workspace = true
 nocterm-agent.workspace = true
 nocterm-agent-settings-ui.workspace = true
@@ -23,6 +23,7 @@ nocterm-device-unlock.workspace = true
 nocterm-connections.workspace = true
 nocterm-connections-model.workspace = true
 nocterm-connections-io.workspace = true
+nocterm-connections-store.workspace = true
 nocterm-containers-ui.workspace = true
 nocterm-containers.workspace = true
 nocterm-snippets-ui.workspace = true
@@ -45,6 +46,12 @@ nocterm-project-environment.workspace = true
 nocterm-project-container-fs.workspace = true
 nocterm-directory-io.workspace = true
 nocterm-explorer.workspace = true
+nocterm-hub-io.workspace = true
+nocterm-hub-agents.workspace = true
+nocterm-hub-agents-model.workspace = true
+nocterm-hubs-model.workspace = true
+nocterm-hubs.workspace = true
+nocterm-hubs-ui.workspace = true
 nocterm-project-service.workspace = true
 nocterm-project-storage.workspace = true
 nocterm-projects.workspace = true
@@ -53,6 +60,7 @@ nocterm-settings.workspace = true
 nocterm-store.workspace = true
 nocterm-settings-ui.workspace = true
 nocterm-ssh.workspace = true
+nocterm-ssh-keys.workspace = true
 nocterm-terminal.workspace = true
 nocterm-transfers.workspace = true
 nocterm-transfer-runtime.workspace = true
@@ -67,6 +75,7 @@ nocterm-plugin-model.workspace = true
 nocterm-plugin-api = { workspace = true, optional = true }
 nocterm-plugin-host = { workspace = true, optional = true }
 nocterm-plugin-packages = { workspace = true, optional = true }
+nocterm-plugin-net = { workspace = true, optional = true }
 nocterm-plugin-ports = { workspace = true, optional = true }
 nocterm-plugin-view = { workspace = true, optional = true }
 nocterm-plugin-wasm = { workspace = true, optional = true }
@@ -90,6 +99,7 @@ user-plugins = [
     "dep:nocterm-plugin-api",
     "dep:nocterm-plugin-host",
     "dep:nocterm-plugin-packages",
+    "dep:nocterm-plugin-net",
     "dep:nocterm-plugin-ports",
     "dep:nocterm-plugin-view",
     "dep:nocterm-plugin-wasm",
@@ -164,6 +174,8 @@ openssh-clients = "*"
 winresource = "0.1"
 
 [dev-dependencies]
+nocterm-plugin-ports = { workspace = true, features = ["test-support"] }
+nocterm-connections-store = { workspace = true, features = ["test-support"] }
 async-io.workspace = true
 nocterm-monitor.workspace = true
 nocterm-window-layout.workspace = true
@@ -172,15 +184,19 @@ uuid.workspace = true
 nocterm-store = { workspace = true, features = ["test-support"] }
 nocterm-snippets = { workspace = true, features = ["test-support"] }
 nocterm-connections-model = { workspace = true, features = ["test-support"] }
+nocterm-hubs-model = { workspace = true, features = ["test-support"] }
 nocterm-ai = { workspace = true, features = ["test-support"] }
 nocterm-device-unlock = { workspace = true, features = ["test-support"] }
 nocterm-session = { workspace = true, features = ["test-support"] }
+nocterm-ssh-keys = { workspace = true, features = ["test-support"] }
+nocterm-vault = { workspace = true, features = ["test-support"] }
 nocterm-workspace = { workspace = true, features = ["test-support"] }
 nocterm-project-model = { workspace = true, features = ["test-support"] }
 nocterm-transfers = { workspace = true, features = ["test-support"] }
 nocterm-themes = { workspace = true, features = ["test-support"] }
 serde_json.workspace = true
 tempfile.workspace = true
+tokio.workspace = true
 # Writes the guest modules that the plugin check tests run (user-plugins builds only).
 wat.workspace = true
 gpui-kit = { workspace = true, features = ["test-support"] }
@@ -221,9 +237,9 @@ nocterm-agent-directory = { path = "crates/agent-directory" }
 nocterm-agent-settings-ui = { path = "crates/agent-settings-ui" }
 nocterm-workspace-ports = { path = "crates/workspace-ports" }
 nocterm-agent-chat = { path = "crates/agent-chat" }
+nocterm-agent-tools = { path = "crates/agent-tools" }
 nocterm-image-codec = { path = "crates/image-codec" }
 nocterm-agent-storage = { path = "crates/agent-storage" }
-nocterm-agent-usage = { path = "crates/agent-usage" }
 nocterm-acp = { path = "crates/acp" }
 nocterm-agent = { path = "crates/agent" }
 nocterm-agent-runtime = { path = "crates/agent-runtime" }
@@ -235,6 +251,7 @@ nocterm-connections-store = { path = "crates/connections-store" }
 nocterm-connections-model = { path = "crates/connections-model" }
 nocterm-connections-io = { path = "crates/connections-io" }
 nocterm-containers = { path = "crates/containers" }
+nocterm-containers-service = { path = "crates/containers-service" }
 nocterm-containers-ui = { path = "crates/containers-ui" }
 nocterm-snippets = { path = "crates/snippets" }
 nocterm-snippets-ui = { path = "crates/snippets-ui" }
@@ -243,12 +260,19 @@ nocterm-snippets-io = { path = "crates/snippets-io" }
 nocterm-core = { path = "crates/core" }
 nocterm-design = { path = "crates/design" }
 nocterm-files = { path = "crates/files" }
+nocterm-hubs-model = { path = "crates/hubs-model" }
+nocterm-hub-agents-model = { path = "crates/hub-agents-model" }
+nocterm-hub-agents = { path = "crates/hub-agents" }
+nocterm-hub-io = { path = "crates/hub-io" }
+nocterm-hubs = { path = "crates/hubs" }
+nocterm-hubs-ui = { path = "crates/hubs-ui" }
 nocterm-keymap = { path = "crates/keymap" }
 nocterm-keymap-ui = { path = "crates/keymap-ui" }
 nocterm-layout-ui = { path = "crates/layout-ui" }
 nocterm-local = { path = "crates/local" }
 nocterm-localfs = { path = "crates/localfs" }
 nocterm-monitor = { path = "crates/monitor" }
+nocterm-monitor-service = { path = "crates/monitor-service" }
 nocterm-monitor-ui = { path = "crates/monitor-ui" }
 nocterm-plugin-abi = { path = "crates/plugin-abi" }
 nocterm-plugin-wasm = { path = "crates/plugin-wasm" }
@@ -256,6 +280,7 @@ nocterm-plugin-api = { path = "crates/plugin-api" }
 nocterm-plugin-enablement = { path = "crates/plugin-enablement" }
 nocterm-plugin-host = { path = "crates/plugin-host" }
 nocterm-plugin-packages = { path = "crates/plugin-packages" }
+nocterm-plugin-net = { path = "crates/plugin-net" }
 nocterm-plugin-ports = { path = "crates/plugin-ports" }
 nocterm-plugin-view = { path = "crates/plugin-view" }
 nocterm-plugin-model = { path = "crates/plugin-model" }
@@ -265,6 +290,7 @@ nocterm-settings = { path = "crates/settings" }
 nocterm-store = { path = "crates/store" }
 nocterm-settings-ui = { path = "crates/settings-ui" }
 nocterm-ssh = { path = "crates/ssh" }
+nocterm-ssh-keys = { path = "crates/ssh-keys" }
 nocterm-terminal = { path = "crates/terminal" }
 nocterm-transfers = { path = "crates/transfers" }
 nocterm-transfer-runtime = { path = "crates/transfer-runtime" }
@@ -278,10 +304,16 @@ nocterm-workspace = { path = "crates/workspace" }
 nocterm-vault = { path = "crates/vault" }
 nocterm-vault-store = { path = "crates/vault-store" }
 nocterm-vault-ui = { path = "crates/vault-ui" }
+# The hub contract lives outside this workspace (ADR 0096); only nocterm-hub-io may use it.
+nocterm-hub-client = { git = "https://github.com/cu-e/nocterm-contract", rev = "58af32eb20106eaac3c34104b227aae04672ad2f" }
+nocterm-hub-model = { git = "https://github.com/cu-e/nocterm-contract", rev = "58af32eb20106eaac3c34104b227aae04672ad2f" }
+nocterm-hub-proto = { git = "https://github.com/cu-e/nocterm-contract", rev = "58af32eb20106eaac3c34104b227aae04672ad2f" }
+nocterm-keys = { git = "https://github.com/cu-e/nocterm-contract", rev = "58af32eb20106eaac3c34104b227aae04672ad2f" }
 
 agent-client-protocol = "=2.2.0"
 agent-client-protocol-schema = { version = "=1.9.1", features = ["unstable_session_fork", "unstable_end_turn_token_usage"] }
 base64 = "0.22"
+hex = "0.4.3"
 async-io = "2"
 async-process = "2"
 
@@ -300,17 +332,21 @@ anyhow = "1"
 async-channel = "2"
 directories = "6"
 futures = "0.3"
+sha2 = "0.10.9"
 gpui-kit = "0.7"
 # GPUI alone, for crates that must not reach the component library.
 gpui = { package = "gpui-pre", version = "0.3.7", default-features = false }
 parking_lot = "0.12"
 portable-pty = "0.9"
+prost = "0.14.4"
 regex = "1"
 # Zed's reqwest fork, already in the tree through GPUI.
 reqwest = { package = "gpui-pre-reqwest", version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 regex-syntax = "0.8"
 russh = { version = "0.63", default-features = false, features = ["ring", "flate2", "rsa"] }
 russh-sftp = "3"
+# Pinned to the version `russh` resolves, so key text round-trips between the two (ADR 0102).
+ssh-key = { version = "=0.7.0-rc.11", default-features = false, features = ["ed25519", "p256", "p384", "p521", "rsa", "encryption"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -324,6 +360,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "
 toml = "1"
 toml_edit = "0.25"
 tracing = "0.1"
+tonic = { version = "0.14", default-features = false }
 # Writes the guest modules the wasm tests run. Dev only: the host reads binary modules.
 wat = "1.262"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -372,6 +409,11 @@ wasmi_core = { opt-level = 3 }
 wasmi_ir = { opt-level = 3 }
 wasmparser = { opt-level = 3 }
 postcard = { opt-level = 3 }
+# `cargo xtask architecture` parses every source file with syn several times; unoptimised,
+# that made it the slowest check. Optimised syn also expands derive macros faster.
+proc-macro2 = { opt-level = 3 }
+syn = { opt-level = 3 }
+xtask = { opt-level = 1 }
 
 [profile.release]
 codegen-units = 1

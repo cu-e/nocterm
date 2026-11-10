@@ -9,7 +9,7 @@ use nocterm_plugin_api::{
 };
 use tempfile::TempDir;
 
-use super::{PACKAGE, id, store, write};
+use super::{PACKAGE, id, store, stored_path, write};
 use crate::{PackageStore, parse_package, read_directory, read_package, sha256};
 
 const CODE_MANIFEST: &str = r#"
@@ -167,7 +167,7 @@ fn a_code_package_is_stored_loaded_and_checked_like_a_manifest() {
     let package = parse_package(module(CODE_MANIFEST), &[]).unwrap();
     store.publish(&package, false).unwrap();
 
-    let path = directory.path().join("plugins/user-acme-clock.wasm");
+    let path = stored_path(directory.path(), &package);
     assert!(path.exists());
     assert!(
         !directory
@@ -196,10 +196,9 @@ fn a_stored_module_is_private() {
     use std::os::unix::fs::PermissionsExt as _;
     let directory = TempDir::new().unwrap();
     let store = store(directory.path());
-    store
-        .publish(&parse_package(module(CODE_MANIFEST), &[]).unwrap(), false)
-        .unwrap();
-    let path = directory.path().join("plugins/user-acme-clock.wasm");
+    let package = parse_package(module(CODE_MANIFEST), &[]).unwrap();
+    store.publish(&package, false).unwrap();
+    let path = stored_path(directory.path(), &package);
     assert_eq!(
         fs::metadata(path).unwrap().permissions().mode() & 0o777,
         0o600
@@ -212,12 +211,12 @@ fn an_update_that_changes_the_kind_leaves_one_file() {
     let store = store(directory.path());
     let declarative = parse_package(PACKAGE.as_bytes().to_vec(), &[]).unwrap();
     let code = parse_package(module(CODE_MANIFEST), &[]).unwrap();
-    let plugins = directory.path().join("plugins");
-
     store.publish(&declarative, false).unwrap();
     store.publish(&code, true).unwrap();
-    assert!(plugins.join("user-acme-clock.wasm").exists());
-    assert!(!plugins.join("user-acme-clock.toml").exists());
+    assert!(stored_path(directory.path(), &code).exists());
+    assert!(stored_path(directory.path(), &declarative).exists());
+    assert_eq!(store.load(&id(), declarative.hash()).unwrap(), declarative);
+    store.retain(&id(), code.hash()).unwrap();
     assert_eq!(
         store.load(&id(), declarative.hash()).unwrap_err(),
         PackageError::HashChanged,
@@ -225,8 +224,9 @@ fn an_update_that_changes_the_kind_leaves_one_file() {
     );
 
     store.publish(&declarative, true).unwrap();
-    assert!(plugins.join("user-acme-clock.toml").exists());
-    assert!(!plugins.join("user-acme-clock.wasm").exists());
+    store.retain(&id(), declarative.hash()).unwrap();
+    assert!(stored_path(directory.path(), &declarative).exists());
+    assert!(!stored_path(directory.path(), &code).exists());
     assert_eq!(store.load(&id(), declarative.hash()).unwrap(), declarative);
 }
 

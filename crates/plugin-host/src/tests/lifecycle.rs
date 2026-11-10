@@ -446,3 +446,79 @@ fn a_call_error_maps_to_the_error_a_plugin_may_see() {
         HostError::Unavailable
     );
 }
+
+#[gpui::test]
+fn installed_capacity_refuses_a_package_before_it_can_be_lost_on_restart(cx: &mut TestAppContext) {
+    let rig = Rig::new(cx);
+    for number in 0..crate::records::MAX_RECORDS {
+        let id = rig
+            .install(package_named(&format!("p{number}"), number as u8), &[], cx)
+            .unwrap();
+        rig.host
+            .update(cx, |host, cx| host.set_enabled(&id, false, cx))
+            .unwrap();
+    }
+    assert_eq!(
+        rig.install(package_named("overflow", 99), &[], cx),
+        Err(ManageError::TooManyInstalled {
+            max: crate::records::MAX_RECORDS
+        })
+    );
+    rig.restore(cx);
+    assert_eq!(
+        rig.host.read_with(cx, |host, _| host.plugins()).len(),
+        crate::records::MAX_RECORDS
+    );
+}
+
+#[gpui::test]
+fn bundled_data_removal_reports_refusal_and_keeps_the_plugin_manageable(cx: &mut TestAppContext) {
+    let rig = Rig::new(cx);
+    let id = rig.installed(cx);
+    rig.data.put(&id, PluginDataDoc::default());
+    rig.data.refuse_changes();
+    let refused = rig
+        .host
+        .update(cx, |host, cx| host.uninstall(&id, true, cx));
+    assert!(matches!(refused, Err(ManageError::Unsaved(_))));
+    assert!(rig.packages.holds(&id));
+    assert!(rig.data.stored(&id).is_some());
+    assert_eq!(rig.host.read_with(cx, |host, _| host.plugins()).len(), 1);
+    let refused = rig
+        .host
+        .update(cx, |host, cx| host.replace(package(2), &[], false, cx));
+    assert!(matches!(refused, Err(ManageError::Unsaved(_))));
+}
+
+#[gpui::test]
+async fn a_failed_records_publication_is_returned_and_does_not_destroy_original_package(
+    cx: &mut TestAppContext,
+) {
+    let rig = Rig::new(cx);
+    let id = rig.installed(cx);
+    let first = package(1);
+    rig.host
+        .update(cx, |host, _| host.take_publication())
+        .await
+        .unwrap();
+    rig.records.refuse_writes();
+    rig.host
+        .update(cx, |host, cx| host.replace(package(2), &[], true, cx))
+        .unwrap();
+    let failed = rig.host.update(cx, |host, _| host.take_publication()).await;
+    assert!(matches!(failed, Err(crate::RecordsError::Write(_))));
+    assert_eq!(rig.records.doc().plugins[0].hash, first.hash().to_string());
+    assert_eq!(
+        nocterm_plugin_api::PluginPackages::load(rig.packages.as_ref(), &id, first.hash()).unwrap(),
+        first
+    );
+    assert!(
+        rig.host
+            .read_with(cx, |host, _| host.publication_error().is_some())
+    );
+    rig.restore(cx);
+    assert_eq!(
+        rig.host.read_with(cx, |host, _| host.hash_of(&id)),
+        Some(first.hash().to_string())
+    );
+}

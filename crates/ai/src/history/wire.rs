@@ -92,6 +92,8 @@ impl<Q: Serialize + ?Sized> Serialize for Wire<'_, Q> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         super::header::resolve_scope(self.version, Some(self.header.scope))
             .map_err(serde::ser::Error::custom)?;
+        super::header::validate_environment(self.version, &self.header.environment)
+            .map_err(serde::ser::Error::custom)?;
         if self.version == super::LEGACY_VERSION {
             return Flat(self).serialize(serializer);
         }
@@ -101,6 +103,7 @@ impl<Q: Serialize + ?Sized> Serialize for Wire<'_, Q> {
             &self.entries.preview,
             self.draft.as_deref(),
             self.queue.is_some(),
+            self.version,
         );
         if super::size::encoded_len(&catalog).map_err(serde::ser::Error::custom)?
             + super::prefix::START.len()
@@ -125,6 +128,9 @@ impl<Q: Serialize + ?Sized> Serialize for Flat<'_, '_, Q> {
         let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("version", &wire.version)?;
         wire.header.serialize_prefix(&mut map)?;
+        if wire.version == super::ENVIRONMENT_VERSION {
+            map.serialize_entry("environment", &wire.header.environment)?;
+        }
         if wire.version != super::LEGACY_VERSION {
             map.serialize_entry("scope", &wire.header.scope)?;
         }

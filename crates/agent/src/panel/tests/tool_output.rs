@@ -49,7 +49,7 @@ pub(super) fn set_call(f: &Fixture, call: ToolRecord, cx: &mut TestAppContext) {
 }
 
 pub(super) fn expanded_fixture(call: ToolRecord, cx: &mut TestAppContext) -> Fixture {
-    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 18., workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update(|cx| cx.set_reduce_motion(true));
     set_call(&f, call, cx);

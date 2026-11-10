@@ -7,6 +7,8 @@ pub(in crate::workspace) struct SurfaceWindow {
     sources: std::cell::RefCell<Vec<WeakEntity<TabSurface>>>,
     generation: Cell<u64>,
     closed: Cell<bool>,
+    /// The window's top toolbars, which the outer dock draws under its tab bar.
+    top_toolbars: Rc<crate::workspace::chrome::TopToolbars>,
 }
 impl SurfaceWindow {
     pub(in crate::workspace) fn new(owner: ContextWindowReceipt) -> Rc<Self> {
@@ -15,7 +17,11 @@ impl SurfaceWindow {
             sources: Default::default(),
             generation: Cell::new(0),
             closed: Cell::new(false),
+            top_toolbars: Rc::default(),
         })
+    }
+    pub(in crate::workspace) fn top_toolbars(&self) -> Rc<crate::workspace::chrome::TopToolbars> {
+        self.top_toolbars.clone()
     }
     pub(in crate::workspace) fn owner(&self) -> ContextWindowReceipt {
         self.owner

@@ -95,10 +95,13 @@ impl ChatConfig {
     pub(super) fn mode_choice(&self) -> Option<&ModeId> {
         self.mode_choice.as_ref()
     }
-    pub fn model(&self) -> Option<String> {
+    pub(super) fn model_ref(&self) -> Option<&String> {
         self.last_prompt_model
-            .clone()
-            .or_else(|| self.last_saved_model.clone())
+            .as_ref()
+            .or(self.last_saved_model.as_ref())
+    }
+    pub fn model(&self) -> Option<String> {
+        self.model_ref().cloned()
     }
     pub fn config_overrides_modes(&self) -> bool {
         self.options

@@ -7,8 +7,9 @@
 mod kept;
 mod settle;
 mod structure;
+mod toolbars;
 
-use nocterm_plugin_model::{ContributionId, GroupId, PluginSet, Side, Zone};
+use nocterm_plugin_model::{ContributionId, Edge, GroupId, PluginSet, Side, Zone};
 
 use crate::{
     BuiltIn, LayoutPreset, LayoutSettings, MAX_GROUP_MEMBERS, MAX_PRESETS, MAX_ZONE_ITEMS,
@@ -90,9 +91,15 @@ pub enum EditOp {
         place: Slot,
         index: usize,
     },
-    /// Takes a widget or a panel out of the bar. A pinned widget stays.
+    /// Takes a widget or a panel out of the bar, or a toolbar off its edge. A pinned widget
+    /// stays.
     RemoveToTray {
         id: ContributionId,
+    },
+    /// Shows a toolbar at the end of `edge`, taking it off any other edge and out of the tray.
+    ShowToolbar {
+        id: ContributionId,
+        edge: Edge,
     },
     /// Puts a contribution back where its hints say.
     Restore {
@@ -349,6 +356,7 @@ fn reset(next: &mut LayoutSettings, id: &PresetId) -> Result<(), EditError> {
         preset.bar = empty.bar;
         preset.tray = empty.tray;
         preset.open = empty.open;
+        preset.toolbars = empty.toolbars;
     }
     Ok(())
 }

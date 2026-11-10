@@ -18,6 +18,7 @@ pub(super) struct SessionLifecycle {
     prompt: Option<Prompt>,
     prompt_epoch: u64,
     connection_epoch: u64,
+    connected_once: bool,
     pump: Option<Task<()>>,
 }
 impl SessionLifecycle {
@@ -38,6 +39,7 @@ impl SessionLifecycle {
             prompt: None,
             prompt_epoch: 0,
             connection_epoch: 0,
+            connected_once: false,
             pump: None,
         }
     }
@@ -87,8 +89,15 @@ impl SessionLifecycle {
     }
     pub(super) fn accept_session(&mut self, session: Session) {
         self.fs = session.fs();
+        self.connected_once = false;
         self.session = Some(session);
         self.prompt = None;
+    }
+    /// Whether this is the first `Connected` of the current session. A transport
+    /// that reconnects by itself reports `Connected` again; that is the same
+    /// connection continuing, so what is done once per connection stays done.
+    pub(super) fn first_connected(&mut self) -> bool {
+        !std::mem::replace(&mut self.connected_once, true)
     }
     pub(super) fn accept_prompt(&mut self, prompt: Prompt) {
         self.prompt_epoch = self.prompt_epoch.wrapping_add(1);

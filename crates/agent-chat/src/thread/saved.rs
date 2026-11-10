@@ -1,9 +1,8 @@
 //! A chat as saved in the history: restoring, forking, naming and saving.
 use gpui::{App, Context};
-use nocterm_ai::model::content::Content;
 use nocterm_ai::model::controls::ConfigSetting;
 use nocterm_ai::model::ids::{ConfigId, ModeId, SessionId};
-use nocterm_ai::thread::ThreadState;
+use nocterm_ai::{history::SharedChat, storage::AgentStorageError};
 use std::{sync::Arc, time::Duration};
 
 use super::{AgentThread, Attachment, Composer, Fork, RestartData, Restore, archive};
@@ -61,10 +60,11 @@ impl AgentThread {
     pub fn begin_composer_edit(
         &mut self,
         images: Vec<nocterm_ai::images::PromptImage>,
+        files: Vec<nocterm_ai::prompt_files::PromptFile>,
         attachments: Vec<Attachment>,
         cx: &mut Context<Self>,
     ) {
-        self.composer.begin_edit(images, attachments);
+        self.composer.begin_edit(images, files, attachments);
         cx.notify();
     }
 
@@ -82,6 +82,23 @@ impl AgentThread {
         self.composer.replace_images(images)?;
         cx.notify();
         Ok(())
+    }
+
+    /// Adds files to the next prompt; files it holds already are not added twice.
+    pub fn add_composer_files(
+        &mut self,
+        files: Vec<nocterm_ai::prompt_files::PromptFile>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), nocterm_ai::prompt_files::PromptFileError> {
+        self.composer.add_files(files)?;
+        cx.notify();
+        Ok(())
+    }
+
+    pub fn remove_composer_file(&mut self, index: usize, cx: &mut Context<Self>) {
+        if self.composer.remove_file(index) {
+            cx.notify();
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -221,72 +238,102 @@ impl AgentThread {
     pub(crate) fn restarted(
         data: RestartData,
         deps: crate::chat_deps::ChatDeps,
+        allocation: crate::thread::local_payloads::LocalPayloadAllocation,
         cx: &mut Context<Self>,
     ) -> Self {
         let (document, config, composer, restore) = data.into_parts();
         let state = super::document::ChatDocument::restarted(document);
-        let mut thread = Self::from_document(state, deps, cx);
+        let mut thread = Self::from_document(state, deps, allocation, cx);
         thread.config.hydrate_restart(config);
         thread.composer = composer;
         thread.session.import_restore(restore);
         thread
     }
 
-    pub fn restart_data(&self) -> RestartData {
-        RestartData::new(
+    pub fn restart_data(&self, cx: &mut App) -> Result<RestartData, AgentStorageError> {
+        let input = super::document::Inputs::new(
+            &self.composer,
+            &self.config,
+            self.stable_attachments(self.composer.default_attachments(), cx),
+            self.persistent_resume(),
+        );
+        let allocation =
+            self.payloads
+                .restart(&self.state, &input, self.resident_history_bytes(), cx)?;
+        Ok(RestartData::new(
             self.state.restart_snapshot(),
             self.config.restart_snapshot(),
             self.composer.restarted(),
             self.restore_descriptor(),
-        )
+            allocation,
+        ))
     }
 
     pub fn capture_pending(
         &mut self,
-        cx: &App,
-    ) -> Option<(Arc<nocterm_ai::history::SharedChat>, u64)> {
+        cx: &mut App,
+    ) -> Result<Option<(Arc<SharedChat>, u64)>, AgentStorageError> {
         self.state.cancel_debounce();
         if !self.state.needs_candidate() {
-            return self.state.existing_offer();
+            return Ok(self.state.existing_offer());
         }
         if self.is_archived() {
-            let snapshot = self.archive.draft_patch().map(|metadata| {
-                Arc::new(nocterm_ai::history::SharedChat {
-                    metadata,
-                    queue: Vec::new(),
-                })
-            })?;
-            return self.state.capture_patch(snapshot);
+            let allocation = self.payloads.snapshot(
+                self.resident_history_bytes(),
+                self.archive.draft_capacity(),
+                cx,
+            )?;
+            let Some(metadata) = self.archive.draft_patch() else {
+                return Ok(None);
+            };
+            let snapshot = allocation.retain(Arc::new(SharedChat {
+                metadata,
+                queue: Vec::new(),
+            }))?;
+            return Ok(self.state.capture_patch(snapshot));
         }
         let attachments = self.stable_attachments(self.composer.default_attachments(), cx);
         let resume = self.persistent_resume();
         let input = super::document::Inputs::new(&self.composer, &self.config, attachments, resume);
-        self.state.propose_candidate(&input)
+        let capacity = self.state.snapshot_capacity(&input)?;
+        let allocation = self
+            .payloads
+            .snapshot(self.resident_history_bytes(), capacity, cx)?;
+        let Some(snapshot) = self.state.candidate_snapshot(&input) else {
+            return Ok(None);
+        };
+        let snapshot = allocation.retain(snapshot)?;
+        Ok(self.state.adopt_candidate(&input, snapshot))
     }
 
-    pub fn flush_snapshot(&self, cx: &App) -> Option<Arc<nocterm_ai::history::SharedChat>> {
+    pub fn flush_snapshot(
+        &self,
+        cx: &mut App,
+    ) -> Result<Option<Arc<SharedChat>>, AgentStorageError> {
         if self.state.clean() {
-            return None;
+            return Ok(None);
         }
         if let Some(snapshot) = self.state.current_snapshot() {
-            return Some(snapshot);
+            return Ok(Some(snapshot));
         }
         if self.is_archived() {
-            return self.archive.draft_patch().map(|metadata| {
-                Arc::new(nocterm_ai::history::SharedChat {
-                    metadata,
-                    queue: Vec::new(),
+            let allocation = self.payloads.snapshot(
+                self.resident_history_bytes(),
+                self.archive.draft_capacity(),
+                cx,
+            )?;
+            return self
+                .archive
+                .draft_patch()
+                .map(|metadata| {
+                    allocation.retain(Arc::new(SharedChat {
+                        metadata,
+                        queue: Vec::new(),
+                    }))
                 })
-            });
+                .transpose();
         }
-        self.shared_snapshot(cx).or_else(|| {
-            self.state.history_present().then(|| {
-                Arc::new(nocterm_ai::history::SharedChat {
-                    metadata: self.history_metadata(cx),
-                    queue: Vec::new(),
-                })
-            })
-        })
+        self.shared_snapshot(cx)
     }
 
     pub fn flush_draft(&mut self, cx: &mut Context<Self>) {
@@ -327,15 +374,18 @@ impl AgentThread {
             && !self.session.leased()
             && !self.session_busy()
     }
-    pub fn evict_history(&mut self, cx: &mut Context<Self>) -> bool {
-        let gate = archive::EvictionGate::new(
+    pub(super) fn history_eviction_gate(&self) -> archive::EvictionGate {
+        archive::EvictionGate::new(
             !self.session.leased(),
             !self.session_busy() && !self.session.shown(),
             self.state.desired_revision() == self.state.published_revision(),
             !self.state.draft_changed(),
             self.state.persistence_error().is_none(),
             self.state.history_present(),
-        );
+        )
+    }
+    pub fn evict_history(&mut self, cx: &mut Context<Self>) -> bool {
+        let gate = self.history_eviction_gate();
         let mut summary = nocterm_ai::history::ChatSummary::from_chat(&self.history_metadata(cx));
         summary.title = Some(self.title());
         summary.has_content = !self.state.entries().is_empty() || !self.composer.is_empty();
@@ -343,6 +393,7 @@ impl AgentThread {
             return false;
         }
         self.state.evict_clean();
+        self.payloads.archive();
         self.composer = Default::default();
         self.tools.clear_displays();
         cx.notify();
@@ -373,53 +424,47 @@ impl AgentThread {
         }
     }
 
-    fn on_archive_loaded(
+    pub(super) fn on_archive_loaded(
         &mut self,
         completion: archive::load_operation::LoadCompletion,
         cx: &mut Context<Self>,
     ) {
-        let (load_id, ticket, result, permit) = completion.into_parts();
-
-        let current = self.session.session_current(ticket)
-            && self.deps.enabled(cx)
-            && self
-                .deps
-                .runtime()
-                .document_is_current(self.state.chat_id(), cx.entity_id(), cx);
-        let result = if current {
-            result.and_then(|chat| {
-                self.deps
-                    .runtime()
-                    .admit_history(cx.entity_id(), chat.resident_bytes(), cx)?;
-                Ok(chat)
-            })
-        } else {
-            result
-        };
-        match self.archive.accept(load_id, current, result, permit) {
-            archive::LoadOutcome::Stale => return,
-            archive::LoadOutcome::Failed(error) => {
-                self.notice
-                    .present(format!("Could not load saved chat: {error}"));
-                self.notice.mark_error();
-            }
-            archive::LoadOutcome::Hydrate {
-                chat,
-                overlay,
-                intents,
-            } => {
-                self.restore_content_with_overlay(*chat, overlay);
-                self.preview_config(cx);
-                if self.state.draft_changed() {
-                    self.save(cx);
+        completion.publish(|load_id, ticket, result, permit, payload| {
+            let current = self.session.session_current(ticket)
+                && self.deps.enabled(cx)
+                && self.deps.runtime().document_is_current(
+                    self.state.chat_id(),
+                    cx.entity_id(),
+                    cx,
+                );
+            match self.archive.accept(load_id, current, result, permit) {
+                archive::LoadOutcome::Stale => return,
+                archive::LoadOutcome::Failed(error) => {
+                    self.notice
+                        .present(format!("Could not load saved chat: {error}"));
+                    self.notice.mark_error();
                 }
-                for intent in intents {
-                    self.apply_archive_intent(intent, cx);
+                archive::LoadOutcome::Hydrate {
+                    chat,
+                    overlay,
+                    intents,
+                } => {
+                    if let Some(payload) = payload {
+                        self.payloads.adopt_resident(payload);
+                    }
+                    self.restore_content_with_overlay(*chat, overlay);
+                    self.preview_config(cx);
+                    if self.state.draft_changed() {
+                        self.save(cx);
+                    }
+                    for intent in intents {
+                        self.apply_archive_intent(intent, cx);
+                    }
+                    self.warm(cx);
                 }
-                self.warm(cx);
             }
-        }
-        cx.notify();
+            cx.notify();
+        });
     }
 
     pub fn load_archive(&mut self, intent: archive::ArchiveIntent, cx: &mut Context<Self>) {
@@ -439,12 +484,7 @@ impl AgentThread {
         let reader = self.deps.runtime().history_reader(cx);
         let operation =
             archive::load_operation::LoadOperation::new(load_id, ticket, chat_id, reader);
-        let loading = cx.background_executor().spawn(operation.run());
-        cx.spawn(async move |this, cx| {
-            let completion = loading.await;
-            let _ = this.update(cx, |this, cx| this.on_archive_loaded(completion, cx));
-        })
-        .detach();
+        operation.start(self.payloads.history_admission(), cx);
         cx.notify();
     }
 
@@ -456,18 +496,17 @@ impl AgentThread {
     pub(crate) fn restored(
         chat: nocterm_ai::history::SavedChat,
         deps: crate::chat_deps::ChatDeps,
+        allocation: crate::thread::local_payloads::LocalPayloadAllocation,
         cx: &mut Context<Self>,
     ) -> Self {
         let mut thread = Self::from_document(
             super::document::ChatDocument::new(
                 chat.header.agent_id.clone(),
-                nocterm_ai::execution_origin::ChatKey::new(
-                    chat.header.scope,
-                    chat.header.id.clone(),
-                ),
+                nocterm_ai::execution_origin::ChatKey::from_header(&chat.header),
                 chat.header.updated,
             ),
             deps,
+            allocation,
             cx,
         );
         thread.restore_content_with_overlay(chat, None);
@@ -478,13 +517,14 @@ impl AgentThread {
         &mut self,
         chat: nocterm_ai::history::SavedChat,
         cx: &mut Context<Self>,
-    ) -> Result<(), nocterm_ai::storage::AgentStorageError> {
-        self.deps.require_scope(chat.header.scope)?;
+    ) -> Result<(), AgentStorageError> {
+        self.deps.require_local_scope(&chat.header.chat_scope())?;
         chat.validate_identity()?;
         if chat.header.id != self.state.chat_id() {
             return Err(nocterm_ai::history::HistoryCodecError::IdentityMismatch.into());
         }
-        let chat = nocterm_ai::history::prepare(chat)?;
+        let chat = nocterm_ai::history::prepare_owned(chat)?;
+        self.payloads.ensure_resident(cx)?;
         self.deps
             .runtime()
             .admit_history(cx.entity_id(), chat.resident_bytes(), cx)?;
@@ -542,58 +582,54 @@ impl AgentThread {
     }
     /// A copy of this chat, to go on with separately. When opened, the copy
     /// continues in a copy of this chat's agent session.
-    pub fn fork(&self) -> Fork {
-        self.fork_at(self.state.entries().len())
+    pub fn fork(&self, cx: &mut App) -> Result<Fork, AgentStorageError> {
+        self.fork_at(self.state.entries().len(), cx)
     }
     /// A copy of the chat's first `len` entries. Only a copy of the whole
     /// chat continues in a copy of the agent's session; an earlier cut
     /// starts a new session, since the agent cannot forget the rest.
-    pub fn fork_at(&self, len: usize) -> Fork {
-        let whole = len >= self.state.entries().len();
-        let mut chat = self.deps.new_chat(self.state.agent_id().to_owned());
-        let mut state = self.state.transcript().clone();
-        state.truncate(len);
-        chat.entries = state.entries;
-        chat.times = state.times;
-        chat.header.title = self.state.transcript().title.clone();
-        chat.header.name = Some(format!("{} (fork)", self.title()));
-        chat.model = self.model();
-        chat.config = self.config.choices().clone();
-        chat.mode = self.config.mode_choice().map(ToString::to_string);
-        chat.pending_history = self.state.pending_history() || !whole;
-        let restore = match (self.session(), self.session.restore()) {
-            (Some(session), _) => self.session_workdir().clone().map(|workdir| Restore {
-                session: session.clone(),
-                workdir,
-                fork: true,
-            }),
-            (None, Some(restore)) => Some(Restore {
-                fork: true,
-                ..restore.clone()
-            }),
-            (None, None) => None,
-        }
-        .filter(|_| whole);
-        Fork {
+    pub fn fork_at(&self, len: usize, cx: &mut App) -> Result<Fork, AgentStorageError> {
+        let input = super::document::Inputs::new(
+            &self.composer,
+            &self.config,
+            self.stable_attachments(self.composer.default_attachments(), cx),
+            self.persistent_resume(),
+        );
+        let allocation =
+            self.payloads
+                .fork(&self.state, &input, self.resident_history_bytes(), len, cx)?;
+        let chat = self
+            .deps
+            .new_chat_for_origin(self.state.agent_id().to_owned(), self.state.key());
+        let restore = Fork::restoration(
+            self.session(),
+            self.session_workdir(),
+            self.session.restore().as_ref(),
+        );
+        Ok(Fork::capture(
             chat,
+            super::fork::ForkSource::new(&self.state, &self.composer, &self.config, self.title()),
             restore,
-            attachments: self.composer.default_attachments().to_vec(),
-        }
+            len,
+            allocation,
+        ))
     }
     /// The chat `fork` made, connected only when work is submitted.
     pub(crate) fn forked(
         fork: Fork,
         deps: crate::chat_deps::ChatDeps,
+        allocation: crate::thread::local_payloads::LocalPayloadAllocation,
         cx: &mut Context<Self>,
     ) -> Self {
+        let (chat, restore, attachments) = fork.into_parts();
         let pending_history =
-            fork.chat.pending_history || (fork.restore.is_none() && !fork.chat.entries.is_empty());
-        let mut thread = Self::restored(fork.chat, deps, cx);
+            chat.pending_history || (restore.is_none() && !chat.entries.is_empty());
+        let mut thread = Self::restored(chat, deps, allocation, cx);
         thread
             .state
             .set_pending_history(pending_history, thread.deps.timestamp());
-        thread.session.import_restore(fork.restore);
-        thread.composer.replace_context(fork.attachments);
+        thread.session.import_restore(restore);
+        thread.composer.replace_context(attachments);
         thread.establish_clean_document_inputs(cx);
         thread.state.fork_created();
         thread.notice.present("Forked chat".into());
@@ -603,7 +639,7 @@ impl AgentThread {
     /// the first message.
     pub fn title(&self) -> String {
         self.archive.summary().map_or_else(
-            || chat_title(self.state.name(), self.state.transcript()),
+            || super::title::chat_title(self.state.name(), self.state.transcript()),
             |summary| summary.title().to_owned(),
         )
     }
@@ -658,10 +694,10 @@ impl AgentThread {
     }
     pub fn shared_snapshot(
         &self,
-        cx: &gpui::App,
-    ) -> Option<std::sync::Arc<nocterm_ai::history::SharedChat>> {
+        cx: &mut App,
+    ) -> Result<Option<Arc<SharedChat>>, AgentStorageError> {
         if self.is_archived() {
-            return None;
+            return Ok(None);
         }
         let input = super::document::Inputs::new(
             &self.composer,
@@ -669,7 +705,14 @@ impl AgentThread {
             self.stable_attachments(self.composer.default_attachments(), cx),
             self.persistent_resume(),
         );
-        self.state.snapshot(&input)
+        let capacity = self.state.snapshot_capacity(&input)?;
+        let allocation = self
+            .payloads
+            .snapshot(self.resident_history_bytes(), capacity, cx)?;
+        self.state
+            .candidate_snapshot(&input)
+            .map(|snapshot| allocation.retain(snapshot))
+            .transpose()
     }
     pub(super) fn accept_document_inputs(&mut self, cx: &gpui::App, draft: bool) -> bool {
         let attachments = self.stable_attachments(self.composer.default_attachments(), cx);
@@ -686,7 +729,14 @@ impl AgentThread {
     }
     #[cfg(any(test, feature = "test-support"))]
     pub fn snapshot(&self, cx: &gpui::App) -> Option<nocterm_ai::history::SavedChat> {
-        let shared = self.shared_snapshot(cx)?;
+        // Assertion-only export; production persistence uses charged captures.
+        let input = super::document::Inputs::new(
+            &self.composer,
+            &self.config,
+            self.stable_attachments(self.composer.default_attachments(), cx),
+            self.persistent_resume(),
+        );
+        let shared = self.state.snapshot(&input)?;
         let mut chat = shared.metadata.clone();
         chat.queue = shared
             .queue
@@ -699,8 +749,13 @@ impl AgentThread {
         self.save(cx);
     }
     pub fn save(&mut self, cx: &mut Context<Self>) {
-        let Some((chat, revision)) = self.capture_pending(cx) else {
-            return;
+        let (chat, revision) = match self.capture_pending(cx) {
+            Ok(Some(value)) => value,
+            Ok(None) => return,
+            Err(error) => {
+                self.document_save_failed(self.state.desired_revision(), error.into(), cx);
+                return;
+            }
         };
         if !self.state.mark_normal_offer(revision) {
             return;
@@ -723,34 +778,4 @@ impl AgentThread {
             }
         });
     }
-}
-
-/// A chat's title: `name`, else the agent's title, else the start of the
-/// first message. A chat with nothing in it is a new one.
-pub(super) fn chat_title(name: Option<&str>, state: &ThreadState) -> String {
-    if let Some(name) = name.filter(|name| !name.trim().is_empty()) {
-        return name.to_owned();
-    }
-    if state.entries.is_empty() {
-        return "New Agent".into();
-    }
-    state
-        .title
-        .as_ref()
-        .filter(|title| !title.trim().is_empty())
-        .cloned()
-        .or_else(|| {
-            state.entries.iter().find_map(|entry| match entry {
-                nocterm_ai::thread::Entry::User(parts) => {
-                    parts.iter().find_map(|part| match part {
-                        Content::Text(text) if !text.text.trim().is_empty() => {
-                            Some(text.text.trim().chars().take(60).collect())
-                        }
-                        _ => None,
-                    })
-                }
-                _ => None,
-            })
-        })
-        .unwrap_or_else(|| "New Agent".into())
 }

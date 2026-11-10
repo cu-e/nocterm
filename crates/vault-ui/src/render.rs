@@ -1,9 +1,9 @@
 //! The Vault page's tabs.
 use gpui_kit::{
-    AnyElement, ClipboardItem, Context, Window,
+    AnyElement, Context, Window,
     base::TestSupportExt as _,
     component::{
-        ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _,
+        Disableable as _, Sizable as _, StyledExt as _,
         button::{Button, ButtonVariants as _},
         h_flex,
         switch::Switch,
@@ -36,7 +36,7 @@ impl Render for VaultView {
             });
         let body = match self.tab {
             Tab::Overview => self.overview(cx),
-            Tab::Credentials => self.credentials(cx),
+            Tab::Credentials => self.credentials.clone().into_any_element(),
             Tab::Security => self.security(cx),
             Tab::Options => self.options(cx),
         };
@@ -77,6 +77,25 @@ impl VaultView {
     fn overview(&self, cx: &mut Context<Self>) -> AnyElement {
         let unlocked = self.service.is_unlocked();
         let exists = self.service.exists();
+        if let (false, false, Some(remedy)) = (unlocked, exists, self.keys_missing.clone()) {
+            return form::section(
+                "Status",
+                vec![form::row(
+                    "Keys not on this computer",
+                    "This server account's keys are not on this computer yet. Sign in again to open them.",
+                    Button::new("vault-keys-missing")
+                        .small()
+                        .primary()
+                        .label("Sign in again")
+                        .on_click(move |_, window, cx| {
+                            let remedy = remedy.clone();
+                            window.defer(cx, move |window, cx| remedy(window, cx));
+                        }),
+                    cx,
+                )],
+                cx,
+            );
+        }
         let device = self
             .device
             .clone()
@@ -161,86 +180,6 @@ impl VaultView {
                         .label(if exists { "Unlock" } else { "Create vault" })
                         .disabled(self.busy)
                         .on_click(cx.listener(|this, _, window, cx| this.submit(window, cx))),
-                ),
-            )
-            .into_any_element()
-    }
-
-    fn credentials(&self, cx: &mut Context<Self>) -> AnyElement {
-        if !self.service.is_unlocked() {
-            return form::section(
-                "Saved credentials",
-                [form::note(
-                    "Unlock the vault on the Overview tab to see what it holds.",
-                    cx,
-                )],
-                cx,
-            );
-        }
-        let mut rows: Vec<AnyElement> = self
-            .records
-            .iter()
-            .enumerate()
-            .map(|(index, record)| {
-                let id = record.id;
-                h_flex()
-                    .w_full()
-                    .py_3()
-                    .gap_2()
-                    .child(
-                        v_flex()
-                            .flex_1()
-                            .min_w_0()
-                            .child(div().text_sm().child(record.label.clone()))
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(id.to_string()),
-                            ),
-                    )
-                    .child(
-                        Button::new(("vault-copy-id", index))
-                            .small()
-                            .ghost()
-                            .icon(IconName::Copy)
-                            .tooltip("Copy ID")
-                            .on_click(move |_, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(id.to_string()))
-                            }),
-                    )
-                    .child(
-                        Button::new(("vault-delete", index))
-                            .small()
-                            .ghost()
-                            .icon(IconName::Trash)
-                            .tooltip("Delete")
-                            .disabled(self.busy)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.operation(this.service.delete(id), cx)
-                            })),
-                    )
-                    .into_any_element()
-            })
-            .collect();
-        if rows.is_empty() {
-            rows.push(form::note(
-                "Nothing saved yet. Choose Remember when you sign in to a server.",
-                cx,
-            ));
-        }
-        v_flex()
-            .w_full()
-            .child(form::section("Saved credentials", rows, cx))
-            .child(
-                h_flex().pt_2().child(
-                    Button::new("vault-refresh")
-                        .small()
-                        .ghost()
-                        .icon(IconName::RefreshCw)
-                        .label("Refresh")
-                        .disabled(self.busy)
-                        .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
                 ),
             )
             .into_any_element()

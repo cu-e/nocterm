@@ -413,7 +413,7 @@ impl Render for TerminalView {
             .size_full()
             .min_h_0()
             .children(self.render_find(cx))
-            .child(grid)
+            .child(self.with_bar(grid.into_any_element(), cx))
             .child(
                 v_flex()
                     .flex_shrink_0()
@@ -591,6 +591,9 @@ impl TerminalView {
         hop: Option<&PromptHop>,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
+        if matches!(request, SecretRequest::PrivateKey { .. }) {
+            return Some(self.render_vault_key(request, hop, cx));
+        }
         let input = self.secret.as_ref()?.input.clone();
         let (title, retry, masked) = crate::credentials::describe(request, hop);
         let danger = cx.theme().danger;
@@ -646,6 +649,34 @@ impl TerminalView {
         )
     }
 
+    /// A key the vault answers: no field to type into, only the wait for the
+    /// vault and a way out.
+    fn render_vault_key(
+        &mut self,
+        request: &SecretRequest,
+        hop: Option<&PromptHop>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (title, _, _) = crate::credentials::describe(request, hop);
+        let terminal = self.terminal.read(cx);
+        let message = terminal.credential_message().map(str::to_owned);
+        let unlockable = terminal.awaiting_vault();
+        self.card(title, cx)
+            .when_some(message, |card, message| {
+                card.child(div().text_xs().child(message))
+            })
+            .children(self.secret_choices(false, unlockable, cx))
+            .child(
+                h_flex().justify_end().gap_2().child(
+                    Button::new("secret-cancel")
+                        .ghost()
+                        .label("Cancel")
+                        .on_click(cx.listener(|this, _, _, cx| this.cancel_secret(cx))),
+                ),
+            )
+            .into_any_element()
+    }
+
     /// The remember choice and the vault link under a secret field; none when
     /// neither applies.
     fn secret_choices(
@@ -659,10 +690,15 @@ impl TerminalView {
         }
         let unlocked = self.terminal.read(cx).vault_unlocked(cx);
         let remember = self.secret.as_ref().is_some_and(|field| field.remember);
+        let label = if self.terminal.read(cx).remembers_for_account() {
+            "Keep in the account's vault after sign in"
+        } else {
+            "Remember after sign in"
+        };
         let choice = rememberable.then(|| {
             gpui_kit::component::checkbox::Checkbox::new("remember-credential")
                 .small()
-                .label("Remember after sign in")
+                .label(label)
                 .checked(remember && unlocked)
                 .disabled(!unlocked)
                 .on_click(cx.listener(|this, checked: &bool, _, cx| {

@@ -13,12 +13,20 @@ use gpui_kit::{
     prelude::*,
     px,
 };
-use nocterm_ai::TerminalCall;
+use nocterm_ai::{TerminalCall, TransferFiles};
 use nocterm_ui::IconName;
 use nocterm_workspace::UnlockVault;
 
 use super::{AgentPanel, widgets::menu_variant};
-use crate::thread::{AgentThread, PermissionCard, ToolApprovalCard};
+use crate::thread::{AgentThread, PermissionCard};
+
+/// What a person answers a terminal tool call that waits for approval.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ToolApprovalChoice {
+    Deny,
+    AllowOnce,
+    AllowForSession,
+}
 
 fn sign_in_text(wait: &crate::thread::SignInWait) -> (String, String) {
     let heading = if wait.vault() {
@@ -54,6 +62,45 @@ fn card(cx: &Context<AgentPanel>) -> gpui_kit::Div {
 
 pub(super) struct ApprovalCardsRenderer;
 impl ApprovalCardsRenderer {
+    pub(super) fn list(
+        cards: Vec<AnyElement>,
+        window: &gpui_kit::Window,
+        cx: &Context<AgentPanel>,
+    ) -> Option<AnyElement> {
+        let pending = cards.len();
+        if pending == 0 {
+            return None;
+        }
+        Some(
+            v_flex()
+                .id("agent-approvals")
+                .test_support()
+                .w_full()
+                .min_w_0()
+                .flex_shrink_0()
+                .px_3()
+                .gap_1()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().warning)
+                        .child(format!("Waiting for you · {pending}")),
+                )
+                .child(
+                    v_flex()
+                        .id("agent-approval-list")
+                        .test_support()
+                        .w_full()
+                        .min_w_0()
+                        .min_h_0()
+                        .max_h(window.viewport_size().height * 0.35)
+                        .overflow_y_scroll()
+                        .gap_2()
+                        .children(cards),
+                )
+                .into_any_element(),
+        )
+    }
     /// A background session asks for a secret. The user types it here, or
     /// unlocks the vault when a saved secret answers it; the session never
     /// becomes a tab.
@@ -192,60 +239,72 @@ impl ApprovalCardsRenderer {
             .child(actions)
             .into_any_element()
     }
+    /// The card of tool call `token` of `thread`, while it waits for approval.
     pub(super) fn tool_card(
         thread: &Entity<AgentThread>,
-        approval: ToolApprovalCard,
-        target: String,
-        reusable: bool,
+        token: crate::thread::ApprovalToken,
         index: usize,
         cx: &mut Context<AgentPanel>,
-    ) -> AnyElement {
-        let token = approval.token();
-        let call = approval.call().clone();
-        let owner = thread.downgrade();
+    ) -> Option<AnyElement> {
+        let call = thread.read(cx).tool_approval_call(token)?.clone();
+        let (target, reusable) = thread.update(cx, |thread, cx| {
+            (
+                thread.describe_target(&call, cx),
+                !thread.unsafe_live_input(&call, cx),
+            )
+        });
         let (heading, exact, grant) = Self::tool_text(&call, &target);
         let exact = nocterm_ai::redact::redact(&exact);
-        card(cx)
-            .child(div().min_w_0().truncate().text_sm().child(heading))
-            .child(
-                h_flex().w_full().min_w_0().flex_wrap().gap_1().children(
-                    [
-                        (false, false, "Deny"),
-                        (true, false, "Allow once"),
-                        (true, true, grant),
-                    ]
-                    .into_iter()
-                    .filter(|(_, grant, _)| !grant || reusable)
-                    .map(|(allow, grant, label)| {
-                        let owner = owner.clone();
-                        Button::new((SharedString::from(format!("tool-{label}")), index))
-                            .custom(menu_variant(cx))
-                            .small()
-                            .max_w_full()
-                            .label(label)
-                            .on_click(cx.listener(move |_, _, _, cx| {
-                                if let Some(thread) = owner.upgrade() {
-                                    thread.update(cx, |thread, cx| {
-                                        thread.approve_tool(token, allow, grant, cx)
+        let weak = thread.downgrade();
+        Some(
+            card(cx)
+                .child(div().min_w_0().truncate().text_sm().child(heading))
+                .child(
+                    h_flex().w_full().min_w_0().flex_wrap().gap_1().children(
+                        [
+                            (ToolApprovalChoice::Deny, false, "Deny"),
+                            (ToolApprovalChoice::AllowOnce, false, "Allow once"),
+                            (ToolApprovalChoice::AllowForSession, true, grant),
+                        ]
+                        .into_iter()
+                        .filter(|(_, grant, _)| !grant || reusable)
+                        .map(|(choice, _, label)| {
+                            let thread = weak.clone();
+                            Button::new((SharedString::from(format!("tool-{label}")), index))
+                                .custom(menu_variant(cx))
+                                .small()
+                                .max_w_full()
+                                .label(label)
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    let _ = thread.update(cx, |thread, cx| {
+                                        if thread.tool_approval_call(token).is_some() {
+                                            thread.approve_tool(
+                                                token,
+                                                choice != ToolApprovalChoice::Deny,
+                                                choice == ToolApprovalChoice::AllowForSession
+                                                    && reusable,
+                                                cx,
+                                            );
+                                        }
                                     });
-                                }
-                            }))
-                    }),
-                ),
-            )
-            .child(
-                div()
-                    .id(("approval-command", index))
-                    .test_support()
-                    .w_full()
-                    .min_w_0()
-                    .max_h(px(64.))
-                    .overflow_x_scroll()
-                    .overflow_y_scroll()
-                    .text_xs()
-                    .child(exact),
-            )
-            .into_any_element()
+                                }))
+                        }),
+                    ),
+                )
+                .child(
+                    div()
+                        .id(("approval-command", index))
+                        .test_support()
+                        .w_full()
+                        .min_w_0()
+                        .max_h(px(64.))
+                        .overflow_x_scroll()
+                        .overflow_y_scroll()
+                        .text_xs()
+                        .child(exact),
+                )
+                .into_any_element(),
+        )
     }
     fn tool_text(call: &TerminalCall, target: &str) -> (&'static str, String, &'static str) {
         match call {
@@ -300,6 +359,109 @@ impl ApprovalCardsRenderer {
                 "Allow for this server",
             ),
             TerminalCall::ListTerminals => ("List terminals", String::new(), "Allow"),
+            TerminalCall::TransferFiles(request) => transfer_text(request, target),
+            TerminalCall::ReadTransfer(request) => (
+                "Read transfer",
+                request.transfer_id.clone(),
+                "Allow reading",
+            ),
+            TerminalCall::CancelTransfer(request) => (
+                "Cancel transfer",
+                request.transfer_id.clone(),
+                "Allow cancelling",
+            ),
+            TerminalCall::ListFiles(_)
+            | TerminalCall::ReadFile(_)
+            | TerminalCall::WriteFile(_)
+            | TerminalCall::EditFile(_)
+            | TerminalCall::MakeDirectory(_)
+            | TerminalCall::DeletePath(_)
+            | TerminalCall::MovePath(_) => file_text(call, target),
         }
     }
+}
+
+/// The most of a file's new content or an edit's text a card shows.
+const SHOWN: usize = 4000;
+
+fn shown(text: &str) -> String {
+    match text.char_indices().nth(SHOWN) {
+        Some((end, _)) => format!("{}\n…", &text[..end]),
+        None => text.to_owned(),
+    }
+}
+
+/// A file call on the terminal `target`: the path, and for a change what it writes.
+fn file_text(call: &TerminalCall, target: &str) -> (&'static str, String, &'static str) {
+    const READ: &str = "Allow reading on this terminal";
+    const CHANGE: &str = "Allow file changes on this terminal";
+    match call {
+        TerminalCall::ListFiles(request) => {
+            ("List files", format!("{target}: {}", request.path), READ)
+        }
+        TerminalCall::ReadFile(request) => {
+            ("Read file", format!("{target}: {}", request.path), READ)
+        }
+        TerminalCall::WriteFile(request) => (
+            if request.overwrite {
+                "Replace file"
+            } else {
+                "Create file"
+            },
+            format!(
+                "{target}: {}\n{} bytes\n\n{}",
+                request.path,
+                request.content.len(),
+                shown(&request.content)
+            ),
+            CHANGE,
+        ),
+        TerminalCall::EditFile(request) => (
+            "Edit file",
+            format!(
+                "{target}: {}{}\n\nReplace:\n{}\n\nWith:\n{}",
+                request.path,
+                if request.replace_all {
+                    " (every occurrence)"
+                } else {
+                    ""
+                },
+                shown(&request.old_text),
+                shown(&request.new_text)
+            ),
+            CHANGE,
+        ),
+        TerminalCall::MakeDirectory(request) => (
+            "Create folder",
+            format!("{target}: {}", request.path),
+            CHANGE,
+        ),
+        TerminalCall::DeletePath(request) => {
+            ("Delete", format!("{target}: {}", request.path), CHANGE)
+        }
+        TerminalCall::MovePath(request) => (
+            "Move",
+            format!("{target}: {} → {}", request.from, request.to),
+            CHANGE,
+        ),
+        _ => ("File", target.to_owned(), CHANGE),
+    }
+}
+
+/// `target` names the source and destination terminals of the transfer.
+fn transfer_text(request: &TransferFiles, target: &str) -> (&'static str, String, &'static str) {
+    let sources: String = request
+        .sources
+        .iter()
+        .map(|source| format!("\n  {source}"))
+        .collect();
+    let existing = if request.overwrite { "replace" } else { "skip" };
+    (
+        "Transfer files",
+        format!(
+            "{target}\nSources:{sources}\nInto: {}\nExisting files: {existing}",
+            request.destination
+        ),
+        "Allow transfers between these terminals",
+    )
 }

@@ -49,6 +49,62 @@ fn missing_libraries_are_empty_and_bad_roots_are_nonfatal_diagnostics() {
     assert!(catalog.entries().is_empty());
     assert!(catalog.problems()[0].error.source().is_some());
 }
+
+#[test]
+fn catalog_limits_report_partial_discovery_instead_of_retaining_every_variant() {
+    let root = tempfile::tempdir().unwrap();
+    let dirs = ThemeDirs {
+        user: root.path().join("user"),
+        installed: root.path().join("installed"),
+    };
+    fs::create_dir(&dirs.user).unwrap();
+    let themes: Vec<_> = (0..2_100)
+        .map(|n| format!(r#"{{"name":"Theme {n}","appearance":"dark","style":{{}}}}"#))
+        .collect();
+    fs::write(
+        dirs.user.join("many.json"),
+        format!(r#"{{"themes":[{}]}}"#, themes.join(",")),
+    )
+    .unwrap();
+    let catalog = scan(&dirs);
+    assert_eq!(catalog.entries().len(), 2_048);
+    assert!(
+        catalog
+            .problems()
+            .iter()
+            .any(|problem| problem.error.to_string().contains("variants"))
+    );
+}
+
+#[test]
+fn reload_restores_the_previous_pack_after_an_interrupted_directory_switch() {
+    let root = tempfile::tempdir().unwrap();
+    let dirs = ThemeDirs {
+        user: root.path().join("user"),
+        installed: root.path().join("installed"),
+    };
+    let pack = dirs.installed.join("old");
+    fs::create_dir_all(pack.join("themes")).unwrap();
+    fs::write(
+        pack.join("extension.toml"),
+        "id='old'\nname='Old'\nversion='1'\n",
+    )
+    .unwrap();
+    fs::write(
+        pack.join("themes/a.json"),
+        r#"{"themes":[{"name":"Restored","appearance":"dark","style":{}}]}"#,
+    )
+    .unwrap();
+    let backup = dirs.installed.join(".backup-interrupted");
+    fs::create_dir(&backup).unwrap();
+    fs::write(backup.join("destination"), b"old").unwrap();
+    fs::rename(&pack, backup.join("previous")).unwrap();
+    let catalog = scan(&dirs);
+    assert!(catalog.find("Restored", Appearance::Dark).is_some());
+    assert!(pack.is_dir());
+    assert!(!backup.exists());
+    assert!(scan(&dirs).find("Restored", Appearance::Dark).is_some());
+}
 #[test]
 fn oversized_originals_are_rejected_with_a_typed_problem() {
     let root = tempfile::tempdir().unwrap();

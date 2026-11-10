@@ -1,6 +1,7 @@
 //! The `[settings]` table of a package, mapped onto the shared settings schema.
 //!
-//! The kinds are `toggle`, `choice`, `multi-choice`, `number` and `text`; the limits and the
+//! The kinds are `toggle`, `choice`, `multi-choice`, `number`, `text` and `secret` (masked
+//! text the plugin never reads, which a `[network]` table sends); the limits and the
 //! validation are the schema's. Labels, help and option labels are sanitized, at most 48 and 160
 //! characters.
 
@@ -26,6 +27,8 @@ pub enum FieldKindName {
     MultiChoice,
     Number,
     Text,
+    /// Masked single-line text the plugin never reads: the credential a `[network]` table sends.
+    Secret,
 }
 
 /// The default of a field.
@@ -195,10 +198,12 @@ fn field(dto: &FieldDto) -> Result<FieldSpec, SettingsError> {
             })?,
         },
         FieldKindName::Number => number(dto)?,
-        FieldKindName::Text => FieldKind::Text {
+        FieldKindName::Text | FieldKindName::Secret => FieldKind::Text {
             default: match &dto.default {
                 None => Cow::Borrowed(""),
-                Some(DefaultDto::Text(value)) => Cow::Owned(value.clone()),
+                Some(DefaultDto::Text(value)) if kind_name == FieldKindName::Text => {
+                    Cow::Owned(value.clone())
+                }
                 Some(_) => return Err(SettingsError::Default { key }),
             },
             max_len: dto.max_len.ok_or(SettingsError::Missing {
@@ -209,6 +214,7 @@ fn field(dto: &FieldDto) -> Result<FieldSpec, SettingsError> {
                 .placeholder
                 .as_deref()
                 .map(|text| Cow::Owned(sanitize_display(text, MAX_HELP))),
+            secret: kind_name == FieldKindName::Secret,
         },
     };
     Ok(FieldSpec {
@@ -268,8 +274,9 @@ fn options(dto: &FieldDto) -> Cow<'static, [ChoiceOption]> {
 
 /// Refuses a key that belongs to another kind, so a typo is an error and not a silent no-op.
 fn stray(dto: &FieldDto, kind: FieldKindName) -> Result<(), SettingsError> {
-    use FieldKindName::{Choice, MultiChoice, Number, Text};
+    use FieldKindName::{Choice, MultiChoice, Number, Secret, Text};
     let choosing = matches!(kind, Choice | MultiChoice);
+    let typing = matches!(kind, Text | Secret);
     let found = [
         ("options", !dto.options.is_empty() && !choosing),
         ("ordered", dto.ordered.is_some() && kind != MultiChoice),
@@ -281,8 +288,8 @@ fn stray(dto: &FieldDto, kind: FieldKindName) -> Result<(), SettingsError> {
         ("max", dto.max.is_some() && kind != Number),
         ("step", dto.step.is_some() && kind != Number),
         ("unit", dto.unit.is_some() && kind != Number),
-        ("max_len", dto.max_len.is_some() && kind != Text),
-        ("placeholder", dto.placeholder.is_some() && kind != Text),
+        ("max_len", dto.max_len.is_some() && !typing),
+        ("placeholder", dto.placeholder.is_some() && !typing),
     ];
     match found.into_iter().find(|(_, stray)| *stray) {
         Some((field, _)) => Err(SettingsError::Stray {

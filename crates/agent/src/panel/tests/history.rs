@@ -1,3 +1,4 @@
+mod search;
 use super::*;
 use crate::thread::AgentThread;
 use nocterm_ai::model::content::Content;
@@ -259,7 +260,12 @@ fn assert_unaccepted_prompts_leave_no_history(
     assert!(thread.history_entries().is_empty());
     thread.send("  ".into(), cx);
     assert!(thread.history_entries().is_empty());
-    thread.begin_composer_edit(Vec::new(), thread.composer().attachments().to_vec(), cx);
+    thread.begin_composer_edit(
+        Vec::new(),
+        Vec::new(),
+        thread.composer().attachments().to_vec(),
+        cx,
+    );
     thread.send("Queued before the session is ready".into(), cx);
     assert_eq!(thread.composer().queue().len(), 1);
     let ids = thread.queued_prompt_ids().collect::<Vec<_>>();
@@ -272,7 +278,7 @@ fn assert_unaccepted_prompts_leave_no_history(
 
 #[gpui_kit::test]
 fn history_records_only_accepted_prompts_and_keeps_model_snapshot(cx: &mut TestAppContext) {
-    let f = fixture_with_width(cx, 18., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 18., workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update(|cx| {
         let thread = f.panel.read(cx).current().unwrap();
@@ -408,35 +414,7 @@ fn second_history_window(
     f: &Fixture,
     cx: &mut TestAppContext,
 ) -> (AnyWindowHandle, Entity<AgentPanel>) {
-    let mut panel = None;
-    let (handle, _) = cx.update(|cx| {
-        gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
-            cx.new(|cx| {
-                let mut workspace = Workspace::new(
-                    crate::panel::tests::deps(f.installation.layout.clone()),
-                    window,
-                    cx,
-                );
-                let owner = cx.entity().downgrade();
-                let source = workspace.general_surface_source(cx);
-                let view = cx.new(|cx| {
-                    AgentPanel::new(
-                        f._directory
-                            .host(owner, f.installation.installed.clone(), source),
-                        window,
-                        cx,
-                    )
-                });
-                crate::panel::tests::host_panel(&mut workspace, &view, window, cx);
-                workspace.set_panel_available(&crate::plugin::CHATS.id, true, window, cx);
-                workspace.toggle_panel(&crate::plugin::CHATS.id, window, cx);
-                panel = Some(view);
-                workspace
-            })
-        })
-        .unwrap()
-    });
-    let panel = panel.unwrap();
+    let (handle, panel) = open_window_panel(f, cx);
     cx.update_window(handle, |_, window, cx| {
         window.resize(gpui_kit::size(gpui_kit::px(1800.), gpui_kit::px(900.)));
         let focus = panel.read(cx).composer_focus(cx);
@@ -493,7 +471,7 @@ fn settle_scheduled_history(
 #[gpui_kit::test]
 fn shared_history_width_refreshes_painted_windows_without_scalar_echo(cx: &mut TestAppContext) {
     use gpui_kit::{px, size};
-    let f = fixture_with_width(cx, 60., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 60., workspace_resolver(), image_deps());
     let layout = &f.installation.layout;
     cx.update(|cx| cx.set_reduce_motion(true));
     new_chat(&f, cx);
@@ -573,7 +551,7 @@ fn shared_history_width_refreshes_painted_windows_without_scalar_echo(cx: &mut T
 #[gpui_kit::test]
 fn closing_one_window_keeps_the_surviving_history_layout_subscription(cx: &mut TestAppContext) {
     use gpui_kit::px;
-    let f = fixture_with_width(cx, 60., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 60., workspace_resolver(), image_deps());
     new_chat(&f, cx);
     cx.update(|cx| {
         cx.set_reduce_motion(true);
@@ -624,7 +602,7 @@ fn shared_history_refresh_during_native_drag_keeps_later_pointer_events_safe(
     cx: &mut TestAppContext,
 ) {
     use gpui_kit::{InputEvent as _, MouseButton, MouseDownEvent, MouseUpEvent, point, px, size};
-    let f = fixture_with_width(cx, 60., usage_source(), workspace_resolver(), image_deps());
+    let f = fixture_with_width(cx, 60., workspace_resolver(), image_deps());
     let layout = &f.installation.layout;
     cx.update(|cx| cx.set_reduce_motion(true));
     new_chat(&f, cx);

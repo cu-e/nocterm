@@ -1,33 +1,21 @@
 //! Structured jobs and their watchdog have one bounded owner; consumers receive snapshots only.
-use super::super::execution::jobs;
 use gpui::Task;
-pub(in crate::thread) use jobs::Snapshot as CommandSnapshot;
+pub(in crate::thread) use jobs::CommandSnapshot;
 use nocterm_ai::ToolFailure;
+use nocterm_session::command_jobs as jobs;
 use nocterm_session::{ExecRequest, HostExec};
 use std::sync::Arc;
-#[derive(Default)]
 pub(super) struct CommandJobs {
-    jobs: jobs::Jobs,
+    jobs: Box<dyn jobs::CommandJobs>,
     watch: Option<Task<()>>,
 }
 pub(in crate::thread) use jobs::CommandStart;
 impl CommandJobs {
+    pub(super) fn new(jobs: Box<dyn jobs::CommandJobs>) -> Self {
+        Self { jobs, watch: None }
+    }
     pub(super) fn revoke_replaced(&self, current: &[(String, Option<Arc<dyn HostExec>>)]) {
-        let revoked = self
-            .jobs
-            .active()
-            .filter_map(|(id, executor)| {
-                let replacement = current
-                    .iter()
-                    .find(|(candidate, _)| candidate == id)
-                    .and_then(|(_, executor)| executor.as_ref());
-                (!replacement.is_some_and(|replacement| Arc::ptr_eq(replacement, executor)))
-                    .then_some(id.to_owned())
-            })
-            .collect::<Vec<_>>();
-        for id in revoked {
-            self.jobs.cancel_terminal(&id);
-        }
+        self.jobs.revoke_replaced(current);
     }
 
     pub(super) fn start(
@@ -37,22 +25,26 @@ impl CommandJobs {
         request: ExecRequest,
         deadline: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> Result<CommandStart, ToolFailure> {
-        Ok(self.jobs.start(terminal, executor, request, deadline)?)
+        self.jobs
+            .start(terminal, executor, request, Box::pin(deadline))
+            .map_err(|error| error.to_string().into())
     }
     pub(super) fn snapshot(
         &self,
         id: &str,
         terminal: &str,
     ) -> Result<CommandSnapshot, ToolFailure> {
-        Ok(self.jobs.get(id, terminal)?.snapshot())
+        self.jobs
+            .snapshot(id, terminal)
+            .map_err(|error| error.to_string().into())
     }
     pub(super) fn cancel(&self, id: &str, terminal: &str) -> Result<CommandSnapshot, ToolFailure> {
-        let job = self.jobs.get(id, terminal)?;
-        job.cancel(jobs::State::Cancelled);
-        Ok(job.snapshot())
+        self.jobs
+            .cancel(id, terminal)
+            .map_err(|error| error.to_string().into())
     }
-    pub(super) fn active(&self) -> impl Iterator<Item = (&str, &Arc<dyn HostExec>)> {
-        self.jobs.active()
+    pub(super) fn has_active(&self) -> bool {
+        self.jobs.has_active()
     }
 
     pub(super) fn cancel_all(&mut self) {
@@ -76,7 +68,8 @@ mod tests {
     #[test]
     fn admission_bounds_original_jobs_and_cancellation_retains_readable_snapshots() {
         let executor = Arc::new(nocterm_session::testing::FakeExec::default());
-        let mut jobs = CommandJobs::default();
+        let mut jobs =
+            CommandJobs::new(Box::<nocterm_session::testing::ScriptedCommandJobs>::default());
         let start = |jobs: &mut CommandJobs| {
             jobs.start(
                 "terminal".into(),
@@ -101,9 +94,9 @@ mod tests {
         jobs.cancel_all();
         assert_eq!(
             jobs.snapshot(&id, "terminal").unwrap().state(),
-            jobs::State::Cancelled
+            jobs::CommandState::Cancelled
         );
-        assert!(jobs.active().next().is_none());
+        assert!(!jobs.has_active());
         assert!(start(&mut jobs).is_ok());
         assert!(
             executor.requests().is_empty(),

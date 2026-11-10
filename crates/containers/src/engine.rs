@@ -3,7 +3,11 @@
 use futures::future::try_join;
 use nocterm_session::{ExecOutput, ExecRequest, HostExec};
 
-use crate::{ContainersError, model::Snapshot, parse};
+use crate::{
+    Changes, ContainersError,
+    model::{Container, Image, Snapshot},
+    parse,
+};
 
 /// The most a listing may print; hosts with more containers than this
 /// describes are not served.
@@ -45,6 +49,14 @@ impl Action {
             Self::Pause => "Pause",
             Self::Unpause => "Unpause",
             Self::Remove | Self::RemoveImage => "Remove",
+        }
+    }
+
+    /// The listings doing it changes.
+    pub fn changes(self) -> Changes {
+        match self {
+            Self::RemoveImage => Changes::ALL,
+            _ => Changes::CONTAINERS,
         }
     }
 
@@ -110,29 +122,39 @@ impl Engine {
 
     /// Every container, running or not, and every image.
     pub async fn snapshot(self, exec: &dyn HostExec) -> Result<Snapshot, ContainersError> {
-        let list = |what: &str, all: &str| {
-            let request = self
-                .command()
-                .arg(what)
-                .arg(all)
-                .arg("--format")
-                .arg("json");
-            run(exec, request)
-        };
-        let (containers, images) = try_join(list("ps", "--all"), list("images", "--all")).await?;
-        Ok(Snapshot {
-            containers: parse::containers(&containers).map_err(ContainersError::Parse)?,
-            images: parse::images(&images).map_err(ContainersError::Parse)?,
-        })
+        let (containers, images) = try_join(self.containers(exec), self.images(exec)).await?;
+        Ok(Snapshot { containers, images })
     }
 
-    /// A stream that prints whenever a container or image changes, until it
-    /// is dropped.
+    /// Every container, running or not.
+    pub async fn containers(self, exec: &dyn HostExec) -> Result<Vec<Container>, ContainersError> {
+        let output = run(exec, self.listing("ps")).await?;
+        parse::containers(&output).map_err(ContainersError::Parse)
+    }
+
+    /// Every image, intermediate ones included.
+    pub async fn images(self, exec: &dyn HostExec) -> Result<Vec<Image>, ContainersError> {
+        let output = run(exec, self.listing("images")).await?;
+        parse::images(&output).map_err(ContainersError::Parse)
+    }
+
+    fn listing(self, what: &str) -> ExecRequest {
+        self.command().args([what, "--all", "--format", "json"])
+    }
+
+    /// A stream of what happens to containers and images, one JSON object
+    /// per line, until it is dropped; [`EventReader`](crate::EventReader)
+    /// reads it.
     pub async fn events(self, exec: &dyn HostExec) -> Result<ExecOutput, ContainersError> {
         let request = self
             .command()
             .args(["events", "--filter", "type=container"])
-            .args(["--filter", "type=image"]);
+            .args(["--filter", "type=image", "--format"])
+            .arg(match self {
+                // A template, which every Docker version reads.
+                Self::Docker => "{{json .}}",
+                Self::Podman => "json",
+            });
         Ok(exec.exec(request).await?)
     }
 

@@ -87,6 +87,8 @@ impl Access {
     fn new(local: bool) -> Rc<Self> {
         Rc::new(Self {
             info: RefCell::new(Some(TerminalInfo {
+                source: None,
+                source_current: true,
                 expected: ExpectedSession::new(0u64.into(), 0),
                 title: if local { "Local" } else { "Remote" }.into(),
                 local,

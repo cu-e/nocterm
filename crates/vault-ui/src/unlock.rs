@@ -1,5 +1,6 @@
 //! Unlocking and locking the vault from anywhere: the command palette, or a
 //! sign-in prompt that could use a saved secret.
+use crate::KeysMissingRemedy;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, FocusHandle, Focusable, Render, SharedString, Window,
@@ -18,18 +19,18 @@ use gpui_kit::{
 use nocterm_session::Secret;
 use nocterm_ui::IconName;
 use nocterm_vault::{DeviceAvailability, DeviceUnlockError, VaultAccess, VaultError};
-use nocterm_workspace::{LockVault, OpenVault, UnlockVault};
+use nocterm_workspace::{LockVault, OpenVault, UnlockVault, Workspace};
 use std::sync::Arc;
 
 /// Lets `workspace::UnlockVault` and `workspace::LockVault` work in any
-/// window.
-pub(crate) fn init(service: Arc<dyn VaultAccess>, cx: &mut App) {
+/// window that has no vault of its own.
+pub(crate) fn bind_app(service: Arc<dyn VaultAccess>, cx: &mut App) {
     let unlock_service = service.clone();
     cx.on_action(move |_: &UnlockVault, cx| {
         if let Some(window) = cx.active_window() {
             let service = unlock_service.clone();
             cx.defer(move |cx| {
-                let _ = window.update(cx, |_, window, cx| open(service, window, cx));
+                let _ = window.update(cx, |_, window, cx| open(service, None, window, cx));
             });
         }
     });
@@ -39,13 +40,45 @@ pub(crate) fn init(service: Arc<dyn VaultAccess>, cx: &mut App) {
     });
 }
 
+/// Makes `workspace::UnlockVault` and `workspace::LockVault` act on `service`
+/// in the window of `workspace`. The workspace handles an action before the
+/// application does, so this vault answers there and the application's does not.
+pub(crate) fn bind_workspace(
+    service: Arc<dyn VaultAccess>,
+    keys_missing: Option<KeysMissingRemedy>,
+    workspace: &mut Workspace,
+) {
+    let unlock_service = service.clone();
+    workspace.register_action(move |_, _: &UnlockVault, window, cx| {
+        let service = unlock_service.clone();
+        let keys_missing = keys_missing.clone();
+        window.defer(cx, move |window, cx| {
+            open(service, keys_missing, window, cx)
+        });
+    });
+    workspace.register_action(move |_, _: &LockVault, _, cx| {
+        service.lock();
+        cx.refresh_windows();
+    });
+}
+
 /// Asks for the master password in a small dialog. A vault that does not
-/// exist yet is created in Settings, so that is opened instead.
-pub(crate) fn open(service: Arc<dyn VaultAccess>, window: &mut Window, cx: &mut App) {
+/// exist yet is created in Settings, so that is opened instead, unless it cannot be
+/// created here: then the `keys_missing` remedy runs.
+pub(crate) fn open(
+    service: Arc<dyn VaultAccess>,
+    keys_missing: Option<KeysMissingRemedy>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     if service.is_unlocked() {
         return;
     }
     if !service.exists() {
+        if let Some(remedy) = keys_missing {
+            remedy(window, cx);
+            return;
+        }
         window.dispatch_action(Box::new(OpenVault), cx);
         return;
     }

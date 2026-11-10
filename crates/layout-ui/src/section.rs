@@ -26,7 +26,7 @@ use crate::{
     preview::Preview,
     rename::{RenameDraft, Renamed},
     selection::Selection,
-    snapshot::Snapshot,
+    snapshot::{Snapshot, Snapshots},
     tray::Tray,
     user_facts::SharedFacts,
 };
@@ -68,7 +68,10 @@ pub struct LayoutEditorSection {
     focus: FocusHandle,
     /// The width the bar preview was drawn with, which decides how much of it is shown.
     fit: Fit,
+    /// What is drawn of the layout shown, until the settings, the plugins or the choice change.
+    snapshots: Snapshots,
     _subscriptions: Vec<Subscription>,
+    observed: (Option<PresetId>, PluginEnablement),
 }
 
 impl LayoutEditorSection {
@@ -94,6 +97,10 @@ impl LayoutEditorSection {
             }),
             cx,
         );
+        let observed = (
+            settings.setting::<LayoutSettings>(cx).active.clone(),
+            settings.setting::<PluginEnablement>(cx).clone(),
+        );
         Self {
             settings,
             source,
@@ -107,18 +114,26 @@ impl LayoutEditorSection {
             notice: None,
             focus: cx.focus_handle(),
             fit: Fit::default(),
+            snapshots: Snapshots::default(),
             _subscriptions: vec![changed, plugins],
+            observed,
         }
     }
 
-    pub(crate) fn snapshot(&self, cx: &App) -> Snapshot {
-        Snapshot::new(
-            self.settings.setting::<LayoutSettings>(cx),
-            self.settings.setting::<PluginEnablement>(cx),
-            self.legacy_swapped,
-            self.selection.shown(),
-            &self.catalog,
-        )
+    /// What the editor shows of the layout shown, built once for each state of the settings,
+    /// the plugins and the layout picked.
+    pub(crate) fn snapshot(&mut self, cx: &App) -> Rc<Snapshot> {
+        let (settings, catalog, shown) = (&self.settings, &self.catalog, self.selection.shown());
+        self.snapshots
+            .get(settings.revision(cx), catalog, shown, || {
+                Snapshot::new(
+                    settings.setting::<LayoutSettings>(cx),
+                    settings.setting::<PluginEnablement>(cx),
+                    self.legacy_swapped,
+                    shown,
+                    catalog,
+                )
+            })
     }
 
     pub(crate) fn mode(&self) -> &Mode {
@@ -306,13 +321,22 @@ impl LayoutEditorSection {
     /// Forgets the history when the layouts changed by someone else, once no write of ours is
     /// on its way.
     fn stored_changed(&mut self, cx: &mut Context<Self>) {
+        let active = self.settings.setting::<LayoutSettings>(cx).active.clone();
+        let enablement = self.settings.setting::<PluginEnablement>(cx);
+        let mut changed = self.observed.0 != active || self.observed.1 != *enablement;
+        if changed {
+            self.observed = (active, enablement.clone());
+        }
         if self.pending == 0 {
-            let presets = self.settings.setting::<LayoutSettings>(cx).presets.clone();
-            if self.history.observe(&presets) {
+            let presets = &self.settings.setting::<LayoutSettings>(cx).presets;
+            if self.history.observe(presets) {
                 self.notice = None;
+                changed = true;
             }
         }
-        cx.notify();
+        if changed {
+            cx.notify();
+        }
     }
 
     pub(crate) fn dismiss_notice(&mut self, cx: &mut Context<Self>) {
@@ -479,6 +503,7 @@ impl LayoutEditorSection {
             Subject::Group(_) => Some(subject.clone()),
             Subject::Contribution(id) => match self.catalog.contribution(id)?.kind() {
                 ContributionKind::Widget => Some(subject.clone()),
+                ContributionKind::Toolbar => None,
                 ContributionKind::Panel => snapshot.group_of(id).map(|group| {
                     if group.is_solo() {
                         subject.clone()
@@ -554,7 +579,7 @@ impl Focusable for LayoutEditorSection {
 
 impl Render for LayoutEditorSection {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let snapshot = Rc::new(self.snapshot(cx));
+        let snapshot = self.snapshot(cx);
         let commands = Commands::new(cx.weak_entity());
         v_flex()
             .id("layout-editor")

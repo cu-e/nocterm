@@ -85,10 +85,14 @@ assert.equal(unknownHistoryBase.status, 1, 'unknown push ancestry must fail befo
 assert.match(unknownHistoryBase.stdout, /::error::/);
 assert.equal(unknownHistoryBase.stderr, '', 'unknown ancestry must not run Git or Python');
 assert.ok(ci.jobs['ci-passed'].needs.includes('integration-history'));
-assert.ok(ci.jobs['ci-passed'].needs.includes('plugin-api-compat'));
-const compat = ci.jobs['plugin-api-compat'];
+const runs = pattern => job => (job.steps ?? []).some(step => pattern.test(step.run ?? ''));
+const [compatName, compat] = Object.entries(ci.jobs).find(([, job]) => runs(/check-plugin-api-compat\.py/)(job));
+assert.ok(ci.jobs['ci-passed'].needs.includes(compatName));
 assert.equal(compat.steps[0].with['fetch-depth'], 0, 'the release tags are needed to find the base');
-assert.ok(compat.steps.some(step => /check-plugin-api-compat\.py/.test(step.run ?? '')));
+// Every job that CI runs gates the aggregate check.
+for (const name of Object.keys(ci.jobs).filter(name => name !== 'ci-passed')) {
+  assert.ok(ci.jobs['ci-passed'].needs.includes(name), `CI passed must wait for ${name}`);
+}
 // User plugins stay out of release builds until the external security review is done. A feature
 // can be switched on by name, by `--all-features`, or by a value the step passes through `env` or
 // `with`; the default features are checked by the xtask isolation rule (compile-out).

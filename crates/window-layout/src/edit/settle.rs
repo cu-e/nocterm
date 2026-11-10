@@ -2,11 +2,11 @@
 
 use std::collections::BTreeSet;
 
-use nocterm_plugin_model::{ContributionId, PluginSet, Zone};
+use nocterm_plugin_model::{ContributionId, Edge, PluginSet, Zone};
 
 use crate::{
     Bar, BarItem, BuiltIn, GroupEntry, LayoutPreset, ResolvedItem, ResolvedLayout, ResolvedMember,
-    resolve,
+    Toolbars, resolve,
     resolve::{ZONES, default_side},
 };
 
@@ -38,6 +38,7 @@ pub(super) fn settle(preset: &LayoutPreset, catalog: &PluginSet) -> LayoutPreset
         .iter()
         .flat_map(|zone| preset.bar.zone(*zone))
         .flat_map(ids_of)
+        .chain(toolbar_ids(&preset.toolbars).cloned())
         .filter(|id| !catalog.is_placeable(id) && !catalog.keeps_unavailable(id));
     for id in held.cloned().chain(unknown) {
         if !tray.contains(&id) {
@@ -46,7 +47,26 @@ pub(super) fn settle(preset: &LayoutPreset, catalog: &PluginSet) -> LayoutPreset
     }
     let mut settled = explicit(&layout, tray, preset.clone());
     keep_unavailable(&mut settled.bar, &preset.bar, catalog);
+    keep_unavailable_toolbars(&mut settled.toolbars, &preset.toolbars, catalog);
     settled
+}
+
+fn toolbar_ids(toolbars: &Toolbars) -> impl Iterator<Item = &ContributionId> {
+    Edge::ALL
+        .into_iter()
+        .flat_map(|edge| toolbars.edge(edge).iter())
+}
+
+/// Keeps the toolbars of user plugins that a held run cannot know along the edge that named
+/// them, after the ones it shows, as [`keep_unavailable`] does for the bar.
+fn keep_unavailable_toolbars(settled: &mut Toolbars, before: &Toolbars, catalog: &PluginSet) {
+    for edge in Edge::ALL {
+        for id in before.edge(edge) {
+            if catalog.keeps_unavailable(id) && settled.edge_of(id).is_none() {
+                settled.edge_mut(edge).push(id.clone());
+            }
+        }
+    }
 }
 
 /// The contribution ids a bar entry names.
@@ -80,6 +100,12 @@ fn explicit(
         },
         tray,
         open: layout.open().to_vec(),
+        toolbars: Toolbars {
+            top: layout.toolbars(Edge::Top).to_vec(),
+            bottom: layout.toolbars(Edge::Bottom).to_vec(),
+            left: layout.toolbars(Edge::Left).to_vec(),
+            right: layout.toolbars(Edge::Right).to_vec(),
+        },
         ..base
     }
 }

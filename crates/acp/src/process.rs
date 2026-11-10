@@ -210,6 +210,7 @@ mod tests {
                 args,
                 env: BTreeMap::new(),
                 inherit_env: Vec::new(),
+                hub: None,
             },
             working_directory: directory.to_owned(),
         }

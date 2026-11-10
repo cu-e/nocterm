@@ -57,7 +57,7 @@ acceptance; a later record supersedes an earlier one.
 | [0056](0056-owner-settings-pages.md) | Settings controls and pure schemas live with their actual owners |
 | [0057](0057-checked-settings-catalog.md) | Checked ordered settings catalogs and explicit settings composition (page list and navigation superseded in part by 0086, Appearance sections by 0087) |
 | [0058](0058-neutral-agent-protocol-boundary.md) | Agent protocol types stop at the ACP adapter |
-| [0059](0059-architecture-procedure-skills.md) | Architecture rules are applied through committed procedure skills and guards |
+| [0059](0059-architecture-procedure-skills.md) | Architecture rules are applied through committed procedure skills and guards (orchestration/resources superseded by 0132; procedures refined by 0135) |
 | [0060](0060-ssh-jump-host-routes.md) | SSH jump-host routes are resolved from saved profiles before opening and established by the SSH adapter |
 | [0061](0061-agent-profiles-and-directory.md) | Agent profiles, an injected catalog and one directory of available agents |
 | [0062](0062-terminal-contracts-below-the-workspace.md) | Terminal and connection contracts live below the window shell |
@@ -85,9 +85,74 @@ acceptance; a later record supersedes an earlier one.
 | [0086](0086-plugin-enablement-and-the-plugins-page.md) | Plugin enablement is app-wide and the Plugins page lists plugins with their own pages nested under it |
 | [0087](0087-status-bar-and-panels-editor.md) | The status bar and panels are edited in Appearance through the layout rules |
 | [0088](0088-wall-clock-contract-and-the-clock-plugin.md) | The wall clock is a foundation contract read by a local adapter, and the Clock is a plugin |
-| [0089](0089-user-plugin-contract.md) | User plugins are declarative packages over a closed, isolated contract |
+| [0089](0089-user-plugin-contract.md) | User plugins are declarative packages over a closed, isolated contract (the label inside a panel superseded by 0154) |
 | [0090](0090-user-plugin-host-and-passive-providers.md) | The plugin host brokers every effect, and providers only read what the UI already shows |
 | [0091](0091-user-plugin-code-runs-in-process-on-wasmi.md) | User plugin code runs in-process on wasmi behind the runtime port |
 | [0092](0092-plugin-sdk-and-developer-sessions.md) | The plugin SDK is a guest-only crate, and a developer session keeps its plugin and settings in memory |
-| [0093](0093-user-plugins-start-off-and-the-api-stays-compatible.md) | User plugins start off, safe mode beats the switch, and the API surface stays compatible |
+| [0093](0093-user-plugins-start-off-and-the-api-stays-compatible.md) | User plugins start off, safe mode beats the switch, and the API surface stays compatible (a held run without the install button superseded by 0153; the separate User section superseded by 0154) |
 | [0094](0094-panels-stand-alone-and-the-bar-preview-is-the-editor.md) | Panels stand alone or in groups the user makes, and the bar preview is the editor |
+| [0095](0095-attached-sessions-restore-and-detach.md) | Attached sessions restore their screen and detach on close |
+| [0096](0096-hub-contract-outside-the-workspace.md) | The hub contract lives outside the workspace and only the hub adapter speaks it |
+| [0097](0097-a-window-belongs-to-one-environment.md) | A window belongs to one environment, local or one hub (superseded by 0099) |
+| [0098](0098-windows-and-their-environments-are-restored-after-a-restart.md) | Windows and their environments are restored after a restart (superseded by 0099) |
+| [0099](0099-windows-have-no-environments.md) | Windows have no environments: hub sessions live in the ordinary window (supersedes 0097 and 0098; superseded by 0104) |
+| [0100](0100-the-hub-is-a-route-step.md) | The hub is a route step: the first connection of an SSH route can be a relay (relay node superseded by 0148) |
+| [0101](0101-profiles-synchronize-through-a-replica-beside-the-local-document.md) | Profiles synchronize through a replica beside the local document (scopes superseded by 0149) |
+| [0102](0102-ssh-keys-are-kept-in-the-vault.md) | SSH keys are kept in the vault; the editor receives them through `VaultSshKeys` |
+| [0103](0103-account-data-is-sealed-on-the-device.md) | Account data is sealed on the device: the hub keeps ciphertext, and one chosen server keeps the vault and the profiles |
+| [0104](0104-a-window-shows-one-environment.md) | A window shows one environment: this computer or the account of one hub (supersedes 0099) |
+| [0105](0105-provider-usage-through-acp-only.md) | Provider usage reaches Nocterm only through ACP (partially supersedes 0061) |
+| [0106](0106-shared-terminal-tool-ownership.md) | Terminal byte state and command execution have shared headless owners |
+| [0107](0107-cloud-run-authority-and-host-controlled-ports.md) | Cloud run authority and effects have pure owners and host-controlled ports (superseded by 0148) |
+| [0108](0108-explicit-cloud-api-engine.md) | Cloud API engines expose completed turns to the host (superseded by 0148) |
+| [0109](0109-native-cloud-journal-and-effect-recovery.md) | Cloud commits and retained effects share one native durable journal (superseded by 0148) |
+| [0110](0110-local-history-environment-partitions.md) | Local history captures its device or account environment |
+| [0112](0112-purpose-bound-ssh-login-and-captured-sources.md) | Purpose-bound SSH login and captured connection sources (superseded by 0148) |
+| [0113](0113-account-bound-journal-catalog.md) | A native journal belongs to one account/runner and authenticates its complete chat catalog (superseded by 0148) |
+| [0114](0114-native-captured-account-operations.md) | Native account workers and displayed confirmations retain their original recipient |
+| [0115](0115-retained-physical-terminals.md) | Physical terminals outlive immutable run views (superseded by 0148) |
+| [0116](0116-signed-cloud-baseline-publication.md) | Cloud retention activates a stored signed baseline before deleting its native prefix (superseded by 0148) |
+| [0117](0117-contained-local-tool-processes.md) | Cloud local tools receive an explicit contained process capability (superseded by 0148) |
+| [0118](0118-account-encrypted-cloud-hub-bootstrap.md) | Cloud hub trust bootstraps from the normal encrypted account (superseded by 0148; earlier: device-flow freshness and work leases superseded by 0144) |
+| [0119](0119-agent-ssh-ca.md) | A personal SSH CA lets cloud agents reach the user's servers (superseded by 0148; earlier: single principal superseded by 0145; desktop CA signer and document by 0147) |
+| [0120](0120-cloud-agent-catalog-in-the-chat-menu.md) | The Cloud agent catalog lives in the new-chat menu (superseded by 0148) |
+| [0121](0121-managed-pools-as-a-trusted-gateway.md) | Managed pools are a trusted gateway with per-lease broker tokens (superseded by 0148) |
+| [0122](0122-cloud-chat-creation-protocol.md) | Cloud chats are created on the device and claimed by the runner on key admission (superseded by 0148) |
+| [0123](0123-runner-control-channel.md) | The managed runner reads per-chat broker tokens from a framed control channel (superseded by 0148) |
+| [0124](0124-managed-execution-containment.md) | Managed execution runs tools in nested containment behind the host broker (superseded by 0148) |
+| [0125](0125-cloud-agents-tail-account-keys-journal-horizon-own-runner.md) | Account-key lock port, journal v6 horizon and own-runner placement (journal version rule superseded by 0143; journal horizon and own runner superseded by 0148) |
+| [0126](0126-own-runner-provider-lease.md) | A device leases a personal agent's key to the own runner (superseded by 0148) |
+| [0127](0127-managed-runner-agent-policy.md) | The managed runner enforces the agent definition policy from boot v2 (superseded by 0148) |
+| [0128](0128-agents-transfer-files-through-the-shared-transfer-runtime.md) | Agents transfer files through the shared transfer runtime, relaying between servers |
+| [0129](0129-the-device-allows-a-queued-run-to-use-the-model.md) | The device allows a queued Cloud run to use the model (superseded by 0148; earlier: projection placement superseded by 0144) |
+| [0130](0130-cloud-agents-only-in-hub-windows.md) | Cloud agents are offered only in the window of their hub (superseded by 0148) |
+| [0131](0131-one-container-watch-per-host-connection.md) | One container watch per host connection, relisted only for listing changes |
+| [0132](0132-proportional-agent-workflows-and-local-resources.md) | Agent procedures scale to impact and machine resources remain local (supersedes process/resource rules of 0059; document organization refined by 0135) |
+| [0133](0133-cloud-chats-in-the-history-column-and-seats-woken-for-prompts.md) | Cloud chats are listed in the history column, and a prompt wakes its seat (superseded by 0148; earlier: row titles and projection superseded by 0144) |
+| [0134](0134-one-composer-for-every-conversation-and-pending-prompts.md) | One composer for every conversation, and pending prompts in the transcript (superseded by 0148; earlier: projection placement superseded by 0144) |
+| [0135](0135-responsibility-and-cost-guided-agent-work.md) | Agent procedures verify responsibility and runtime cost; gate owns the detailed check matrix |
+| [0136](0136-shared-bounded-streams-and-tool-result-formats.md) | Bounded byte collection and terminal-tool result formats have shared owners |
+| [0137](0137-observed-configuration-publication.md) | Settings and profiles reject publication against an externally changed owned document |
+| [0138](0138-shared-captured-monitor-collection.md) | Resource monitoring shares one raw collection per captured executor and scope |
+| [0139](0139-cooperative-authorized-keys-edits.md) | SFTP authorized-keys editors coordinate with a fixed no-clobber remote lock |
+| [0140](0140-offer-confirmation-publication.md) | Displayed key confirmations await bounded native publication |
+| [0141](0141-versioned-plugin-publication.md) | Plugin records select immutable package versions and await actual completion |
+| [0142](0142-live-transcript-and-image-admission.md) | Live transcript and image preparation admit aggregate growth before expensive work |
+| [0143](0143-the-runner-publishes-chat-summaries-journal-v7.md) | The runner publishes signed chat summaries to its directory; journal v7 (superseded by 0148; earlier: journal version rule superseded by 0145) |
+| [0144](0144-the-device-side-runs-on-the-contract-device-core.md) | The device side of Cloud chats runs on the contract's device core; hub-io is a thin adapter (superseded by 0148; earlier: request signer, outbox and first-freshness rule superseded by 0146) |
+| [0145](0145-per-server-ca-principals-and-runner-certificate-sessions.md) | Per-server CA principals, chat SSH bindings and runner certificate sessions; journal v8, boot v3 (superseded by 0148; earlier: SSH row class, boot host-key rule and journal version superseded by 0147) |
+| [0146](0146-device-transport-and-resumable-commands.md) | Cloud effects go through the hub client; commands resume after a restart (superseded by 0148) |
+| [0147](0147-desktop-answers-bound-chats-and-runs-prompts-on-bound-servers.md) | The desktop binds chats to servers and answers their certificate requests; prompts run on bound servers; journal v9 (superseded by 0148) |
+| [0148](0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md) | Hub chats run on the hub and use the agent chat UI; the Cloud runner, organizations and administrator keys are removed (Agent access without an open session superseded by 0149; the web panel's credential used once superseded by 0150) |
+| [0149](0149-agent-access-connects-with-saved-credentials-and-profiles-have-one-space.md) | Agent access connects with the saved credentials, rows show the agents' state, and profiles have one space (supersedes parts of 0101 and 0148) |
+| [0150](0150-an-accounts-servers-keep-their-secrets-in-its-vault.md) | An account's servers keep their secrets in its vault: the web panel saves what it connects, the editor keeps a typed password, no list of unsaved agent servers (supersedes part of 0148) |
+| [0151](0151-a-saved-password-signs-in-to-the-servers-it-lists.md) | A saved password signs in to the servers it lists; records are renamed and passwords shared without their secret |
+| [0152](0152-every-window-lists-every-chat-and-a-chat-moves-to-the-window-that-opens-it.md) | Every window lists every chat; a resting chat moves to the window that opens it, a working or shown one is shown in its own window |
+| [0153](0153-toolbars-and-user-plugin-requests-timers-and-terminals.md) | Toolbars along the tab area; user plugins send requests to an address the user typed with a secret they never read, set timers and own terminal tabs an AI chat can attach to; the Plugins page installs from a button or the plugins folder (supersedes part of 0093; its two switches superseded by 0154) |
+| [0154](0154-plugin-views-use-the-applications-components-and-external-plugins-share-the-plugins-page.md) | Plugin views are built from the application's components and glyphs, the shell writes a panel's provenance beside its title, effects apply after the host's update, and external plugins share the Plugins list with one switch (supersedes parts of 0089, 0093 and 0153) |
+| [0155](0155-a-plugin-terminal-tab-can-serve-files-to-the-file-browser-and-ai-chats.md) | A plugin's terminal tab can serve files: the file browser and attached AI chats use them through the session's file system, requests and answers are checked both ways, and bytes travel as base64 |
+| [0156](0156-agents-work-with-the-files-of-terminals-that-run-no-programs.md) | Agents read and change the files of attached terminals that serve files but run no programs, through MCP file tools a chat offers only while such a terminal is attached |
+| [0157](0157-a-plugin-terminal-tab-carries-the-plugins-bar-along-one-edge.md) | A plugin's terminal tab carries the plugin's bar along one edge (`terminals.bar`), drawn by the contribution the tab reports to with the snapshot naming the terminal; the ABI stays 1 |
+| [0158](0158-a-plugin-toolbar-keeps-to-its-own-tabs-and-the-user-places-it.md) | A plugin's toolbar keeps to its own tabs unless it names `tabs = "all"`, `shown` only suggests where it starts, and the user moves or hides it under Toolbars (amends 0153 and 0157) |
+| [0159](0159-plugin-charts-toolbar-axis-and-toolbar-moves.md) | Plugin views draw charts of recent values (`chart`, ABI stays 1), a toolbar's calls name its axis in the zone (`cx.is_column()`), toolbars use the status bar's small text, and moving a toolbar is a layout edit |
+| [0160](0160-ci-compiles-each-kind-once-and-tests-the-plugin-feature-where-it-changes-code.md) | CI compiles each kind of build once (lint checks, build and tests), tests `user-plugins` only in the packages that declare it, saves caches from `dev` and `master`, and builds installers only for releases |

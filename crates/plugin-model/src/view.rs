@@ -5,8 +5,8 @@
 //! being able to tell which privileges an entry may hold.
 
 use crate::{
-    ContributionId, ContributionKind, Icon, PanelTraits, Placement, PluginId, PluginTier,
-    SettingsSchema, SystemContribution, SystemPlugin, UserContribution, UserPlugin,
+    ContributionId, ContributionKind, Edge, Icon, PanelTraits, Placement, PluginId, PluginTier,
+    SettingsSchema, SystemContribution, SystemPlugin, ToolbarTabs, UserContribution, UserPlugin,
 };
 
 /// A plugin of either tier.
@@ -159,6 +159,25 @@ impl<'a> ContributionRef<'a> {
         match self {
             Self::System(contribution) => contribution.panel,
             Self::User(contribution) => contribution.panel(),
+        }
+    }
+
+    /// The edge a toolbar runs along by default; `None` for panels and widgets.
+    pub fn edge(self) -> Option<Edge> {
+        match self {
+            Self::System(contribution) => contribution.edge,
+            Self::User(contribution) => contribution.edge(),
+        }
+    }
+
+    /// Which tabs a toolbar runs along; `None` for panels and widgets. A built-in toolbar runs
+    /// along every tab.
+    pub fn tabs(self) -> Option<ToolbarTabs> {
+        match self {
+            Self::System(contribution) => {
+                (contribution.kind == ContributionKind::Toolbar).then_some(ToolbarTabs::All)
+            }
+            Self::User(contribution) => contribution.tabs(),
         }
     }
 

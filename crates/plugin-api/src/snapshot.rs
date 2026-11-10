@@ -72,6 +72,9 @@ pub struct Snapshot {
     pub context: ContributionContext,
     /// What happened to the effects of the previous call, by their keys.
     pub outcomes: Vec<EffectOutcome>,
+    /// The plugin's terminal whose bar this call draws, or whose bar the user used
+    /// (`terminals.bar`); `None` for every other call.
+    pub terminal: Option<String>,
 }
 
 impl Snapshot {
@@ -83,6 +86,7 @@ impl Snapshot {
             storage: BTreeMap::new(),
             context,
             outcomes: Vec::new(),
+            terminal: None,
         }
     }
 

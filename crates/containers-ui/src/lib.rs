@@ -9,9 +9,12 @@
 //! already has; the footer's switcher shows how many containers run.
 //!
 //! Owns: active-host container presentation, captured operation intents and workspace tabs.
-//! Local host execution is supplied explicitly at registration and retained by the model.
-//! Does not own: container command formats, host execution or connection establishment.
-//! Ports used: workspace active-session/program contracts and session `HostExec`.
+//! [`install`] retains the supplied local host execution and the application's
+//! `ContainerHosts`; every window's model receives them at registration.
+//! Does not own: container command formats, watching a host and deciding when to list it
+//! again (`nocterm-containers-service`), host execution or connection establishment.
+//! Ports used: workspace active-session/program contracts, session `HostExec` and the
+//! shared `ContainerHosts`.
 //! Ports provided: the `containers` system plugin (`plugin::PLUGIN`) with its sidebar panel.
 //! Settings section: none. Globals: none.
 //! Invariants: host changes invalidate confirmations; completion retains its original context.
@@ -21,6 +24,7 @@ mod panel;
 pub mod plugin;
 
 use gpui_kit::{AppContext as _, Context, Window};
+use nocterm_containers_service::ContainerHosts;
 use nocterm_session::HostExec;
 use nocterm_workspace::{PanelRegistration, RegistrationError, Workspace};
 use std::sync::Arc;
@@ -36,11 +40,28 @@ gpui_kit::actions!(
     ]
 );
 
+/// What every window's containers panel shares: this computer's executor, and the watch of
+/// each host, so a host shown in several windows is watched once.
+#[derive(Clone)]
+pub struct Installed {
+    local: Option<Arc<dyn HostExec>>,
+    hosts: ContainerHosts,
+}
+
+/// Prepares the containers panels of every window, with `local` running this computer's
+/// programs.
+pub fn install(local: Option<Arc<dyn HostExec>>) -> Installed {
+    Installed {
+        local,
+        hosts: ContainerHosts::new(),
+    }
+}
+
 /// Adds the containers panel to the sidebar of `workspace`.
 ///
 /// The action is registered even when the workspace refuses the panel.
 pub fn register(
-    local: Option<Arc<dyn HostExec>>,
+    installed: &Installed,
     workspace: &mut Workspace,
     window: &mut Window,
     cx: &mut Context<Workspace>,
@@ -48,12 +69,14 @@ pub fn register(
     workspace.register_action(|workspace, _: &ToggleContainers, window, cx| {
         workspace.toggle_panel(&plugin::LIST.id, window, cx);
     });
+    let installed = installed.clone();
     workspace.register_panel(
         PanelRegistration::new(&plugin::LIST, move |workspace, _, cx| {
             let session = workspace.active_session(cx);
             let handle = cx.entity();
+            let Installed { local, hosts } = installed.clone();
             let model =
-                cx.new(|cx| model::ContainersModel::new(&handle, session, local.clone(), cx));
+                cx.new(|cx| model::ContainersModel::new(&handle, session, local, hosts, cx));
             cx.new(|cx| ContainersPanel::new(model, handle.downgrade(), cx))
         }),
         window,

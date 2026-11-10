@@ -1,7 +1,8 @@
 # Architecture guardrails
 
 Part of the [architecture overview](../ARCHITECTURE.md). Run
-`cargo xtask architecture` after changing source or crate boundaries.
+`cargo xtask architecture` when guarded Rust structure or crate boundaries are
+affected, following the [local verification policy](../../AGENTS.md#verification-policy).
 
 The check combines the Cargo dependency layers, the 800-line file inventory,
 complexity-attribute policy, and the AST debt inventory in
@@ -13,6 +14,14 @@ regenerates the inventory.
 Agent protocol SDK packages (`agent-client-protocol*`) may be dependencies of
 any kind only in `nocterm-acp`; renamed bindings do not escape the check
 ([ADR 0058](../adr/0058-neutral-agent-protocol-boundary.md)).
+
+The hub contract packages (`nocterm-hub-client`, `nocterm-hub-grpc`, `nocterm-hub-model`,
+`nocterm-hub-proto`, `nocterm-keys`, `nocterm-link`) come from a public repository outside
+this workspace. `EXTERNAL_CONTRACTS` in `xtask/src/external_contracts.rs` is the only
+exception to the layer rule for `nocterm-*` packages: each is used only by `nocterm-hub-io`,
+only from `git` at a full commit `rev`, and `Cargo.lock` must resolve it from there (no path
+or patch). `tonic*` and `prost*` are dependencies of `nocterm-hub-io` only
+([ADR 0096](../adr/0096-hub-contract-outside-the-workspace.md)).
 
 Every first-party workspace package must inherit `[lints] workspace = true` in
 its actual Cargo manifest. The check uses Cargo's complete no-dependencies
@@ -85,6 +94,13 @@ fail-closed policy rejects `include!` source, including literal, dynamic and
 locally aliased calls: declare a Rust module instead. Passing the
 inventory does not waive the design rules.
 
+Ownership review traces authoritative state, transitions, lifetime and late
+asynchronous delivery. It applies beyond the measured feature/service public
+fields and impl-file threshold. Performance review covers affected rendering,
+repeated work and cache bounds/invalidation; source metrics cannot establish
+either responsiveness or correct reuse. Procedures are linked from
+[the agent guide](../../AGENTS.md#performance).
+
 ## Crate cards
 
 Every package under `crates/` starts its crate root (library, else binary) with
@@ -99,7 +115,8 @@ whether the card describes the actual boundary, which remains a review duty.
 `cargo xtask architecture` also prints, without failing, each package that has
 reached about four fifths of a structural limit: files of 640 lines or more,
 structs with 12 or more fields and types implemented in four files. A warning
-asks for a split by responsibility to be designed before the limit forces one.
+invites inspection of responsibility and remaining room. It is advisory and
+does not require extraction on its own; hard limits and ownership rules still apply.
 
 `cargo xtask survey <package> [--json] [--type <Type>]` reports the facts such
 a design needs: file sizes, struct shapes and visibility, implementation spread,
@@ -110,6 +127,9 @@ use together, coordinators that reach most of the state, fields only they use,
 cross-cluster methods and methods without direct field access. The survey is syntactic and
 keys types by name; it refuses a matrix for an ambiguous name and is a planning
 aid, not a check.
+Co-access clusters are hypotheses: a shared invariant and lifetime must justify
+an extracted owner. Limits are ceilings, not desired file/type sizes; unrelated
+responsibilities separate even below the warning thresholds.
 
 ## Isolation of the plugin crates
 
@@ -161,7 +181,7 @@ allowlisted dependency's own API, nor a confused deputy; those are design-review
 
 `python3 scripts/check-plugin-api-compat.py` compares `crates/plugin-api/api-surface.json` with
 the file at the highest `v*` release tag (`--base REF` overrides it) and runs in the CI job
-`plugin-api-compat`, with its own regression cases in `scripts/test-plugin-api-compat.py`. It
+`Repository policy`, with its own regression cases in `scripts/test-plugin-api-compat.py`. It
 fails on a removed or narrowed contract entry (capability, result field, manifest table or key,
 vocabulary value, effect request field, limit), on a gesture, a tighter rate or a lower live cap,
 on an optional key made required or a new required key, and on a lower `api_version`. Any other
@@ -198,8 +218,8 @@ command run the same history check.
 Maintained Markdown under `docs/` rejects session authorization and progress
 phrases. Inline references to known repository types check their members;
 fully qualified repository symbols must exist. Fenced examples and external
-APIs are not treated as repository declarations. Accepted ADRs and
-`docs/history/` retain their historical context. Generated references still have
+APIs are not treated as repository declarations. Accepted ADRs retain their
+historical context. Generated references still have
 the separate `cargo xtask docs --check` freshness gate.
 
 Cargo `test-support` activation is restricted to development dependencies. Normal

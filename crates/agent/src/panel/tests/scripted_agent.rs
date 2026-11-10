@@ -167,6 +167,10 @@ impl Connector {
     pub(super) fn support_images(&self) {
         self.info.lock().unwrap().capabilities.image_prompts = true;
     }
+    /// The agent runs elsewhere with tools of its own, as a hub agent does.
+    pub(super) fn run_elsewhere(&self) {
+        self.info.lock().unwrap().capabilities.own_tools = true;
+    }
 }
 impl AgentConnector for Connector {
     fn connect(
@@ -202,6 +206,8 @@ impl AgentConnector for Connector {
 pub(super) struct Bridge {
     pub(super) next: AtomicU64,
     pub(super) revoked: Arc<Mutex<Vec<u64>>>,
+    /// Every tool offer a chat made, with its registration.
+    pub(super) offers: Arc<Mutex<Vec<(u64, nocterm_ai::ToolOffer)>>>,
     pub(super) stops: AtomicUsize,
     pub(super) calls: async_channel::Receiver<BridgeCall>,
     pub(super) rejections: async_channel::Receiver<nocterm_ai::BridgeRejection>,
@@ -211,7 +217,7 @@ impl ToolBridge for Bridge {
         &self,
     ) -> Result<BridgeRegistration, nocterm_ai::connection::BridgeRegistrationError> {
         let id = self.next.fetch_add(1, Ordering::SeqCst);
-        let revoked = self.revoked.clone();
+        let (revoked, offers) = (self.revoked.clone(), self.offers.clone());
         Ok(BridgeRegistration::new(
             id,
             nocterm_ai::BridgeLaunch {
@@ -220,7 +226,10 @@ impl ToolBridge for Bridge {
                 env: vec![("NOCTERM_BRIDGE_TOKEN".into(), "test-token".into())],
             },
             Arc::new(move |id| revoked.lock().unwrap().push(id)),
-        ))
+        )
+        .with_offer(Arc::new(move |id, offer| {
+            offers.lock().unwrap().push((id, offer));
+        })))
     }
     fn calls(&self) -> async_channel::Receiver<BridgeCall> {
         self.calls.clone()

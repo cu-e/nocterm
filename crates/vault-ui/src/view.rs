@@ -1,7 +1,10 @@
 //! The Vault page's state and the operations it starts.
-use gpui_kit::{App, Context, FocusHandle, Focusable, SharedString, Subscription, Window};
+use gpui_kit::{
+    App, AppContext as _, Context, Entity, FocusHandle, Focusable, SharedString, Subscription,
+    Window,
+};
 use nocterm_ui::SettingsPage;
-use nocterm_vault::{CredentialInfo, DeviceCapability, VaultAccess, VaultFuture};
+use nocterm_vault::{DeviceCapability, VaultAccess, VaultFuture};
 use std::sync::Arc;
 
 mod form;
@@ -45,9 +48,10 @@ pub struct VaultView {
     device: Option<DeviceCapability>,
     device_busy: bool,
     message: Option<(SharedString, bool)>,
-    records: Vec<CredentialInfo>,
+    credentials: Entity<crate::credentials_tab::CredentialsTab>,
     unlocked: bool,
     generation: u64,
+    keys_missing: Option<crate::KeysMissingRemedy>,
     _bindings: ViewBindings,
 }
 impl VaultView {
@@ -90,6 +94,10 @@ impl VaultView {
                 }
             }
         });
+        let credentials = {
+            let service = service.clone();
+            cx.new(|cx| crate::credentials_tab::CredentialsTab::new(service, window, cx))
+        };
         let mut this = Self {
             tab: Tab::Overview,
             form,
@@ -100,9 +108,10 @@ impl VaultView {
             device: None,
             device_busy: false,
             message: None,
-            records: Vec::new(),
+            credentials,
             unlocked: false,
             generation: 0,
+            keys_missing: None,
             _bindings: ViewBindings {
                 _subscriptions: subscriptions,
                 _status: watch,
@@ -115,6 +124,11 @@ impl VaultView {
         }
         this
     }
+    /// Makes the page offer `remedy` instead of creating a vault that cannot be created here.
+    pub(crate) fn with_keys_missing(mut self, remedy: Option<crate::KeysMissingRemedy>) -> Self {
+        self.keys_missing = remedy;
+        self
+    }
     /// Follows the vault locking or unlocking, by this page or any other path.
     fn status_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let unlocked = self.service.is_unlocked();
@@ -125,7 +139,8 @@ impl VaultView {
         if unlocked {
             self.refresh(cx);
         } else {
-            self.records.clear();
+            self.credentials
+                .update(cx, |credentials, cx| credentials.clear(window, cx));
             self.generation = self.generation.wrapping_add(1);
             self.busy = false;
             self.device_busy = false;
@@ -150,22 +165,8 @@ impl VaultView {
         .detach();
     }
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        let generation = self.generation;
-        let future = self.service.list();
-        cx.spawn(async move |this, cx| {
-            let result = future.await;
-            let _ = this.update(cx, |this, cx| {
-                if generation != this.generation || !this.service.is_unlocked() {
-                    return;
-                }
-                match result {
-                    Ok(records) => this.records = records,
-                    Err(error) => this.message = Some((error.to_string().into(), true)),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+        self.credentials
+            .update(cx, |credentials, cx| credentials.refresh(cx));
     }
     fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy {
@@ -229,7 +230,8 @@ impl VaultView {
         self.service.lock();
         self.device_busy = false;
         self.unlocked = false;
-        self.records.clear();
+        self.credentials
+            .update(cx, |credentials, cx| credentials.clear(window, cx));
         self.generation = self.generation.wrapping_add(1);
         self.busy = false;
         self.form.clear_passwords(window, cx);
@@ -286,6 +288,7 @@ impl SettingsPage for VaultView {
     fn on_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.on_deactivate(window, cx);
         self.generation = self.generation.wrapping_add(1);
-        self.records.clear();
+        self.credentials
+            .update(cx, |credentials, cx| credentials.clear(window, cx));
     }
 }

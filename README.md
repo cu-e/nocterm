@@ -342,12 +342,18 @@ cargo build --workspace --all-targets
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 NOCTERM_REQUIRE_SSHD=1 cargo test -p nocterm-ssh --test sshd
+NOCTERM_REQUIRE_HUB=1 cargo test -p nocterm-hub-io --test hub
+NOCTERM_REQUIRE_HUB=1 cargo test -p nocterm hub_live
 cargo xtask docs
 cargo xtask docs --check
 cargo xtask architecture
 cargo doc --workspace --no-deps
 ```
 
+The hub tests (the adapter and `hub_live`, which drives the windows) need a running hub (`docker compose up` in the server's repository) and
+`NOCTERM_HUB_ADDRESS`, `NOCTERM_HUB_FINGERPRINT`, `NOCTERM_HUB_USERNAME` and `NOCTERM_HUB_PASSWORD`.
+Without `NOCTERM_REQUIRE_HUB=1` it passes when they are missing; with it, missing variables or a
+missing hub fail the run.
 The SSH tests start private local OpenSSH servers with temporary keys. With
 `NOCTERM_REQUIRE_SSHD=1`, missing `sshd` fails instead of skipping the tests.
 Some OpenSSH installations need `/run/sshd` created by the system administrator.
@@ -372,6 +378,14 @@ for tests; the native shutdown diagnostic still needs an upstream reproduction.
 
 The terminal emulator is a maintained local patch of alacritty_terminal 0.26.0.
 See [the patch notes](vendor/alacritty_terminal/NOCTERM.md) before updating it.
+
+## Hubs
+
+Sign in to a self-hosted Nocterm server with **Hubs: Sign in to server** in the command palette
+(or from the Servers settings page), verify the certificate fingerprint and sign in. The hub's
+terminal sessions are listed in the Sessions panel of any window, and keep running when you
+close their tabs.
+See [hubs](docs/HUBS.md).
 
 ## AI agents
 

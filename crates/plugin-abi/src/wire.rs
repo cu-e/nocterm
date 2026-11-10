@@ -30,6 +30,85 @@ pub enum Call {
         event: Event,
         snapshot: WireSnapshot,
     },
+    /// Draw the bar of the plugin's terminal `terminal` (`terminals.bar`), by the contribution
+    /// the terminal reports to.
+    RenderTerminalBar {
+        local: LocalId,
+        terminal: String,
+        snapshot: WireSnapshot,
+    },
+    /// Answer an event of the bar of the plugin's terminal `terminal`.
+    TerminalBarEvent {
+        local: LocalId,
+        terminal: String,
+        event: Event,
+        snapshot: WireSnapshot,
+    },
+}
+
+impl Call {
+    /// The call that asks `local` for its view: the bar of a terminal when the snapshot names
+    /// one.
+    pub fn render(local: LocalId, snapshot: &Snapshot) -> Self {
+        let wire = WireSnapshot::from(snapshot);
+        match &snapshot.terminal {
+            Some(terminal) => Self::RenderTerminalBar {
+                local,
+                terminal: terminal.clone(),
+                snapshot: wire,
+            },
+            None => Self::Render {
+                local,
+                snapshot: wire,
+            },
+        }
+    }
+
+    /// The call that reports `event` to `local`: from the bar of a terminal when the snapshot
+    /// names one.
+    pub fn event(local: LocalId, event: Event, snapshot: &Snapshot) -> Self {
+        let wire = WireSnapshot::from(snapshot);
+        match &snapshot.terminal {
+            Some(terminal) => Self::TerminalBarEvent {
+                local,
+                terminal: terminal.clone(),
+                event,
+                snapshot: wire,
+            },
+            None => Self::Event {
+                local,
+                event,
+                snapshot: wire,
+            },
+        }
+    }
+
+    /// The contribution, the event (none for a view) and the snapshot as the guest reads them,
+    /// with the terminal of a bar's call.
+    pub fn into_parts(self) -> (LocalId, Option<Event>, Snapshot) {
+        let (local, event, snapshot, terminal) = match self {
+            Self::Render { local, snapshot } => (local, None, snapshot, None),
+            Self::Event {
+                local,
+                event,
+                snapshot,
+            } => (local, Some(event), snapshot, None),
+            Self::RenderTerminalBar {
+                local,
+                terminal,
+                snapshot,
+            } => (local, None, snapshot, Some(terminal)),
+            Self::TerminalBarEvent {
+                local,
+                terminal,
+                event,
+                snapshot,
+            } => (local, Some(event), snapshot, Some(terminal)),
+        };
+        let mut snapshot = Snapshot::from(snapshot);
+        snapshot.terminal = terminal;
+        (local, event, snapshot)
+    }
 }
 
 /// What the guest answers.
@@ -173,6 +252,7 @@ impl From<WireSnapshot> for Snapshot {
             storage: wire.storage.into_iter().collect(),
             context: wire.context,
             outcomes: wire.outcomes,
+            terminal: None,
         }
     }
 }

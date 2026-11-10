@@ -20,6 +20,7 @@ const fn widget(id: &'static str, zone: Zone, order: u16) -> SystemContribution 
         },
         panel: None,
         preview: None,
+        edge: None,
         pinned: false,
     }
 }
@@ -41,6 +42,7 @@ const fn panel(id: &'static str, order: u16, group: Option<&'static str>) -> Sys
             chrome: PanelChrome::Titled,
         }),
         preview: None,
+        edge: None,
         pinned: false,
     }
 }
@@ -245,6 +247,130 @@ fn panel_traits_exist_exactly_for_panels() {
         let core: &'static [SystemContribution] = Box::leak(Box::new([contribution]));
         let error = PluginCatalog::new(&groups(), &[core], &[]).err();
         assert_eq!(error, Some(CatalogError::PanelTraits { id }));
+    }
+}
+
+const fn toolbar(id: &'static str, edge: Edge, order: u16) -> SystemContribution {
+    let mut toolbar = widget(id, Zone::Right, order);
+    toolbar.kind = ContributionKind::Toolbar;
+    toolbar.edge = Some(edge);
+    toolbar
+}
+
+#[test]
+fn an_edge_exists_exactly_for_toolbars() {
+    let bare = SystemContribution {
+        edge: None,
+        ..toolbar("shell.bare", Edge::Top, 1)
+    };
+    let spurious = SystemContribution {
+        edge: Some(Edge::Left),
+        ..widget("shell.spurious", Zone::Left, 2)
+    };
+    for contribution in [bare, spurious] {
+        let id = contribution.id.clone();
+        let core: &'static [SystemContribution] = Box::leak(Box::new([contribution]));
+        let error = PluginCatalog::new(&groups(), &[core], &[]).err();
+        assert_eq!(error, Some(CatalogError::ToolbarEdge { id }));
+    }
+}
+
+#[test]
+fn toolbar_orders_are_unique_within_an_edge_and_apart_from_the_zones() {
+    // The widget `alpha.second` holds order 10 of the right zone; a toolbar may reuse it.
+    const BESIDE: &[SystemContribution] = &[
+        toolbar("shell.top", Edge::Top, 10),
+        toolbar("shell.left", Edge::Left, 10),
+    ];
+    assert!(PluginCatalog::new(&groups(), &[BESIDE], &[&ALPHA]).is_ok());
+    const CLASH: &[SystemContribution] = &[
+        toolbar("shell.top", Edge::Top, 10),
+        toolbar("shell.again", Edge::Top, 10),
+    ];
+    let error = PluginCatalog::new(&groups(), &[CLASH], &[]).err();
+    assert_eq!(
+        error,
+        Some(CatalogError::DuplicateEdgeOrder {
+            edge: Edge::Top,
+            order: 10
+        })
+    );
+}
+
+#[test]
+fn a_user_toolbar_suggests_an_edge_and_other_kinds_never_have_one() {
+    let toolbar = UserContribution::clamp(
+        ContributionId::owned("user-acme-bar.strip".to_string()),
+        ContributionKind::Toolbar,
+        "Strip",
+        Icon::Puzzle,
+        Zone::Left,
+        0,
+    )
+    .expect("a valid toolbar");
+    assert_eq!(toolbar.edge(), Some(Edge::Top));
+    assert_eq!(
+        toolbar.clone().along(Edge::Bottom).edge(),
+        Some(Edge::Bottom)
+    );
+    let widget = UserContribution::clamp(
+        ContributionId::owned("user-acme-bar.face".to_string()),
+        ContributionKind::Widget,
+        "Face",
+        Icon::Puzzle,
+        Zone::Left,
+        0,
+    )
+    .expect("a valid widget")
+    .along(Edge::Left);
+    assert_eq!(widget.edge(), None);
+    assert_eq!(widget.placement().auto, AutoPlace::Tray);
+}
+
+#[test]
+fn only_a_user_toolbar_can_ask_to_be_shown_at_first() {
+    let made = |kind| {
+        UserContribution::clamp(
+            ContributionId::owned("user-acme-bar.strip".to_string()),
+            kind,
+            "Strip",
+            Icon::Puzzle,
+            Zone::Left,
+            0,
+        )
+        .expect("a valid contribution")
+    };
+    let toolbar = made(ContributionKind::Toolbar);
+    assert_eq!(
+        toolbar.placement().auto,
+        AutoPlace::Tray,
+        "it waits unless asked"
+    );
+    assert_eq!(
+        toolbar.tabs(),
+        Some(ToolbarTabs::Own),
+        "a toolbar keeps to its own tabs unless it says otherwise"
+    );
+    assert_eq!(
+        toolbar.clone().on_tabs(ToolbarTabs::All).tabs(),
+        Some(ToolbarTabs::All)
+    );
+    assert_eq!(
+        made(ContributionKind::Panel)
+            .on_tabs(ToolbarTabs::All)
+            .tabs(),
+        None
+    );
+    assert_eq!(
+        toolbar.shown_at_first(true).placement().auto,
+        AutoPlace::Show
+    );
+    for kind in [ContributionKind::Panel, ContributionKind::Widget] {
+        assert_eq!(
+            made(kind).shown_at_first(true).placement().auto,
+            AutoPlace::Tray,
+            "{kind:?} always waits in the tray"
+        );
     }
 }
 

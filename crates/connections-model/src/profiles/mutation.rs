@@ -64,6 +64,19 @@ pub enum ProfileMutation {
         group: String,
         expected: Vec<ProfileId>,
     },
+    /// Moves the listed `members` of folder `from` to folder `to` (`None`: the top level).
+    /// Connections of the folder that are not listed, such as one that joined it after it
+    /// was shown, stay where they are.
+    Regroup {
+        members: Vec<ProfileId>,
+        from: String,
+        to: Option<String>,
+    },
+    /// Deletes the listed `members` of `group`, provided each is still in it.
+    DeleteMembers {
+        group: String,
+        members: Vec<ProfileId>,
+    },
     Credential {
         scope: CredentialScope,
         id: CredentialId,
@@ -75,7 +88,12 @@ impl ProfileMutation {
         let metadata_bytes = match self {
             Self::Move { group, .. } => group.as_ref().map_or(0, String::len),
             Self::RenameGroup { from, to } => from.len().saturating_add(to.len()),
-            Self::Ungroup(group) | Self::DeleteGroup { group, .. } => group.len(),
+            Self::Regroup { from, to, .. } => from
+                .len()
+                .saturating_add(to.as_ref().map_or(0, String::len)),
+            Self::Ungroup(group)
+            | Self::DeleteGroup { group, .. }
+            | Self::DeleteMembers { group, .. } => group.len(),
             Self::Credential { scope, .. } => scope
                 .target()
                 .host
@@ -145,6 +163,26 @@ impl ProfileMutation {
                     return Err(ProfileError::GroupChanged(group.clone()));
                 }
                 profiles.remove_group(group);
+            }
+            Self::Regroup { members, from, to } => {
+                require_group(profiles, from)?;
+                let to = match to.as_deref().map(str::trim) {
+                    Some("") => return Err(ProfileError::EmptyGroup),
+                    other => other,
+                };
+                profiles.regroup(members, from, to);
+            }
+            Self::DeleteMembers { group, members } => {
+                require_group(profiles, group)?;
+                let all_in = members.iter().all(|id| {
+                    profiles
+                        .get(*id)
+                        .is_some_and(|profile| profile.group.as_deref() == Some(group))
+                });
+                if !all_in {
+                    return Err(ProfileError::GroupChanged(group.clone()));
+                }
+                profiles.remove_members(group, members);
             }
             Self::Credential { scope, id } => {
                 profiles.associate_credential(scope, *id);

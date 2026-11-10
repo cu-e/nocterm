@@ -3,10 +3,7 @@ use super::{AgentPanel, composer_view::ComposerBinding, images::ImageAttachError
 use crate::thread::AgentThread;
 use gpui_kit::{Context, Task, WeakEntity};
 use nocterm_ai::model::content::Content;
-use nocterm_ai::{
-    images::{ImageInspector, PromptImage},
-    session::Ticket,
-};
+use nocterm_ai::{images::PromptImage, session::Ticket};
 use std::sync::Arc;
 pub(super) struct QueueImagePreparation {
     binding: ComposerBinding,
@@ -14,7 +11,7 @@ pub(super) struct QueueImagePreparation {
     ticket: Ticket,
     prompt_id: u64,
     saved: Arc<nocterm_ai::history::SavedPrompt>,
-    inspector: Arc<dyn ImageInspector>,
+    images: crate::ImageDeps,
 }
 impl QueueImagePreparation {
     pub(super) fn new(
@@ -23,7 +20,7 @@ impl QueueImagePreparation {
         ticket: Ticket,
         prompt_id: u64,
         saved: Arc<nocterm_ai::history::SavedPrompt>,
-        inspector: Arc<dyn ImageInspector>,
+        images: crate::ImageDeps,
     ) -> Self {
         Self {
             binding,
@@ -31,7 +28,7 @@ impl QueueImagePreparation {
             ticket,
             prompt_id,
             saved,
-            inspector,
+            images,
         }
     }
     pub(super) fn launch(self, cx: &mut Context<AgentPanel>) -> Task<()> {
@@ -41,15 +38,26 @@ impl QueueImagePreparation {
             ticket,
             prompt_id,
             saved,
-            inspector,
+            images,
         } = self;
         let future = cx.background_executor().spawn(async move {
+            let _permit = images.work().await;
+            let inspector = images.inspector();
+            let mut budget = nocterm_ai::images::ImageCollectionBudget::remaining(&[])?;
+            budget.check_count(
+                saved
+                    .images
+                    .iter()
+                    .filter(|content| matches!(content, Content::Image(_)))
+                    .count(),
+            )?;
             saved
                 .images
                 .iter()
                 .filter_map(|block| match block {
                     Content::Image(image) => Some(
                         super::queue::decode_saved_image(&image.data).and_then(|bytes| {
+                            budget.admit(bytes.len())?;
                             PromptImage::validate(bytes, inspector.as_ref())
                                 .map_err(ImageAttachError::from)
                         }),

@@ -37,6 +37,25 @@ impl PackPublication {
     ) -> Result<(), ThemeOperationError> {
         let old = self.backup.path().join("previous");
         let existed = check_destination(&self.destination)?;
+        let id = self
+            .destination
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|id| nocterm_themes::valid_id(id))
+            .ok_or(ThemeOperationError::Identity)?;
+        nocterm_core::fs::write_private_atomic(
+            &self.backup.path().join("destination"),
+            id.as_bytes(),
+        )
+        .map_err(|error| {
+            ThemeOperationError::filesystem(
+                self.backup.path(),
+                "record pack recovery",
+                error.into_io_error(),
+            )
+        })?;
+        // Once the recovery record exists, unwinding must never delete the previous pack.
+        let backup = self.backup.keep();
         if existed {
             rename(&self.destination, &old).map_err(|e| {
                 ThemeOperationError::filesystem(&self.destination, "back up previous pack", e)
@@ -44,13 +63,14 @@ impl PackPublication {
         }
         if let Err(publication) = rename(self.stage.path(), &self.destination) {
             if existed && let Err(rollback) = rename(&old, &self.destination) {
-                let recovery = self.backup.keep().join("previous");
+                let recovery = backup.join("previous");
                 return Err(ThemeOperationError::Rollback {
                     publication,
                     rollback,
                     recovery,
                 });
             }
+            let _ = fs::remove_dir_all(&backup);
             return Err(ThemeOperationError::Publication {
                 path: self.destination,
                 source: publication,
@@ -59,8 +79,71 @@ impl PackPublication {
         // The stage path is relinquished after commit; Drop must not remove a later owner.
         let _ = self.stage.keep();
         // Removal of the previous pack is best effort after committed publication.
+        let _ = fs::remove_dir_all(backup);
         Ok(())
     }
+}
+
+/// Restores an interrupted replacement before a library is scanned or changed.
+pub(crate) fn recover(root: &Path) -> Result<(), ThemeOperationError> {
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(ThemeOperationError::filesystem(
+                root,
+                "read pack recovery",
+                error,
+            ));
+        }
+    };
+    for (index, entry) in entries.enumerate() {
+        if index >= 4_096 {
+            return Err(ThemeOperationError::DiscoveryLimit {
+                resource: "recovery entries",
+                max: 4_096,
+            });
+        }
+        let entry = entry?;
+        if !entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.starts_with(".backup-"))
+        {
+            continue;
+        }
+        let backup = entry.path();
+        if !check_destination(&backup)? {
+            continue;
+        }
+        let marker = backup.join("destination");
+        let bytes = match nocterm_core::fs::read_regular_bounded(&marker, 128) {
+            Ok(bytes) => bytes,
+            Err(error) if error.io_kind() == Some(std::io::ErrorKind::NotFound) => continue,
+            Err(error) => {
+                return Err(ThemeOperationError::filesystem(
+                    marker,
+                    "read pack recovery",
+                    std::io::Error::other(error),
+                ));
+            }
+        };
+        let id = std::str::from_utf8(&bytes)
+            .ok()
+            .filter(|id| nocterm_themes::valid_id(id))
+            .ok_or(ThemeOperationError::Identity)?;
+        let destination = root.join(id);
+        let previous = backup.join("previous");
+        if !check_destination(&destination)? && check_destination(&previous)? {
+            fs::rename(&previous, &destination).map_err(|error| {
+                ThemeOperationError::filesystem(&destination, "restore previous pack", error)
+            })?;
+        }
+        fs::remove_dir_all(&backup).map_err(|error| {
+            ThemeOperationError::filesystem(backup, "finish pack recovery", error)
+        })?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

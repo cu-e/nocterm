@@ -1,8 +1,12 @@
 //! One deterministic repository shared by runtime, feature and composition tests.
+use crate::local_environment::ChatScope;
 use crate::{
     favorites::AgentStateFile,
     history::{self, ChatSummary, FileStamp, SavedChat, SharedChat},
-    storage::{AgentStateRepository, AgentStorageError, ChatRepository, StorageFuture},
+    storage::{
+        AgentStateRepository, AgentStorageError, ChatRepository, PreparedChatBytes,
+        PreparedChatLoad, StorageFuture,
+    },
 };
 use futures::channel::oneshot;
 use std::{
@@ -16,6 +20,8 @@ pub enum StorageOperation {
     SaveState,
     Catalog,
     Load(String),
+    /// Pause after materialization while the actual decoded body retains its lease.
+    Decoded(String),
     Save(String),
     Delete(String),
 }
@@ -23,7 +29,7 @@ type Release = oneshot::Receiver<Result<(), AgentStorageError>>;
 #[derive(Default)]
 struct State {
     preferences: AgentStateFile,
-    chats: HashMap<history::ContextId, BTreeMap<String, Vec<u8>>>,
+    chats: HashMap<ChatScope, BTreeMap<String, Vec<u8>>>,
     barriers: HashMap<StorageOperation, VecDeque<Release>>,
     operations: Vec<StorageOperation>,
     rejected: HashMap<StorageOperation, AgentStorageError>,
@@ -45,7 +51,7 @@ impl InMemoryAgentRepository {
             .lock()
             .unwrap()
             .chats
-            .entry(chat.header.scope)
+            .entry(chat.header.chat_scope())
             .or_default()
             .insert(chat.header.id.clone(), bytes);
         Ok(())
@@ -70,11 +76,14 @@ impl InMemoryAgentRepository {
         self.encoded_in_scope(history::ContextId::General, id)
     }
     pub fn encoded_in_scope(&self, scope: history::ContextId, id: &str) -> Option<Vec<u8>> {
+        self.encoded_in_environment(&scope.into(), id)
+    }
+    pub fn encoded_in_environment(&self, scope: &ChatScope, id: &str) -> Option<Vec<u8>> {
         self.state
             .lock()
             .unwrap()
             .chats
-            .get(&scope)?
+            .get(scope)?
             .get(id)
             .cloned()
     }
@@ -156,7 +165,44 @@ impl AgentStateRepository for InMemoryAgentRepository {
     }
 }
 impl ChatRepository for InMemoryAgentRepository {
+    fn prepare_load_in(
+        &self,
+        scope: ChatScope,
+        id: String,
+    ) -> StorageFuture<Box<dyn PreparedChatLoad>> {
+        let this = self.clone();
+        Box::pin(async move {
+            this.begin(StorageOperation::Load(id.clone())).await?;
+            let bytes = {
+                let state = this
+                    .state
+                    .lock()
+                    .map_err(|_| AgentStorageError::Interrupted)?;
+                state
+                    .chats
+                    .get(&scope)
+                    .and_then(|chats| chats.get(&id))
+                    .ok_or_else(|| AgentStorageError::NotFound(id.clone()))?
+                    .clone()
+            };
+            let source = PreparedChatBytes::new(bytes, scope, id.clone(), None)?;
+            Ok(Box::new(PreparedRepositoryLoad {
+                source: Box::new(source),
+                repository: this,
+                id,
+            }) as Box<dyn PreparedChatLoad>)
+        })
+    }
     fn catalog(&self, scope: history::ContextId) -> StorageFuture<Vec<ChatSummary>> {
+        self.catalog_in(scope.into())
+    }
+    fn load(&self, scope: history::ContextId, id: String) -> StorageFuture<SavedChat> {
+        self.load_in(scope.into(), id)
+    }
+    fn delete(&self, scope: history::ContextId, id: String) -> StorageFuture<()> {
+        self.delete_in(scope.into(), id)
+    }
+    fn catalog_in(&self, scope: ChatScope) -> StorageFuture<Vec<ChatSummary>> {
         let this = self.clone();
         Box::pin(async move {
             this.begin(StorageOperation::Catalog).await?;
@@ -178,14 +224,14 @@ impl ChatRepository for InMemoryAgentRepository {
                     .ok()
                     .flatten()
                 })
-                .filter(|row| row.scope == scope)
+                .filter(|row| row.chat_scope() == scope)
                 .collect::<Vec<_>>();
             rows.sort_by_key(|row| std::cmp::Reverse((row.pinned, row.updated)));
             rows.truncate(history::MAX_RESTORED);
             Ok(rows)
         })
     }
-    fn load(&self, scope: history::ContextId, id: String) -> StorageFuture<SavedChat> {
+    fn load_in(&self, scope: ChatScope, id: String) -> StorageFuture<SavedChat> {
         let this = self.clone();
         Box::pin(async move {
             this.begin(StorageOperation::Load(id.clone())).await?;
@@ -196,7 +242,7 @@ impl ChatRepository for InMemoryAgentRepository {
                 .and_then(|chats| chats.get(&id))
                 .ok_or_else(|| AgentStorageError::NotFound(id.clone()))?;
             let chat = history::decode(bytes, &id)?;
-            crate::storage::require_chat_scope(scope, chat.header.scope)?;
+            crate::storage::require_local_scope(&scope, &chat.header.chat_scope())?;
             Ok(chat)
         })
     }
@@ -210,17 +256,15 @@ impl ChatRepository for InMemoryAgentRepository {
                     let state = this.state.lock().unwrap();
                     let bytes = state
                         .chats
-                        .get(&chat.header.scope)
+                        .get(&chat.header.chat_scope())
                         .and_then(|chats| chats.get(&chat.header.id))
                         .ok_or_else(|| AgentStorageError::NotFound(chat.header.id.clone()))?;
                     history::decode(bytes, &chat.header.id)?
                 };
-                if original.header.scope != chat.header.scope {
-                    return Err(AgentStorageError::ScopeMismatch {
-                        expected: chat.header.scope,
-                        actual: original.header.scope,
-                    });
-                }
+                crate::storage::require_local_scope(
+                    &chat.header.chat_scope(),
+                    &original.header.chat_scope(),
+                )?;
                 original.draft = draft;
                 original.header.updated = updated;
                 history::encode(&original)?
@@ -228,16 +272,19 @@ impl ChatRepository for InMemoryAgentRepository {
                 history::encode_shared(&chat)?
             };
             let mut state = this.state.lock().unwrap();
-            let chats = state.chats.entry(chat.header.scope).or_default();
+            let chats = state.chats.entry(chat.header.chat_scope()).or_default();
             if let Some(original) = chats.get(&chat.header.id) {
                 let original = history::decode(original, &chat.header.id)?;
-                crate::storage::require_chat_scope(chat.header.scope, original.header.scope)?;
+                crate::storage::require_local_scope(
+                    &chat.header.chat_scope(),
+                    &original.header.chat_scope(),
+                )?;
             }
             chats.insert(chat.header.id.clone(), bytes);
             Ok(())
         })
     }
-    fn delete(&self, scope: history::ContextId, id: String) -> StorageFuture<()> {
+    fn delete_in(&self, scope: ChatScope, id: String) -> StorageFuture<()> {
         let this = self.clone();
         Box::pin(async move {
             this.begin(StorageOperation::Delete(id.clone())).await?;
@@ -247,10 +294,33 @@ impl ChatRepository for InMemoryAgentRepository {
             };
             if let Some(bytes) = chats.get(&id) {
                 let chat = history::decode(bytes, &id)?;
-                crate::storage::require_chat_scope(scope, chat.header.scope)?;
+                crate::storage::require_local_scope(&scope, &chat.header.chat_scope())?;
             }
             chats.remove(&id);
             Ok(())
+        })
+    }
+}
+
+struct PreparedRepositoryLoad {
+    source: Box<dyn PreparedChatLoad>,
+    repository: InMemoryAgentRepository,
+    id: String,
+}
+impl PreparedChatLoad for PreparedRepositoryLoad {
+    fn resident_bytes(&self) -> usize {
+        self.source.resident_bytes()
+    }
+    fn decode(
+        self: Box<Self>,
+        allocation: nocterm_core::allocation::AllocationLease,
+    ) -> StorageFuture<nocterm_core::allocation::Allocated<SavedChat>> {
+        Box::pin(async move {
+            let decoded = self.source.decode(allocation).await?;
+            self.repository
+                .begin(StorageOperation::Decoded(self.id))
+                .await?;
+            Ok(decoded)
         })
     }
 }

@@ -1,7 +1,5 @@
 //! OpenAI Codex through the `codex-acp` adapter.
-use nocterm_ai::agents::{
-    AccountUsage, AgentMark, AgentProfile, LaunchDefaults, UsageMeta, UsageProfile,
-};
+use nocterm_ai::agents::{AgentMark, AgentProfile, LaunchDefaults, UsageMeta, UsageProfile};
 
 pub(crate) const PROFILE: AgentProfile = AgentProfile::new(
     "codex",
@@ -15,8 +13,7 @@ pub(crate) const PROFILE: AgentProfile = AgentProfile::new(
 .recognized_by(&["codex"])
 .writes_home(&[".codex"])
 .with_usage(
-    UsageProfile::new(UsageMeta::None, AccountUsage::SessionLog)
-        .with_empty_hint("Codex reports plan limits after a reply."),
+    UsageProfile::new(UsageMeta::None).with_empty_hint("Codex has not reported plan limits."),
 )
 .with_mark(AgentMark::new(
     "icons/agents/codex.svg",

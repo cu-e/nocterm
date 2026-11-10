@@ -1,16 +1,24 @@
 //! The context menu of the status bar: hide the item under the pointer, open the layout editor
-//! on it, and switch layouts.
+//! on it, show, hide or move the toolbars, and switch layouts.
 
 use std::{cell::RefCell, rc::Rc};
 
 use gpui_kit::{
     Context, SharedString, WeakEntity, Window,
-    component::menu::{PopupMenu, PopupMenuItem},
+    component::{
+        Side,
+        menu::{PopupMenu, PopupMenuItem},
+    },
 };
-use nocterm_plugin_model::{ContributionId, PluginSet};
+use nocterm_plugin_model::{ContributionId, Edge, PluginSet};
+use nocterm_ui::{IconName, contribution_icon};
+use nocterm_window_layout::EditOp;
 
 use super::BarEntry;
-use crate::{LayoutChoice, OpenLayoutSettings, SwitchLayout, Workspace, workspace::layout_edit};
+use crate::{
+    LayoutChoice, OpenLayoutSettings, SwitchLayout, Workspace,
+    workspace::{chrome::ToolbarChoice, layout_edit},
+};
 
 /// The item the pointer was last pressed on, shared by the row that records it and the menu
 /// that reads it.
@@ -39,6 +47,7 @@ pub(in crate::workspace) struct BarMenu {
     pointed: Pointed,
     items: Vec<Hideable>,
     layouts: Vec<LayoutChoice>,
+    toolbars: Vec<ToolbarChoice>,
     workspace: WeakEntity<Workspace>,
 }
 
@@ -64,8 +73,15 @@ impl BarMenu {
             pointed,
             items,
             layouts,
+            toolbars: Vec::new(),
             workspace,
         }
+    }
+
+    /// The toolbars of the window, offered to show, hide and move.
+    pub(in crate::workspace) fn with_toolbars(mut self, toolbars: Vec<ToolbarChoice>) -> Self {
+        self.toolbars = toolbars;
+        self
     }
 
     pub(in crate::workspace) fn build(
@@ -97,6 +113,9 @@ impl BarMenu {
             "Customize Status Bar\u{2026}",
             Box::new(OpenLayoutSettings { select }),
         );
+        if !self.toolbars.is_empty() {
+            menu = self.toolbars_menu(menu, window, cx);
+        }
         let layouts = self.layouts.clone();
         menu.submenu("Layouts", window, cx, move |mut submenu, _, _| {
             for choice in &layouts {
@@ -111,5 +130,111 @@ impl BarMenu {
             }
             submenu
         })
+    }
+
+    /// "Toolbars": for each toolbar, under its own icon, where it runs, the edges it can run
+    /// along and Hidden, each with its icon and the current one checked.
+    fn toolbars_menu(
+        &self,
+        menu: PopupMenu,
+        window: &mut Window,
+        cx: &mut Context<PopupMenu>,
+    ) -> PopupMenu {
+        let toolbars = self.toolbars.clone();
+        let workspace = self.workspace.clone();
+        menu.submenu_with_icon(
+            Some(IconName::PanelTop.into()),
+            "Toolbars",
+            window,
+            cx,
+            move |mut submenu, window, cx| {
+                for toolbar in &toolbars {
+                    let (toolbar, workspace) = (toolbar.clone(), workspace.clone());
+                    let icon = contribution_icon(toolbar.icon).into();
+                    submenu = submenu.submenu_with_icon(
+                        Some(icon),
+                        toolbar.title.clone(),
+                        window,
+                        cx,
+                        move |edges, _, _| edges_menu(edges, &toolbar, &workspace),
+                    );
+                }
+                submenu
+            },
+        )
+    }
+}
+
+/// The edges a toolbar can run along and Hidden, under a line that says which tabs it runs
+/// along.
+fn edges_menu(
+    mut edges: PopupMenu,
+    toolbar: &ToolbarChoice,
+    workspace: &WeakEntity<Workspace>,
+) -> PopupMenu {
+    edges = edges.check_side(Side::Right).label(if toolbar.own_tabs {
+        "On its plugin's tabs"
+    } else {
+        "On every tab"
+    });
+    for edge in Edge::ALL {
+        let op = EditOp::ShowToolbar {
+            id: toolbar.id.clone(),
+            edge,
+        };
+        edges = edges.item(edit_item(
+            edge_label(edge),
+            edge_icon(edge),
+            toolbar.shown == Some(edge),
+            op,
+            workspace.clone(),
+        ));
+    }
+    let hide = EditOp::RemoveToTray {
+        id: toolbar.id.clone(),
+    };
+    edges.separator().item(edit_item(
+        "Hidden",
+        IconName::EyeOff,
+        toolbar.shown.is_none(),
+        hide,
+        workspace.clone(),
+    ))
+}
+
+/// A checked entry that applies `op` to the selected layout.
+fn edit_item(
+    label: &'static str,
+    icon: IconName,
+    checked: bool,
+    op: EditOp,
+    workspace: WeakEntity<Workspace>,
+) -> PopupMenuItem {
+    PopupMenuItem::new(label)
+        .icon(icon)
+        .checked(checked)
+        .on_click(move |_, window, cx| {
+            let op = op.clone();
+            let _ = workspace.update(cx, |workspace, cx| {
+                layout_edit::apply(workspace, op, window, cx)
+            });
+        })
+}
+
+fn edge_label(edge: Edge) -> &'static str {
+    match edge {
+        Edge::Top => "Top",
+        Edge::Bottom => "Bottom",
+        Edge::Left => "Left",
+        Edge::Right => "Right",
+    }
+}
+
+fn edge_icon(edge: Edge) -> IconName {
+    match edge {
+        Edge::Top => IconName::PanelTop,
+        Edge::Bottom => IconName::PanelBottom,
+        Edge::Left => IconName::PanelLeft,
+        Edge::Right => IconName::PanelRight,
     }
 }

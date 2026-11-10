@@ -74,20 +74,15 @@ impl FileStore {
     }
 }
 pub(crate) fn read_file(path: &Path) -> Result<Vec<u8>, VaultError> {
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.file_type().is_file() {
-        return Err(VaultError::Format);
-    }
-    let mut file = File::open(path)?;
-    if file.metadata()?.len() > MAX_ENVELOPE as u64 {
-        return Err(VaultError::Limit);
-    }
-    let mut bytes = Vec::new();
-    std::io::Read::by_ref(&mut file)
-        .take(MAX_ENVELOPE as u64 + 1)
-        .read_to_end(&mut bytes)?;
-    if bytes.len() > MAX_ENVELOPE {
-        return Err(VaultError::Limit);
-    }
-    Ok(bytes)
+    use nocterm_core::fs::{BoundedReadError, read_regular_bounded};
+    read_regular_bounded(path, MAX_ENVELOPE).map_err(|error| match error {
+        BoundedReadError::NotRegular { .. } => VaultError::Format,
+        BoundedReadError::TooLarge { .. } => VaultError::Limit,
+        BoundedReadError::Io { .. }
+            if fs::symlink_metadata(path).is_ok_and(|metadata| !metadata.is_file()) =>
+        {
+            VaultError::Format
+        }
+        BoundedReadError::Io { source, .. } => VaultError::Io(source),
+    })
 }

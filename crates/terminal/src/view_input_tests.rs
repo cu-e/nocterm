@@ -222,6 +222,35 @@ fn each_key_restarts_cursor_interval_without_notifying_while_lit(cx: &mut TestAp
 }
 
 #[gpui_kit::test]
+fn unfocused_and_nonblinking_terminals_stop_cursor_redraws_and_focus_resumes_blinking(
+    cx: &mut TestAppContext,
+) {
+    let (handle, view, transport) = fixture(cx);
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    let (notifications, _, _subscriptions) = watch(cx, &view);
+    cx.update_window(handle, |_, window, cx| window.blur(cx))
+        .unwrap();
+    cx.run_until_parked();
+    let blurred = notifications.get();
+    advance(cx, 2_120);
+    assert_eq!(notifications.get(), blurred);
+    cx.update_window(handle, |_, window, cx| {
+        window.focus(&view.read(cx).focus_handle(cx), cx);
+        window.render_frame(cx);
+    })
+    .unwrap();
+    advance(cx, 530);
+    assert!(!view.read_with(cx, |view, _| view.cursor_visible()));
+    emit(cx, &transport, 0, Event::Output(b"\x1b[2 q".to_vec()));
+    cx.update_window(handle, |_, window, cx| window.render_frame(cx))
+        .unwrap();
+    let steady = notifications.get();
+    advance(cx, 2_120);
+    assert_eq!(notifications.get(), steady);
+}
+
+#[gpui_kit::test]
 fn composition_commit_and_cancel_redraw_only_when_overlay_changes(cx: &mut TestAppContext) {
     let (handle, view, transport) = fixture(cx);
     let driver = transport.drivers.lock().unwrap()[0].clone();

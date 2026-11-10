@@ -69,7 +69,7 @@ impl ChatRoster {
     }
     /// Switches the visible collection; retained threads keep original hosts.
     pub fn switch_context(&mut self, host: ChatDeps, cx: &mut App) -> bool {
-        if host.scope() == self.host().scope() {
+        if host.chat_scope().ok() == self.host().chat_scope().ok() {
             return self.contexts.select(host);
         }
         if let Some(previous) = self.current() {
@@ -93,6 +93,35 @@ impl ChatRoster {
         }
         true
     }
+    /// Retain device-local snapshots before removing an unavailable original source.
+    /// This never grants a new account lease or redirects the old writer.
+    pub fn retire_stale_sources(&mut self, cx: &mut App) -> Retained {
+        let stale = self
+            .contexts
+            .all()
+            .flat_map(|scope| {
+                scope
+                    .chats()
+                    .iter()
+                    .filter(|thread| !thread.read(cx).source_current())
+                    .map(|thread| (scope.host().runtime().clone(), thread.entity_id()))
+            })
+            .collect::<Vec<_>>();
+        let mut removed = Vec::new();
+        let mut error = None;
+        for (runtime, id) in stale {
+            match runtime.capture_and_detach_document(id, cx) {
+                Ok(true) => removed.push(id),
+                Ok(false) => {}
+                Err(cause) => {
+                    error = Some(RetainError(cause));
+                    break;
+                }
+            }
+        }
+        self.contexts.remove_all(&removed);
+        Retained { removed, error }
+    }
     pub fn current(&self) -> Option<Entity<AgentThread>> {
         self.contexts.current().chats().current()
     }
@@ -109,12 +138,12 @@ impl ChatRoster {
         cx: &App,
     ) -> Result<bool, nocterm_agent_runtime::ChatOpenError> {
         let thread = slot.thread();
-        let scope = thread.read(cx).document().key().scope();
+        let scope = thread.read(cx).document().key().chat_scope();
         let id = thread.entity_id();
-        let visible = scope == self.host().scope();
+        let visible = Some(&scope) == self.host().chat_scope().ok().as_ref();
         let origin = self
             .contexts
-            .scope_mut(scope)
+            .scope_mut(&scope)
             .ok_or(nocterm_agent_runtime::ChatOpenError::Closed)?;
         origin.chats_mut().append(slot);
         if !visible {
@@ -133,6 +162,14 @@ impl ChatRoster {
     }
     pub fn is_empty(&self) -> bool {
         self.contexts.current().chats().is_empty()
+    }
+    /// Leaves the Local roster with no selected document when another captured
+    /// conversation is presented. Uses the same Local visibility transition.
+    pub fn deselect(&mut self, cx: &mut App) {
+        if let Some(previous) = self.current() {
+            previous.update(cx, |thread, cx| thread.set_shown(false, cx));
+        }
+        self.contexts.current_mut().chats_mut().deselect();
     }
     /// Opens chat `id`, hiding the chat open before.
     pub fn select(&mut self, id: EntityId, cx: &mut App) {
@@ -207,26 +244,77 @@ impl ChatRoster {
             .origin(source.entity_id())
             .ok_or(nocterm_agent_runtime::ChatOpenError::Closed)?
             .host();
-        host.require_scope(source.read(cx).document().key().scope())?;
+        host.require_local_scope(&source.read(cx).document().key().chat_scope())?;
         let fork = match last {
-            Some(last) => source.read(cx).fork_at(last + 1),
-            None => source.read(cx).fork(),
+            Some(last) => source.update(cx, |thread, cx| thread.fork_at(last + 1, cx)),
+            None => source.update(cx, |thread, cx| thread.fork(cx)),
         };
-        let thread = host.fork_chat(fork, cx)?;
+        let thread = host.fork_chat(fork?, cx)?;
         thread.update(cx, |thread, cx| thread.persist(cx));
         Ok(thread)
     }
+    /// The chats of this collection other windows hold, which this window lists without
+    /// holding them.
+    pub fn held_elsewhere(&self, cx: &App) -> Vec<Entity<AgentThread>> {
+        let host = self.host();
+        host.runtime()
+            .held_elsewhere(host.seat().id(), cx)
+            .into_iter()
+            .filter_map(|chat| chat.upgrade()?.downcast::<AgentThread>().ok())
+            .collect()
+    }
+    /// Opens in this window chat `chat`, which another window holds, in its place: while it
+    /// neither works nor shows there, with what that window had of it. `None` when it stays,
+    /// or is an archived chat whose row the catalog is reloading.
+    pub fn take_over(
+        &self,
+        chat: &Entity<AgentThread>,
+        cx: &mut App,
+    ) -> Result<Option<Entity<AgentThread>>, nocterm_agent_runtime::ChatOpenError> {
+        let host = self.host();
+        let expected = chat.entity_id();
+        if !host.runtime().may_move(expected, host.seat().id(), cx) {
+            return Ok(None);
+        }
+        if chat.read(cx).is_archived() {
+            if !chat.read(cx).can_release_archive() {
+                return Ok(None);
+            }
+            let id = chat.read(cx).chat_id().to_owned();
+            let row = host.runtime().catalog_snapshot(cx).and_then(|catalog| {
+                (0..catalog.rows().len())
+                    .filter_map(|index| catalog.row(index))
+                    .find(|row| row.summary().id == id)
+            });
+            return row
+                .map(|row| host.restore_archive_in_place_of(row, expected, cx))
+                .transpose();
+        }
+        chat.update(cx, |thread, cx| thread.release_resources(cx));
+        let data = chat
+            .update(cx, |thread, cx| thread.restart_data(cx))
+            .map_err(nocterm_agent_runtime::ChatOpenError::from)?;
+        host.restart_chat(data, expected, cx).map(Some)
+    }
     /// The chats saved in earlier runs and not listed yet, newest first:
-    /// loaded chats, then archived summaries.
+    /// loaded chats, then archived summaries. A chat another window holds stays there.
     pub fn saved(&self, cx: &mut App) -> Vec<Entity<AgentThread>> {
         let Some(catalog) = self.host().runtime().catalog_snapshot(cx) else {
             return Vec::new();
         };
+        let elsewhere: std::collections::HashSet<String> = self
+            .held_elsewhere(cx)
+            .iter()
+            .map(|thread| thread.read(cx).chat_id().to_owned())
+            .collect();
         let mut restored = Vec::new();
         for index in (0..catalog.rows().len()).rev() {
             let Some(row) = catalog.row(index) else {
                 continue;
             };
+            if elsewhere.contains(&row.summary().id) {
+                continue;
+            }
             if self
                 .contexts
                 .current()
@@ -239,6 +327,8 @@ impl ChatRoster {
             }
             match self.host().restore_archive(row, cx) {
                 Ok(thread) => restored.push(thread),
+                // Another window is opening it now.
+                Err(nocterm_agent_runtime::ChatOpenError::AlreadyOpen { .. }) => {}
                 Err(error) => tracing::warn!(%error, "could not admit archived chat"),
             }
         }
@@ -347,7 +437,13 @@ impl ChatRoster {
         match self.host().runtime().trim_history(cx) {
             Ok(evicted) => evicted
                 .into_iter()
-                .filter(|key| key.scope() == self.host().scope() && matches.contains(key.id()))
+                .filter(|key| {
+                    self.host()
+                        .chat_scope()
+                        .as_ref()
+                        .is_ok_and(|scope| key.chat_scope() == *scope)
+                        && matches.contains(key.id())
+                })
                 .map(|key| key.id().to_owned())
                 .collect(),
             Err(error) => {

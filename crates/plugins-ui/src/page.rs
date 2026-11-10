@@ -11,7 +11,9 @@ use nocterm_ui::{FormFrame, FormScope, PluginSettingsDirectory, PluginSettingsFo
 
 use crate::{EnablementError, PluginToggles, view};
 
-/// The Plugins settings page: the system plugins on the left, the selected one on the right.
+/// The Plugins settings page: every plugin in one list on the left, built-in plugins first and
+/// external (user) plugins after them, and the selected one on the right. One plugin is
+/// selected at a time, of either kind.
 pub struct PluginsPage {
     catalog: Arc<PluginCatalog>,
     toggles: Rc<dyn PluginToggles>,
@@ -22,8 +24,36 @@ pub struct PluginsPage {
     refusal: Option<(PluginId, SharedString)>,
     focus: FocusHandle,
     #[cfg(feature = "user")]
-    user: Option<Entity<crate::UserPluginsSection>>,
+    user: Option<UserParts>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// The User section and the parts of it the page draws in place.
+#[cfg(feature = "user")]
+pub(crate) struct UserParts {
+    section: Entity<crate::UserPluginsSection>,
+    head: Entity<crate::UserPartView>,
+    rows: Entity<crate::UserPartView>,
+    detail: Entity<crate::UserPartView>,
+}
+
+#[cfg(feature = "user")]
+impl UserParts {
+    pub(crate) fn section(&self) -> &Entity<crate::UserPluginsSection> {
+        &self.section
+    }
+
+    pub(crate) fn head(&self) -> &Entity<crate::UserPartView> {
+        &self.head
+    }
+
+    pub(crate) fn rows(&self) -> &Entity<crate::UserPartView> {
+        &self.rows
+    }
+
+    pub(crate) fn detail(&self) -> &Entity<crate::UserPartView> {
+        &self.detail
+    }
 }
 
 impl PluginsPage {
@@ -66,16 +96,37 @@ impl PluginsPage {
         mut self,
         session: crate::UserSession,
         switch: Rc<dyn crate::UserPluginsSwitch>,
+        folder: Arc<dyn crate::PluginsFolder>,
         cx: &mut Context<Self>,
     ) -> Self {
+        use crate::{UserPart, UserPartView};
         let directory = self.directory.clone();
-        self.user =
-            Some(cx.new(|cx| crate::UserPluginsSection::new(session, switch, directory, cx)));
+        let section =
+            cx.new(|cx| crate::UserPluginsSection::new(session, switch, directory, folder, cx));
+        // Selecting an external plugin lets go of the built-in one, so one plugin is selected.
+        self._subscriptions.push(
+            cx.subscribe(&section, |page, _, _: &crate::UserSelected, cx| {
+                page.flush_system_form(cx);
+                page.selected = None;
+                page.form = None;
+                cx.notify();
+            }),
+        );
+        let part = |part, cx: &mut Context<Self>| {
+            let section = section.clone();
+            cx.new(|cx| UserPartView::new(section, part, cx))
+        };
+        self.user = Some(UserParts {
+            head: part(UserPart::Head, cx),
+            rows: part(UserPart::Rows, cx),
+            detail: part(UserPart::Detail, cx),
+            section,
+        });
         self
     }
 
     #[cfg(feature = "user")]
-    pub(crate) fn user(&self) -> Option<&Entity<crate::UserPluginsSection>> {
+    pub(crate) fn user(&self) -> Option<&UserParts> {
         self.user.as_ref()
     }
 
@@ -102,8 +153,13 @@ impl PluginsPage {
             .map(|(_, text)| text.clone())
     }
 
-    /// Shows `id` in the detail, first sending what was typed into the previous form.
+    /// Shows `id` in the detail, first sending what was typed into the previous form, and lets go
+    /// of a selected external plugin.
     pub(crate) fn select(&mut self, id: &PluginId, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(feature = "user")]
+        if let Some(user) = &self.user {
+            user.section.update(cx, |section, cx| section.deselect(cx));
+        }
         if self.selected.as_ref() == Some(id) {
             return;
         }
@@ -149,12 +205,16 @@ impl PluginsPage {
     }
 
     fn flush_form(&self, cx: &mut Context<Self>) {
-        if let Some(form) = &self.form {
-            form.update(cx, |form, cx| form.flush(cx));
-        }
+        self.flush_system_form(cx);
         #[cfg(feature = "user")]
         if let Some(user) = &self.user {
-            user.update(cx, |user, cx| user.flush(cx));
+            user.section.update(cx, |user, cx| user.flush(cx));
+        }
+    }
+
+    fn flush_system_form(&self, cx: &mut Context<Self>) {
+        if let Some(form) = &self.form {
+            form.update(cx, |form, cx| form.flush(cx));
         }
     }
 }
@@ -166,7 +226,8 @@ impl PluginsPage {
         let id = PluginId::owned(anchor);
         let Some(user) = self
             .user
-            .clone()
+            .as_ref()
+            .map(|user| user.section.clone())
             .filter(|user| user.read(cx).holds(&id, cx))
         else {
             return false;

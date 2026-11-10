@@ -21,6 +21,7 @@ pub const LIST: SystemContribution = SystemContribution {
         chrome: PanelChrome::Titled,
     }),
     preview: None,
+    edge: None,
     pinned: false,
 };
 

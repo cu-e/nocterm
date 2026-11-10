@@ -1,18 +1,12 @@
 //! Panels stand alone in the bar or share a group: dragging and the menus take a panel out of
 //! its group, put two panels together, start, rename and undo a group.
 
-use gpui_kit::{Bounds, Pixels, TestAppContext, test::TestWindowExt as _};
+use gpui_kit::{Bounds, Pixels, TestAppContext};
 
 use super::{Fixture, open, preview_id};
 
 fn bounds(fixture: &Fixture, id: &str, cx: &mut TestAppContext) -> Bounds<Pixels> {
-    let mut found = None;
-    fixture.frame(cx, |window, _| {
-        found = window
-            .try_find(preview_id(id))
-            .map(|element| element.bounds());
-    });
-    found.unwrap_or_else(|| panic!("{id} is not in the frame"))
+    fixture.bounds(&preview_id(id), cx)
 }
 
 /// Whether the chip of `panel` is drawn inside the pill of `group`.
@@ -127,4 +121,24 @@ fn a_right_click_on_a_panel_of_a_group_opens_the_menu_of_the_panel(cx: &mut Test
     fixture.choose("layout-preview:shell.agent", "New group", cx);
 
     assert!(in_group(&fixture, "shell.agent", "group-1", cx));
+}
+
+#[gpui_kit::test]
+fn the_panel_that_opens_with_the_layout_is_marked_in_its_group(cx: &mut TestAppContext) {
+    let fixture = open(cx);
+    assert_eq!(fixture.opens("shell.files", cx), Some(false));
+
+    fixture.choose("layout-preview:shell.files", "Open with the layout", cx);
+
+    assert_eq!(fixture.opens("shell.files", cx), Some(true));
+    assert_eq!(
+        fixture.opens("shell.servers", cx),
+        Some(false),
+        "one per group"
+    );
+    assert_eq!(
+        fixture.opens("shell.transfers", cx),
+        None,
+        "a widget opens nothing"
+    );
 }

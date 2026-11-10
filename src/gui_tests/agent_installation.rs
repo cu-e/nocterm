@@ -17,7 +17,7 @@ fn configured_and_malformed_ai_policy_are_registered_before_first_window(cx: &mu
                 false,
                 cx,
             );
-            let settings = booted.settings_deps().settings().clone();
+            let settings = booted.settings_deps();
             assert!(
                 settings
                     .document(cx)

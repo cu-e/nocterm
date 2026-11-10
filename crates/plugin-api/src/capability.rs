@@ -6,11 +6,15 @@
 
 pub mod clock;
 mod fields;
+pub mod files;
 pub mod monitor;
+pub mod net;
 pub mod notifications;
 pub mod panels;
 pub mod storage;
 mod table;
+pub mod terminals;
+pub mod timers;
 pub mod transfers;
 pub mod workspace;
 

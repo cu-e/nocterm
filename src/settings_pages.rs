@@ -1,8 +1,7 @@
 //! App-owned checked settings catalogs and native action routing.
 use nocterm_plugin_model::PluginCatalog;
-use nocterm_settings_ui::{
-    Installed, SettingsCatalog, SettingsCatalogError, SettingsPageRegistration,
-};
+use nocterm_settings_ui::{SettingsCatalog, SettingsCatalogError, SettingsPageRegistration};
+use nocterm_store::SettingsHandle;
 use nocterm_ui::{EmbeddedPageSpec, SettingsPageSpec, ThemeUi};
 use nocterm_workspace::{
     ChangeColorScheme, ChangeTheme, DefaultSessionSettings, OpenAiSettings, OpenKeymap,
@@ -16,6 +15,13 @@ const PLUGINS_PAGE: &str = "plugins";
 /// The id of the page whose sections other features supply, and the key of the editor section.
 const APPEARANCE_PAGE: &str = "appearance";
 const LAYOUT_SECTION: &str = "layout";
+
+/// The id of the Vault page, and how many built-in pages come before every other one.
+const VAULT_PAGE: &str = "vault";
+const BUILTIN_PAGES: usize = 5;
+
+/// The id of the page of known hub servers, which exists when the application has hubs.
+const SERVERS_PAGE: &str = "servers";
 
 /// The lazy pages after the builtin ones, in navigation order, with the plugin catalog the
 /// Plugins page and the plugin page links read, and the sections guests add to Appearance.
@@ -41,7 +47,7 @@ impl GuestPages {
 
 #[derive(Clone)]
 pub(crate) struct SettingsPages {
-    installed: Installed,
+    installed: SettingsHandle,
     ordinary: SettingsCatalog,
     startup: Option<SettingsCatalog>,
     plugins: Arc<PluginCatalog>,
@@ -58,7 +64,7 @@ impl SettingsPages {
         vault: Option<&nocterm_vault_ui::Installed>,
     ) -> Result<Self, SettingsCatalogError> {
         Self::compose(
-            Installed::new(settings.clone()),
+            settings.clone(),
             themes,
             nocterm_terminal::settings_pages(terminal),
             nocterm_agent_settings_ui::settings_page(
@@ -72,7 +78,7 @@ impl SettingsPages {
     }
 
     pub(crate) fn compose(
-        installed: Installed,
+        installed: SettingsHandle,
         themes: ThemeUi,
         terminal: [SettingsPageSpec; 3],
         ai: SettingsPageSpec,
@@ -90,7 +96,7 @@ impl SettingsPages {
         Self::new(installed, builtins, guests, vault)
     }
     pub(crate) fn new(
-        installed: Installed,
+        installed: SettingsHandle,
         builtins: [SettingsPageSpec; 5],
         guests: GuestPages,
         startup_vault: Option<SettingsPageSpec>,
@@ -120,7 +126,24 @@ impl SettingsPages {
             plugins,
         })
     }
-    pub(crate) fn installed(&self) -> Installed {
+    /// The same pages with the Vault page of `vault` instead of the one they had: the pages of
+    /// a window whose vault is another one. Built-in and guest pages stay as they are.
+    pub(crate) fn with_vault(&self, vault: SettingsPageSpec) -> Result<Self, SettingsCatalogError> {
+        let vault = SettingsPageRegistration::lazy(vault);
+        let ordinary = catalog_replacing_vault(self.ordinary.pages(), &vault)?;
+        let startup_base = self.startup.as_ref().map_or_else(
+            || &self.ordinary.pages()[..BUILTIN_PAGES],
+            SettingsCatalog::pages,
+        );
+        let startup = catalog_replacing_vault(startup_base, &vault)?;
+        Ok(Self {
+            installed: self.installed.clone(),
+            ordinary,
+            startup: Some(startup),
+            plugins: self.plugins.clone(),
+        })
+    }
+    pub(crate) fn installed(&self) -> SettingsHandle {
         self.installed.clone()
     }
     #[cfg(test)]
@@ -131,7 +154,7 @@ impl SettingsPages {
         self.startup.as_ref()
     }
     pub(crate) fn register(&self, workspace: &mut Workspace, themes: ThemeUi) {
-        register_appearance_commands(workspace, themes, self.installed.settings().clone());
+        register_appearance_commands(workspace, themes, self.installed.clone());
         nocterm_settings_ui::register(workspace, self.ordinary.clone(), self.installed.clone());
         open_on::<DefaultSessionSettings>(workspace, "ssh", &self.ordinary, self.installed.clone());
         open_on_anchor::<OpenLayoutSettings>(
@@ -164,6 +187,19 @@ impl SettingsPages {
             &self.ordinary,
             self.installed.clone(),
         );
+        if self
+            .ordinary
+            .pages()
+            .iter()
+            .any(|page| page.id() == SERVERS_PAGE)
+        {
+            open_on::<nocterm_hubs_ui::ManageServers>(
+                workspace,
+                SERVERS_PAGE,
+                &self.ordinary,
+                self.installed.clone(),
+            );
+        }
         if self.startup.is_some() {
             open_on::<OpenVault>(workspace, "vault", &self.ordinary, self.installed.clone());
         }
@@ -196,12 +232,13 @@ fn layout_anchor(action: &OpenLayoutSettings) -> Option<gpui_kit::SharedString> 
 }
 /// Lazy pages are composed from the same feature installations as the window. The page of a
 /// single plugin nests under Plugins, anchored at the plugin's id; Plugins comes after the
-/// other guests, and the Vault page after it.
+/// other guests, and the Vault page after it. The Servers page is there when hubs are installed.
 pub(crate) fn guest_pages(
     keymap: nocterm_keymap::KeymapHandle,
     monitor: &nocterm_monitor_ui::Installed,
     files: &nocterm_files::Installed,
     projects: Option<&nocterm_projects::Installed>,
+    hubs: Option<&nocterm_hubs_ui::Installed>,
     plugins_page: SettingsPageSpec,
     plugins: Arc<PluginCatalog>,
 ) -> GuestPages {
@@ -222,8 +259,26 @@ pub(crate) fn guest_pages(
             &nocterm_projects::plugin::PLUGIN,
         )
     }));
+    pages.extend(
+        hubs.map(|hubs| SettingsPageRegistration::lazy(nocterm_hubs_ui::settings_page(hubs))),
+    );
     pages.push(SettingsPageRegistration::lazy(plugins_page));
     GuestPages::new(pages, plugins)
+}
+/// The pages without the Vault page, followed by `vault`.
+fn catalog_replacing_vault(
+    pages: &[SettingsPageRegistration],
+    vault: &SettingsPageRegistration,
+) -> Result<SettingsCatalog, SettingsCatalogError> {
+    SettingsCatalog::new(
+        pages
+            .iter()
+            .filter(|page| page.id() != VAULT_PAGE)
+            .cloned()
+            .chain([vault.clone()])
+            .collect(),
+        APPEARANCE_PAGE,
+    )
 }
 fn catalog(
     builtins: [SettingsPageSpec; 5],
@@ -242,7 +297,7 @@ fn open_on<A: gpui_kit::Action>(
     workspace: &mut Workspace,
     id: &'static str,
     pages: &SettingsCatalog,
-    installed: Installed,
+    installed: SettingsHandle,
 ) {
     open_on_anchor::<A>(workspace, id, |_| None, pages, installed);
 }
@@ -252,7 +307,7 @@ fn open_on_anchor<A: gpui_kit::Action>(
     id: &'static str,
     anchor: fn(&A) -> Option<gpui_kit::SharedString>,
     pages: &SettingsCatalog,
-    installed: Installed,
+    installed: SettingsHandle,
 ) {
     let pages = pages.clone();
     workspace.register_action(move |_, action: &A, window, cx| {
@@ -265,7 +320,7 @@ fn defer_open(
     id: &'static str,
     anchor: Option<&str>,
     pages: &SettingsCatalog,
-    installed: &Installed,
+    installed: &SettingsHandle,
     window: &mut gpui_kit::Window,
     cx: &mut gpui_kit::Context<Workspace>,
 ) {

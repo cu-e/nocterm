@@ -58,3 +58,16 @@ async fn available_agents_follow_the_current_settings(cx: &mut TestAppContext) {
         assert_eq!(agents.catalog().iter().count(), 1);
     });
 }
+
+#[gpui::test]
+async fn the_agents_of_signed_in_hubs_are_available_beside_the_local_ones(cx: &mut TestAppContext) {
+    use nocterm_hubs_model::{HubAddress, HubId};
+    let hub = HubId::from(HubAddress::parse("hub.example:7443").unwrap());
+    let launch = nocterm_ai::agents::AgentLaunch::hub_agent(hub, "a1".into(), "Ops".into());
+    let id = launch.id.clone();
+    let agents = handle(cx).with_hub_agents(std::rc::Rc::new(move |_| vec![launch.clone()]));
+    cx.update(|cx| {
+        assert_eq!(agents.get(&id, cx).unwrap().source(), AgentSource::Hub);
+        assert!(agents.get("alpha", cx).is_some());
+    });
+}

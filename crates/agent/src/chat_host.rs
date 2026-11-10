@@ -12,6 +12,8 @@ pub(crate) struct ChatHost {
 }
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum ChatHostError {
+    #[error("The account source is not available for a new chat action")]
+    Account(#[from] nocterm_ai::storage::AgentStorageError),
     #[error("The originating root window no longer matches this chat host.")]
     WindowMismatch,
 }
@@ -24,10 +26,14 @@ impl ChatHost {
         if source.window().workspace_id() != workspace.entity_id() {
             return Err(ChatHostError::WindowMismatch);
         }
-        let seat = Rc::new(crate::workspace_seat::WorkspaceSeat::new(
-            workspace.clone(),
-            source,
-        ));
+        let runtime = installed
+            .capture_runtime()
+            .unwrap_or_else(|_| installed.runtime().unavailable_account())
+            .for_scope(source.context());
+        let seat = Rc::new(
+            crate::workspace_seat::WorkspaceSeat::new(workspace.clone(), source)
+                .with_runtime(runtime.clone()),
+        );
         let sign_in = installed.auth().map(|opener| {
             Rc::new(crate::workspace_sign_in::WorkspaceSignIn::new(
                 opener,
@@ -36,7 +42,7 @@ impl ChatHost {
         });
         Ok(Self {
             deps: ChatDeps::new(
-                installed.runtime().for_scope(source.context()),
+                runtime,
                 installed.agents().clone(),
                 installed.settings().clone(),
                 installed.metadata(),
@@ -51,8 +57,18 @@ impl ChatHost {
     pub(crate) fn source(&self) -> ProjectSurfaceReceipt {
         self.source
     }
-    /// Capture a committed UI origin synchronously. This supplies descriptive
-    /// membership; terminals remain attached to that original ordinary surface.
+    /// The hub agents this window offers, if the application has hubs.
+    pub(crate) fn hub_agents(&self) -> Option<&crate::HubAgentsAccess> {
+        self.installed.hub_agents()
+    }
+
+    /// The agents the window's new-chat menu offers: the local ones, and in a hub window also
+    /// that hub's agents.
+    pub(crate) fn window_agents(&self, cx: &gpui_kit::App) -> nocterm_ai::AvailableAgents {
+        let hub = self.hub_agents().and_then(|access| access.hub());
+        self.agents().available(cx).offered_in(hub)
+    }
+
     pub(crate) fn deps_for_source(
         &self,
         source: ProjectSurfaceReceipt,
@@ -60,15 +76,19 @@ impl ChatHost {
         if source.window().workspace_id() != self.workspace.entity_id() {
             return Err(ChatHostError::WindowMismatch);
         }
+        let runtime = self
+            .installed
+            .capture_runtime()?
+            .for_scope(source.context());
         Ok(ChatDeps::new(
-            self.installed.runtime().for_scope(source.context()),
+            runtime.clone(),
             self.installed.agents().clone(),
             self.installed.settings().clone(),
             self.installed.metadata(),
-            Rc::new(crate::workspace_seat::WorkspaceSeat::new(
-                self.workspace.clone(),
-                source,
-            )),
+            Rc::new(
+                crate::workspace_seat::WorkspaceSeat::new(self.workspace.clone(), source)
+                    .with_runtime(runtime),
+            ),
             self.deps.sign_in().cloned(),
         ))
     }

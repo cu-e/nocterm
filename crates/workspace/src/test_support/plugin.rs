@@ -31,6 +31,7 @@ const fn panel(
         },
         panel: Some(traits),
         preview: None,
+        edge: None,
         pinned: false,
     }
 }
@@ -89,6 +90,7 @@ pub static TEST_PLUGIN: SystemPlugin = SystemPlugin {
             },
             panel: None,
             preview: None,
+            edge: None,
             pinned: false,
         },
         panel(
@@ -112,6 +114,7 @@ pub static TEST_PLUGIN: SystemPlugin = SystemPlugin {
             },
             panel: None,
             preview: None,
+            edge: None,
             pinned: false,
         },
         SystemContribution {
@@ -127,6 +130,7 @@ pub static TEST_PLUGIN: SystemPlugin = SystemPlugin {
             },
             panel: None,
             preview: None,
+            edge: None,
             pinned: false,
         },
         SystemContribution {
@@ -142,6 +146,7 @@ pub static TEST_PLUGIN: SystemPlugin = SystemPlugin {
             },
             panel: Some(TITLED),
             preview: None,
+            edge: None,
             pinned: false,
         },
     ],

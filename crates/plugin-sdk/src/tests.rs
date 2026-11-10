@@ -6,7 +6,7 @@ use nocterm_plugin_abi::WireSnapshot;
 use nocterm_plugin_abi::{AbiError, Answer, Call, MAX_LOG_LINES, decode_reply, encode_call};
 use nocterm_plugin_api::{
     CAPABILITIES, ContributionContext, Effect, Family, HostError, Kind, LocalId, NodeKind,
-    Observed, PluginIcon, Refresh, Snapshot, Tone, View, Zone,
+    Observed, Refresh, Snapshot, Tone, View, Zone,
     capability::{clock::ClockNow, notifications::NoticeTone, transfers::Counts as CountsData},
 };
 
@@ -147,7 +147,7 @@ fn the_builder_has_a_method_for_every_node_kind() {
     let column = view.column(None);
     let row = view.row(column);
     view.text(row, "t");
-    view.icon(row, PluginIcon::Plug);
+    view.icon(row, nocterm_plugin_api::Glyph::Plug);
     view.meter(row, 40);
     view.badge(row, "3");
     view.button(row, "go", "Go");
@@ -155,6 +155,29 @@ fn the_builder_has_a_method_for_every_node_kind() {
     let list = view.list(column);
     view.divider(list);
     view.spacer(list);
+    view.code(column, "line one\nline two");
+    let section = view.section(
+        column,
+        crate::Section::new("Servers")
+            .count(2)
+            .foldable("servers", true),
+    );
+    let item = view.item(
+        section,
+        crate::Item::new("Build")
+            .detail("on")
+            .icon(nocterm_plugin_api::Glyph::Server)
+            .tone(Tone::Success)
+            .selected(true)
+            .key("open"),
+    );
+    view.icon_button(item, "stop", nocterm_plugin_api::Glyph::Stop, "Stop");
+    view.caption(section, "one is off");
+    view.field(section, "CPU", 38);
+    view.chart(
+        section,
+        crate::Chart::new([10, 38]).and([2, 4]).max(100).span(60),
+    );
     view.refresh(Refresh::NextMinute);
     let view = view.build();
     let mut names: Vec<&str> = view.nodes.iter().map(|node| node.kind.name()).collect();
@@ -165,6 +188,21 @@ fn the_builder_has_a_method_for_every_node_kind() {
     assert_eq!(names, expected);
     assert_eq!(view.refresh, Some(Refresh::NextMinute));
     assert!(view.validate().is_ok(), "{:?}", view.validate());
+    let item = view
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, NodeKind::Item { .. }))
+        .unwrap();
+    assert_eq!(
+        (item.key.as_deref(), item.tone),
+        (Some("open"), Tone::Success)
+    );
+    let section = view
+        .nodes
+        .iter()
+        .find(|node| matches!(node.kind, NodeKind::Section { folded: true, .. }))
+        .unwrap();
+    assert_eq!(section.key.as_deref(), Some("servers"));
 }
 
 #[test]

@@ -10,8 +10,9 @@ use nocterm_agent_directory::AgentsHandle;
 use nocterm_agent_runtime::{CatalogRow, ChatOpenError, DocumentClaim, DocumentClaimOutcome};
 use nocterm_ai::{
     history::{ContextId, SavedChat},
+    local_environment::ChatScope,
     metadata::ChatMetadataSource,
-    storage::{AgentStorageError, require_chat_scope},
+    storage::{AgentStorageError, require_local_scope},
 };
 use nocterm_store::SettingsHandle;
 use std::{rc::Rc, sync::Arc};
@@ -61,7 +62,7 @@ impl ChatDeps {
         self.settings().setting::<nocterm_ai::AiSettings>(cx)
     }
     pub fn enabled(&self, cx: &App) -> bool {
-        self.ai(cx).enabled
+        self.runtime().check_current().is_ok() && self.ai(cx).enabled
     }
     /// What chats may do with the window.
     pub fn seat(&self) -> &Seat {
@@ -74,15 +75,31 @@ impl ChatDeps {
     pub fn timestamp(&self) -> u64 {
         self.inner.metadata.timestamp()
     }
-    pub fn new_chat(&self, agent: String) -> SavedChat {
+    pub fn new_chat(&self, agent: String) -> Result<SavedChat, AgentStorageError> {
+        self.runtime().check_current()?;
+        let scope = self.runtime().chat_scope()?;
+        Ok(self.frame_chat(agent, scope))
+    }
+    fn frame_chat(&self, agent: String, scope: ChatScope) -> SavedChat {
         let identity = self.inner.metadata.new_identity();
-        SavedChat::for_scope(agent, identity.id, identity.created, self.scope())
+        SavedChat::for_environment(agent, identity.id, identity.created, scope)
+    }
+    pub(crate) fn new_chat_for_origin(
+        &self,
+        agent: String,
+        origin: &nocterm_ai::execution_origin::ChatKey,
+    ) -> SavedChat {
+        self.frame_chat(agent, origin.chat_scope())
     }
     pub fn scope(&self) -> ContextId {
         self.runtime().scope()
     }
-    pub(crate) fn require_scope(&self, actual: ContextId) -> Result<(), AgentStorageError> {
-        require_chat_scope(self.scope(), actual)
+    pub fn chat_scope(&self) -> Result<ChatScope, AgentStorageError> {
+        self.runtime().chat_scope()
+    }
+    pub(crate) fn require_local_scope(&self, actual: &ChatScope) -> Result<(), AgentStorageError> {
+        self.runtime().check_current()?;
+        require_local_scope(&self.chat_scope()?, actual)
     }
     fn reserve(
         &self,
@@ -90,7 +107,7 @@ impl ChatDeps {
         replacing: Option<EntityId>,
         cx: &mut App,
     ) -> Result<(DocumentClaim, Self), ChatOpenError> {
-        self.require_scope(key.scope())?;
+        self.require_local_scope(&key.chat_scope())?;
         // Seat.id is the original root window entity, not an inner terminal surface.
         let window = self.seat().id();
         let outcome = match replacing {
@@ -113,7 +130,7 @@ impl ChatDeps {
         &self,
         key: &nocterm_ai::execution_origin::ChatKey,
     ) -> Result<Self, AgentStorageError> {
-        self.require_scope(key.scope())?;
+        self.require_local_scope(&key.chat_scope())?;
         Ok(Self {
             inner: Rc::new(Deps {
                 runtime: self.inner.runtime.clone(),
@@ -130,9 +147,38 @@ impl ChatDeps {
         claim: DocumentClaim,
         deps: Self,
         cx: &mut App,
-        build: impl FnOnce(Self, &mut Context<AgentThread>) -> AgentThread,
+        build: impl FnOnce(
+            Self,
+            crate::thread::local_payloads::LocalPayloadAllocation,
+            &mut Context<AgentThread>,
+        ) -> AgentThread,
     ) -> Result<Entity<AgentThread>, ChatOpenError> {
-        let thread = cx.new(|cx| build(deps, cx));
+        let allocation = self.reserve_payload(cx)?;
+        self.build_allocated(claim, deps, allocation, cx, build)
+    }
+    fn reserve_payload(
+        &self,
+        cx: &mut App,
+    ) -> Result<crate::thread::local_payloads::LocalPayloadAllocation, ChatOpenError> {
+        let allocations = self.runtime().local_history_allocations(cx);
+        let resident = allocations
+            .reserve_resident(None, cx)
+            .map_err(|error| ChatOpenError::Storage(error.into_storage()))?;
+        Ok((allocations, resident))
+    }
+    fn build_allocated(
+        &self,
+        claim: DocumentClaim,
+        deps: Self,
+        allocation: crate::thread::local_payloads::LocalPayloadAllocation,
+        cx: &mut App,
+        build: impl FnOnce(
+            Self,
+            crate::thread::local_payloads::LocalPayloadAllocation,
+            &mut Context<AgentThread>,
+        ) -> AgentThread,
+    ) -> Result<Entity<AgentThread>, ChatOpenError> {
+        let thread = cx.new(|cx| build(deps, allocation, cx));
         self.runtime()
             .commit_document(claim, crate::thread::client(&thread), cx)?;
         Ok(thread)
@@ -142,7 +188,11 @@ impl ChatDeps {
         key: nocterm_ai::execution_origin::ChatKey,
         replacing: Option<EntityId>,
         cx: &mut App,
-        build: impl FnOnce(Self, &mut Context<AgentThread>) -> AgentThread,
+        build: impl FnOnce(
+            Self,
+            crate::thread::local_payloads::LocalPayloadAllocation,
+            &mut Context<AgentThread>,
+        ) -> AgentThread,
     ) -> Result<Entity<AgentThread>, ChatOpenError> {
         let (claim, deps) = self.reserve(key, replacing, cx)?;
         self.build_committed(claim, deps, cx, build)
@@ -152,12 +202,11 @@ impl ChatDeps {
         agent: String,
         cx: &mut App,
     ) -> Result<Entity<AgentThread>, ChatOpenError> {
-        let chat = self.new_chat(agent);
+        let chat = self.new_chat(agent)?;
         chat.validate_identity().map_err(AgentStorageError::from)?;
-        let key =
-            nocterm_ai::execution_origin::ChatKey::new(chat.header.scope, chat.header.id.clone());
-        self.build_claimed(key, None, cx, |deps, cx| {
-            let mut thread = AgentThread::new(chat, deps, cx);
+        let key = nocterm_ai::execution_origin::ChatKey::from_header(&chat.header);
+        self.build_claimed(key, None, cx, |deps, allocation, cx| {
+            let mut thread = AgentThread::new(chat, deps, allocation, cx);
             thread.preview_config(cx);
             thread
         })
@@ -168,9 +217,12 @@ impl ChatDeps {
         expected: EntityId,
         cx: &mut App,
     ) -> Result<Entity<AgentThread>, ChatOpenError> {
-        self.build_claimed(data.key().clone(), Some(expected), cx, |deps, cx| {
-            AgentThread::restarted(data, deps, cx)
-        })
+        self.build_claimed(
+            data.key().clone(),
+            Some(expected),
+            cx,
+            |deps, allocation, cx| AgentThread::restarted(data, deps, allocation, cx),
+        )
     }
     pub(crate) fn fork_chat(
         &self,
@@ -179,10 +231,8 @@ impl ChatDeps {
     ) -> Result<Entity<AgentThread>, ChatOpenError> {
         let fork = fork.prepared().map_err(AgentStorageError::from)?;
         let (claim, deps) = self.reserve(fork.key(), None, cx)?;
-        self.runtime()
-            .admit_claimed_history(&claim, fork.resident_bytes(), cx)?;
-        self.build_committed(claim, deps, cx, |deps, cx| {
-            AgentThread::forked(fork, deps, cx)
+        self.build_committed(claim, deps, cx, |deps, allocation, cx| {
+            AgentThread::forked(fork, deps, allocation, cx)
         })
     }
     /// Reserve exact ownership before constructing an entity or starting work.
@@ -191,16 +241,15 @@ impl ChatDeps {
         chat: SavedChat,
         cx: &mut App,
     ) -> Result<Entity<AgentThread>, ChatOpenError> {
-        self.require_scope(chat.header.scope)?;
+        self.require_local_scope(&chat.header.chat_scope())?;
         chat.validate_identity().map_err(AgentStorageError::from)?;
-        let key =
-            nocterm_ai::execution_origin::ChatKey::new(chat.header.scope, chat.header.id.clone());
-        let chat = nocterm_ai::history::prepare(chat).map_err(AgentStorageError::from)?;
+        let key = nocterm_ai::execution_origin::ChatKey::from_header(&chat.header);
+        let chat = nocterm_ai::history::prepare_owned(chat).map_err(AgentStorageError::from)?;
         let (claim, deps) = self.reserve(key, None, cx)?;
         self.runtime()
             .admit_claimed_history(&claim, chat.resident_bytes(), cx)?;
-        self.build_committed(claim, deps, cx, |deps, cx| {
-            AgentThread::restored(chat, deps, cx)
+        self.build_committed(claim, deps, cx, |deps, allocation, cx| {
+            AgentThread::restored(chat, deps, allocation, cx)
         })
     }
     /// Admit catalog metadata and ownership before exposing a saved chat.
@@ -209,16 +258,46 @@ impl ChatDeps {
         row: CatalogRow,
         cx: &mut App,
     ) -> Result<Entity<AgentThread>, ChatOpenError> {
+        self.restore_archive_as(row, None, cx)
+    }
+    /// Restores archived chat `row` in place of `expected`, the entity another window held it
+    /// in, which keeps nothing unsaved.
+    pub(crate) fn restore_archive_in_place_of(
+        &self,
+        row: CatalogRow,
+        expected: EntityId,
+        cx: &mut App,
+    ) -> Result<Entity<AgentThread>, ChatOpenError> {
+        self.restore_archive_as(row, Some(expected), cx)
+    }
+    fn restore_archive_as(
+        &self,
+        row: CatalogRow,
+        replacing: Option<EntityId>,
+        cx: &mut App,
+    ) -> Result<Entity<AgentThread>, ChatOpenError> {
         let summary = row.summary();
-        self.require_scope(summary.scope)?;
+        self.require_local_scope(&summary.chat_scope())?;
         summary.validate().map_err(AgentStorageError::from)?;
-        let key = nocterm_ai::execution_origin::ChatKey::new(summary.scope, summary.id.clone());
-        let (claim, deps) = self.reserve(key, None, cx)?;
+        let key = nocterm_ai::execution_origin::ChatKey::from_summary(summary);
+        let (claim, deps) = self.reserve(key, replacing, cx)?;
         self.runtime().admit_claimed_history(&claim, 0, cx)?;
-        let prepared = self.runtime().take_prepared_chat(&claim, cx)?;
-        self.build_committed(claim, deps, cx, |deps, cx| match prepared {
-            Some(chat) => AgentThread::restored(chat, deps, cx),
-            None => AgentThread::archived(row, deps, cx),
-        })
+        let allocation = self.reserve_payload(cx)?;
+        let prepared = self
+            .runtime()
+            .take_prepared_chat(&claim, allocation.1.clone(), cx)?;
+        match prepared {
+            Some(prepared) => {
+                let built = prepared.map(|chat| {
+                    self.build_allocated(claim, deps, allocation, cx, |deps, allocation, cx| {
+                        AgentThread::restored(chat, deps, allocation, cx)
+                    })
+                });
+                built.value().clone()
+            }
+            None => self.build_allocated(claim, deps, allocation, cx, |deps, allocation, cx| {
+                AgentThread::archived(row, deps, allocation, cx)
+            }),
+        }
     }
 }

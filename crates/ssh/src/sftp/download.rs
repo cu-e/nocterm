@@ -113,6 +113,77 @@ pub(super) async fn read(
         Err(error) => Err(fs_error(error, &download.source)),
     }
 }
+/// Issues `count` READs at consecutive offsets before awaiting any reply and
+/// keeps the in-order prefix of full chunks. A short or invalid reply, an error
+/// or EOF ends the prefix: later replies, which sit at offsets the prefix did
+/// not reach, are discarded and the next call reads again from the prefix end.
+/// An error is reported only when it is the first reply.
+pub(super) async fn read_batch(
+    sftp: &Sftp,
+    downloads: &Downloads,
+    id: Uuid,
+    max_bytes: usize,
+    count: usize,
+) -> Result<Vec<Vec<u8>>, FsError> {
+    let max_bytes = max_bytes.min(MAX_CHUNK);
+    if max_bytes == 0 || count == 0 || count > MAX_READ_BATCH {
+        return Err(FsError::Other("download batch exceeds 8 × 32 KiB".into()));
+    }
+    let download = downloads
+        .lock()
+        .await
+        .get(&id)
+        .cloned()
+        .ok_or(FsError::NotConnected)?;
+    let mut download = download.lock().await;
+    let handle = download.handle.clone().ok_or(FsError::NotConnected)?;
+    if download.eof {
+        return Ok(Vec::new());
+    }
+    let start = download.offset;
+    let window = (max_bytes * count) as u64;
+    if start.checked_add(window).is_none() {
+        return Err(FsError::Other("download offset overflow".into()));
+    }
+    // Unlike try_join_all, drain every reply so no request outlives the call.
+    let reads = (0..count).map(|index| {
+        sftp.raw.read(
+            handle.clone(),
+            start + (index * max_bytes) as u64,
+            max_bytes as u32,
+        )
+    });
+    let replies = futures::future::join_all(reads).await;
+    let mut chunks: Vec<Vec<u8>> = Vec::with_capacity(count);
+    let mut end = start;
+    for reply in replies {
+        match reply {
+            Ok(data) if !data.data.is_empty() && data.data.len() <= max_bytes => {
+                let short = data.data.len() < max_bytes;
+                end += data.data.len() as u64;
+                chunks.push(data.data);
+                if short {
+                    break;
+                }
+            }
+            Ok(_) if !chunks.is_empty() => break,
+            Ok(_) => {
+                return Err(FsError::Other(format!(
+                    "{}: invalid SFTP read length",
+                    download.source
+                )));
+            }
+            Err(SftpError::Status(status)) if status.status_code == StatusCode::Eof => {
+                download.eof = true;
+                break;
+            }
+            Err(_) if !chunks.is_empty() => break,
+            Err(error) => return Err(fs_error(error, &download.source)),
+        }
+    }
+    download.offset = end;
+    Ok(chunks)
+}
 pub(super) async fn close_download(
     sftp: &Sftp,
     downloads: &Downloads,

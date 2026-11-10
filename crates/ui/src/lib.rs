@@ -7,8 +7,10 @@
 //! terminal styling accepts supplied settings; ThemeUi retains the original policy
 //! and paints Design changes without resolving back into Design.
 //!
-//! Owns: Appearance views, theme projections, shared controls, directory editing/selection,
-//! checked text receipts, layout, the searchable choice picker, the icons and column widths of
+//! Owns: Appearance views, theme projections, shared controls (among them the fold of long lists
+//! and grids, `form::fold_list`), directory editing/selection,
+//! checked text receipts and typed section bindings, stateless settings controls, layout,
+//! the searchable choice picker, the icons and column widths of
 //! plugin contributions, the `PluginSource` the shell and its editors read the plugins of both tiers from, and the settings form of a plugin (`PluginSettingsForm`, its
 //! `PluginSettingsSource` port, the system `SectionBinding` and the `PluginSettingsDirectory`).
 //! Does not own: ordered snapshot workers or shutdown coordination (`nocterm-store`).

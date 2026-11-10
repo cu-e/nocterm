@@ -8,9 +8,12 @@ use crate::{
         capability,
         clock::Now,
         monitor::UsageNow,
+        net::NetRequest,
         notifications::{NoticeTone, Own, Post, PostNotice},
         panels::{SetBadge, SetOpen, SetPanelBadge, SetPanelOpen},
         storage::{Remove, Set, StoreRemove, StoreSet},
+        terminals::{OpenTerminal, WriteTerminal},
+        timers::Timer,
         transfers::CountsNow,
         workspace::Kind,
     },
@@ -39,6 +42,12 @@ fn every_marker_has_a_row_and_every_row_a_marker() {
         SetPanelBadge::ID,
         StoreSet::ID,
         StoreRemove::ID,
+        NetRequest::ID,
+        Timer::ID,
+        OpenTerminal::ID,
+        WriteTerminal::ID,
+        crate::capability::files::ServeFiles::ID,
+        crate::capability::terminals::ShowTerminalBar::ID,
     ]
     .into_iter()
     .collect();

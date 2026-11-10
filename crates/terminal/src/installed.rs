@@ -1,11 +1,11 @@
 //! Immutable capabilities retained by terminal models and every workspace window.
 use crate::credentials::CredentialAssociationError;
 use gpui_kit::{App, Task};
+use nocterm_project_providers::LocalTransportFactory;
 use nocterm_session::{CredentialId, CredentialStore, ShellLaunch, Transport};
 use nocterm_workspace::SessionSpec;
 use std::sync::Arc;
 
-type LocalFactory = Arc<dyn Fn(ShellLaunch) -> Arc<dyn Transport> + Send + Sync>;
 type Association = Arc<
     dyn Fn(&SessionSpec, CredentialId, &mut App) -> Task<Result<(), CredentialAssociationError>>
         + Send
@@ -14,11 +14,11 @@ type Association = Arc<
 
 #[derive(Clone)]
 pub struct LocalSessions {
-    factory: Option<LocalFactory>,
+    factory: Option<LocalTransportFactory>,
     default_program: String,
 }
 impl LocalSessions {
-    pub fn new(factory: LocalFactory, default_program: String) -> Self {
+    pub fn new(factory: LocalTransportFactory, default_program: String) -> Self {
         Self {
             factory: Some(factory),
             default_program,
@@ -37,14 +37,21 @@ impl LocalSessions {
         &self.default_program
     }
     fn transport(&self, launch: ShellLaunch) -> Option<Arc<dyn Transport>> {
-        self.factory.as_ref().map(|factory| factory(launch))
+        self.factory.as_ref().map(|factory| factory(launch, None))
     }
 }
 
 #[derive(Clone)]
 pub struct CredentialProvider {
-    store: Arc<dyn CredentialStore>,
+    owner: crate::CredentialCapture,
     association: Association,
+    capture: Option<
+        Arc<
+            dyn Fn() -> Result<crate::CredentialCapture, nocterm_session::CredentialStoreError>
+                + Send
+                + Sync,
+        >,
+    >,
 }
 impl CredentialProvider {
     pub fn new(
@@ -59,12 +66,60 @@ impl CredentialProvider {
         + 'static,
     ) -> Self {
         Self {
-            store,
+            owner: crate::CredentialCapture::this_computer(store),
             association: Arc::new(association),
+            capture: None,
+        }
+    }
+    /// Capture native account ownership once when a terminal is constructed.
+    /// The resulting store must fence its own worker lookup and publication.
+    pub fn with_capture(
+        mut self,
+        capture: impl Fn() -> Result<crate::CredentialCapture, nocterm_session::CredentialStoreError>
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
+        self.capture = Some(Arc::new(capture));
+        self
+    }
+    fn inherited_program(source: nocterm_workspace::SessionSource) -> Self {
+        Self {
+            owner: crate::CredentialCapture::inherited_program(source),
+            association: Arc::new(|_, _, _| {
+                Task::ready(Err(CredentialAssociationError::Unavailable))
+            }),
+            capture: None,
+        }
+    }
+    pub(crate) fn captured(&self) -> Self {
+        let Some(capture) = &self.capture else {
+            return self.clone();
+        };
+        let owner = capture().unwrap_or_else(crate::CredentialCapture::failed);
+        let association = self.association.clone();
+        let bound = owner.clone();
+        Self {
+            owner,
+            capture: None,
+            association: Arc::new(move |spec, id, cx| {
+                if !bound.current() || !bound.store().is_available() {
+                    return Task::ready(Err(CredentialAssociationError::Unavailable));
+                }
+                association(spec, id, cx)
+            }),
         }
     }
     pub(crate) fn store(&self) -> &Arc<dyn CredentialStore> {
-        &self.store
+        self.owner.store()
+    }
+    pub(crate) fn source(
+        &self,
+    ) -> Option<nocterm_hubs_model::source_identity::LocalAccountPartition> {
+        self.owner.partition()
+    }
+    pub(crate) fn source_current(&self) -> bool {
+        self.owner.current()
     }
     pub(crate) fn association(&self) -> Association {
         self.association.clone()
@@ -144,7 +199,10 @@ impl Installed {
         };
         let local = self.0.local.factory.clone().map(|native| {
             let factory = factory.clone();
-            Arc::new(move |_: ShellLaunch| factory.wrap_local(native.clone())) as LocalFactory
+            // Terminal opening has no preparation of its own; the workspace
+            // adapter supplies it to the original two-argument native factory.
+            Arc::new(move |_: ShellLaunch, _| factory.wrap_local(native.clone()))
+                as LocalTransportFactory
         });
         Self(Arc::new(InstalledDeps {
             remote: factory.wrap(self.remote()),
@@ -159,6 +217,38 @@ impl Installed {
             settings: self.0.settings.clone(),
             container: false,
         }))
+    }
+    /// A copy of this installation that answers prompts from another
+    /// credential provider. Everything else, including the transports and the
+    /// settings, stays shared with the original, which keeps its own provider.
+    pub fn with_credentials(&self, credentials: CredentialProvider) -> Self {
+        Self(Arc::new(InstalledDeps {
+            remote: self.0.remote.clone(),
+            local: self.0.local.clone(),
+            credentials: Some(credentials),
+            recording: self.0.recording.clone(),
+            containers: self.0.containers.clone(),
+            workspace_sessions: self.0.workspace_sessions.clone(),
+            settings: self.0.settings.clone(),
+            container: self.0.container,
+        }))
+    }
+    pub(crate) fn with_program_source(&self, source: nocterm_workspace::SessionSource) -> Self {
+        self.with_credentials(CredentialProvider::inherited_program(source))
+    }
+    pub(crate) fn session_source(&self) -> nocterm_workspace::SessionSource {
+        self.0
+            .credentials
+            .as_ref()
+            .map_or_else(Default::default, |credentials| {
+                credentials.owner.session_source()
+            })
+    }
+    pub(crate) fn capture_credentials(&self) -> Self {
+        self.0.credentials.as_ref().map_or_else(
+            || self.clone(),
+            |provider| self.with_credentials(provider.captured()),
+        )
     }
     pub(crate) fn container_transport(
         &self,
@@ -207,6 +297,28 @@ impl Installed {
     pub(crate) fn credentials(&self) -> Option<&CredentialProvider> {
         self.0.credentials.as_ref()
     }
+    pub(crate) fn source(
+        &self,
+    ) -> Option<nocterm_hubs_model::source_identity::LocalAccountPartition> {
+        self.0
+            .credentials
+            .as_ref()
+            .and_then(CredentialProvider::source)
+    }
+    pub(crate) fn source_current(&self) -> bool {
+        self.0
+            .credentials
+            .as_ref()
+            .is_none_or(CredentialProvider::source_current)
+    }
+    pub(crate) fn connection_options(&self) -> nocterm_session::ConnectionOpenOptions {
+        self.0
+            .credentials
+            .as_ref()
+            .map_or_else(Default::default, |credentials| {
+                credentials.owner.connection_options()
+            })
+    }
     pub(crate) fn recording(&self) -> Option<Arc<nocterm_store::RecordingRegistry>> {
         self.0.recording.clone()
     }
@@ -242,6 +354,54 @@ impl LocalCommand {
         Box<dyn FnOnce(nocterm_session::CloseReason, &mut App)>,
     ) {
         (self.launch, self.title, self.transport, self.completion)
+    }
+}
+
+/// A tab on a session that lives elsewhere, reached through its own transport.
+///
+/// The transport is bound to one session: opening the tab attaches to it, the
+/// first events restore the screen the host holds, and closing the tab only
+/// detaches. Nothing is launched locally and no profile is involved. The
+/// owner of the transport names where the session runs; the tab shows that
+/// destination in its status and offers it to consumers that follow the host.
+pub struct AttachedSession {
+    title: String,
+    target: nocterm_session::Target,
+    transport: Arc<dyn Transport>,
+    bar: Option<gpui_kit::Entity<crate::TerminalBar>>,
+}
+impl AttachedSession {
+    pub fn new(
+        title: String,
+        target: nocterm_session::Target,
+        transport: Arc<dyn Transport>,
+    ) -> Self {
+        Self {
+            title,
+            target,
+            transport,
+            bar: None,
+        }
+    }
+
+    /// The tab draws `bar` along the edge it names, while it shows something; the opener fills,
+    /// moves or empties it while the tab is open.
+    pub fn with_bar(self, bar: gpui_kit::Entity<crate::TerminalBar>) -> Self {
+        Self {
+            bar: Some(bar),
+            ..self
+        }
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        String,
+        nocterm_session::Target,
+        Arc<dyn Transport>,
+        Option<gpui_kit::Entity<crate::TerminalBar>>,
+    ) {
+        (self.title, self.target, self.transport, self.bar)
     }
 }
 

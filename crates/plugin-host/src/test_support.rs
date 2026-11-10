@@ -16,6 +16,11 @@ use nocterm_plugin_api::{
 };
 use nocterm_plugin_model::PluginId;
 
+use nocterm_plugin_api::{
+    PluginNet,
+    capability::net::{NetAnswer, NetCall},
+};
+
 use crate::{
     PluginData, PluginDataChange, PluginDataDoc, PluginDataError, PluginRecords, RecordsDoc,
     RecordsError, SessionData, SessionRecords,
@@ -26,6 +31,7 @@ use crate::{
 pub struct MemoryRecords {
     inner: SessionRecords,
     saves: Cell<usize>,
+    refusing: Cell<bool>,
 }
 
 impl MemoryRecords {
@@ -38,6 +44,7 @@ impl MemoryRecords {
         Rc::new(Self {
             inner: SessionRecords::seeded(doc),
             saves: Cell::new(0),
+            refusing: Cell::new(false),
         })
     }
 
@@ -50,6 +57,9 @@ impl MemoryRecords {
     pub fn saves(&self) -> usize {
         self.saves.get()
     }
+    pub fn refuse_writes(&self) {
+        self.refusing.set(true);
+    }
 }
 
 impl PluginRecords for MemoryRecords {
@@ -59,6 +69,9 @@ impl PluginRecords for MemoryRecords {
 
     fn replace(&self, doc: RecordsDoc, cx: &mut App) -> Task<Result<(), RecordsError>> {
         self.saves.set(self.saves.get() + 1);
+        if self.refusing.get() {
+            return Task::ready(Err(RecordsError::Write(Cause::new(Refused))));
+        }
         self.inner.replace(doc, cx)
     }
 }
@@ -142,7 +155,7 @@ impl PluginData for MemoryData {
 /// A package store in memory. A package loads only under the hash it was published with.
 #[derive(Default)]
 pub struct MemoryPackages {
-    stored: Mutex<BTreeMap<PluginId, Package>>,
+    stored: Mutex<BTreeMap<(PluginId, ContentHash), Package>>,
     offered: Mutex<BTreeMap<String, Package>>,
 }
 
@@ -151,7 +164,7 @@ impl MemoryPackages {
         Arc::new(Self::default())
     }
 
-    fn stored(&self) -> MutexGuard<'_, BTreeMap<PluginId, Package>> {
+    fn stored(&self) -> MutexGuard<'_, BTreeMap<(PluginId, ContentHash), Package>> {
         self.stored
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -160,7 +173,9 @@ impl MemoryPackages {
     /// Puts a package in the store, as if an earlier run had published it.
     pub fn put(&self, package: &Package) {
         let id = package.manifest().plugin().id().clone();
-        self.stored().insert(id, package.clone());
+        let mut stored = self.stored();
+        stored.retain(|(plugin, _), _| *plugin != id);
+        stored.insert((id, *package.hash()), package.clone());
     }
 
     /// Makes `read` find `package` at `location`.
@@ -173,7 +188,7 @@ impl MemoryPackages {
 
     /// Whether a package of the plugin is stored.
     pub fn holds(&self, plugin: &PluginId) -> bool {
-        self.stored().contains_key(plugin)
+        self.stored().keys().any(|(id, _)| id == plugin)
     }
 }
 
@@ -190,15 +205,17 @@ impl PluginPackages for MemoryPackages {
     fn publish(&self, package: &Package, replace: bool) -> Result<(), PackageError> {
         let id = package.manifest().plugin().id().clone();
         let mut stored = self.stored();
-        if stored.contains_key(&id) && !replace {
+        if stored.keys().any(|(plugin, _)| *plugin == id) && !replace {
             return Err(PackageError::Duplicate(id));
         }
-        stored.insert(id, package.clone());
+        stored.insert((id, *package.hash()), package.clone());
         Ok(())
     }
 
     fn load(&self, plugin: &PluginId, expected: &ContentHash) -> Result<Package, PackageError> {
-        match self.stored().get(plugin) {
+        let stored = self.stored();
+        match stored.get(&(plugin.clone(), *expected)) {
+            None if stored.keys().any(|(id, _)| id == plugin) => Err(PackageError::HashChanged),
             None => Err(PackageError::NotFound),
             Some(package) if package.hash() == expected => Ok(package.clone()),
             Some(_) => Err(PackageError::HashChanged),
@@ -206,7 +223,14 @@ impl PluginPackages for MemoryPackages {
     }
 
     fn remove(&self, plugin: &PluginId) -> Result<(), PackageError> {
-        self.stored().remove(plugin);
+        self.stored().retain(|(id, _), _| id != plugin);
+        Ok(())
+    }
+
+    fn retain(&self, plugin: &PluginId, expected: &ContentHash) -> Result<(), PackageError> {
+        self.load(plugin, expected)?;
+        self.stored()
+            .retain(|(id, hash), _| id != plugin || hash == expected);
         Ok(())
     }
 }
@@ -221,6 +245,7 @@ struct ScriptState {
     view: Result<View, RuntimeError>,
     events: VecDeque<Result<Effects, RuntimeError>>,
     snapshots: Vec<Snapshot>,
+    seen: Vec<Event>,
     instances: usize,
 }
 
@@ -241,6 +266,7 @@ impl Script {
                 }),
                 events: VecDeque::new(),
                 snapshots: Vec::new(),
+                seen: Vec::new(),
                 instances: 0,
             })),
         }
@@ -270,6 +296,11 @@ impl Script {
     /// How many instances the runtime made.
     pub fn instances(&self) -> usize {
         self.state().instances
+    }
+
+    /// Every event the guest was given, oldest first.
+    pub fn events(&self) -> Vec<Event> {
+        self.state().seen.clone()
     }
 }
 
@@ -301,11 +332,12 @@ impl PluginInstance for ScriptedInstance {
     fn on_event(
         &self,
         _: &LocalId,
-        _: Event,
+        event: Event,
         snapshot: &Snapshot,
     ) -> Result<Effects, RuntimeError> {
         let mut state = self.0.state();
         state.snapshots.push(snapshot.clone());
+        state.seen.push(event);
         state.events.pop_front().unwrap_or(Ok(Effects::default()))
     }
 }
@@ -387,6 +419,57 @@ fn fixture_package(text: serde_json::Value, hash_byte: u8) -> Package {
     let manifest =
         Manifest::validate(&dto, &HostContext::default()).expect("the fixture is a valid manifest");
     Package::new(ContentHash::new([hash_byte; 32]), manifest, Vec::new())
+}
+
+/// A code package of the plugin [`plugin_id`] that sends requests to the address of its `url`
+/// setting with the secret `token` setting, and sets timers.
+pub fn network_package(hash_byte: u8) -> Package {
+    let mut text = fixture_manifest("clock", &["net.request", "timers.set"]);
+    text["runtime"] = "wasm".into();
+    text["settings"]["group"][0]["field"] = serde_json::json!([
+        { "key": "url", "label": "Address", "kind": "text", "max_len": 200 },
+        { "key": "token", "label": "Key", "kind": "secret", "max_len": 100 }
+    ]);
+    text["network"] = serde_json::json!({ "origin_setting": "url", "credential_setting": "token" });
+    fixture_package(text, hash_byte)
+}
+
+/// A network that records every request and answers each with the next scripted answer, or
+/// `200 {}`.
+#[derive(Default)]
+pub struct MemoryNet {
+    state: Mutex<(Vec<NetCall>, VecDeque<NetAnswer>)>,
+}
+
+impl MemoryNet {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    fn state(&self) -> MutexGuard<'_, (Vec<NetCall>, VecDeque<NetAnswer>)> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    pub fn answer(&self, answer: NetAnswer) {
+        self.state().1.push_back(answer);
+    }
+
+    pub fn calls(&self) -> Vec<NetCall> {
+        self.state().0.clone()
+    }
+}
+
+impl PluginNet for MemoryNet {
+    fn send(&self, call: &NetCall) -> NetAnswer {
+        let mut state = self.state();
+        state.0.push(call.clone());
+        state.1.pop_front().unwrap_or(NetAnswer {
+            status: 200,
+            body: String::from("{}"),
+        })
+    }
 }
 
 /// The id of [`package`].

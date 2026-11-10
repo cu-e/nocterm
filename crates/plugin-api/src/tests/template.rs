@@ -283,7 +283,7 @@ fn authoring_mistakes_are_manifest_errors() {
     ));
     assert!(matches!(
         bad(vec![NodeDto {
-            icon: Some(crate::PluginIcon::Puzzle),
+            icon: Some(crate::Glyph::Puzzle),
             ..text(None, "a")
         }]),
         ViewTemplateError::Field { field: "icon", .. }
@@ -473,4 +473,118 @@ proptest! {
         let template = Template::parse(&escaped).unwrap();
         prop_assert_eq!(template.render(&Context { snapshot: &snapshot, item: None }), text);
     }
+}
+
+#[test]
+fn a_declarative_view_builds_sections_items_captions_fields_and_icon_buttons() {
+    let dto = nodes(vec![
+        NodeDto {
+            kind: Some(NodeKindName::Section),
+            key: Some("today".into()),
+            text: Some("Today".into()),
+            detail: Some("{clock.now|hh-mm}".into()),
+            folded: Some(true),
+            ..NodeDto::default()
+        },
+        NodeDto {
+            kind: Some(NodeKindName::Item),
+            parent: Some(0),
+            key: Some("open".into()),
+            text: Some("Clock".into()),
+            detail: Some("at {clock.now|hh-mm}".into()),
+            icon: Some(crate::Glyph::Clock),
+            ..NodeDto::default()
+        },
+        NodeDto {
+            kind: Some(NodeKindName::IconButton),
+            parent: Some(1),
+            key: Some("reset".into()),
+            text: Some("Reset".into()),
+            icon: Some(crate::Glyph::Rotate),
+            ..NodeDto::default()
+        },
+        NodeDto {
+            kind: Some(NodeKindName::Caption),
+            parent: Some(0),
+            text: Some("Times are local".into()),
+            ..NodeDto::default()
+        },
+        NodeDto {
+            kind: Some(NodeKindName::Field),
+            parent: Some(0),
+            text: Some("Now".into()),
+            detail: Some("{clock.now|hh-mm}".into()),
+            ..NodeDto::default()
+        },
+    ]);
+    let view = compile(&dto)
+        .unwrap()
+        .render(&with_clock(snapshot()))
+        .unwrap();
+    assert_eq!(
+        view.nodes[0].kind,
+        NodeKind::Section {
+            title: "Today".into(),
+            count: Some("14:05".into()),
+            folded: true,
+        }
+    );
+    assert_eq!(
+        view.nodes[1].kind,
+        NodeKind::Item {
+            title: "Clock".into(),
+            detail: Some("at 14:05".into()),
+            icon: Some(crate::Glyph::Clock),
+            selected: false,
+        }
+    );
+    assert_eq!(view.nodes[2].key.as_deref(), Some("reset"));
+    assert_eq!(
+        view.nodes[3].kind,
+        NodeKind::Caption("Times are local".into())
+    );
+    assert_eq!(
+        view.nodes[4].kind,
+        NodeKind::Field {
+            label: "Now".into(),
+            value: "14:05".into(),
+        }
+    );
+}
+
+#[test]
+fn component_fields_belong_to_their_kinds() {
+    let stray = nodes(vec![NodeDto {
+        detail: Some("x".into()),
+        ..text(None, "a")
+    }]);
+    assert!(matches!(
+        compile(&stray),
+        Err(ViewTemplateError::Field {
+            field: "detail",
+            ..
+        })
+    ));
+    let field = nodes(vec![NodeDto {
+        kind: Some(NodeKindName::Field),
+        text: Some("CPU".into()),
+        ..NodeDto::default()
+    }]);
+    assert!(matches!(
+        compile(&field),
+        Err(ViewTemplateError::Missing {
+            field: "detail",
+            ..
+        })
+    ));
+    let keyless = nodes(vec![NodeDto {
+        kind: Some(NodeKindName::IconButton),
+        text: Some("Stop".into()),
+        icon: Some(crate::Glyph::Stop),
+        ..NodeDto::default()
+    }]);
+    assert!(matches!(
+        compile(&keyless),
+        Err(ViewTemplateError::Missing { field: "key", .. })
+    ));
 }

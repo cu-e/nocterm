@@ -13,7 +13,7 @@ use gpui_kit::{
     prelude::*,
     px, rems,
 };
-use nocterm_ui::{IconName, form};
+use nocterm_ui::form;
 
 use super::{ConnectionEditor, ICON_ROWS_HEIGHT, field, text};
 use nocterm_connections_model::draft::AppearanceDraft;
@@ -242,41 +242,16 @@ impl AppearanceFields {
             })
             .child(h_flex().flex_wrap().gap_1().children(tiles))
             .when(!expanded, |grid| {
-                grid.child(
-                    div()
-                        .absolute()
-                        .left_0()
-                        .right_0()
-                        .bottom_0()
-                        .h(px(ICON_ROWS_HEIGHT / 2.))
-                        .bg(gpui_kit::linear_gradient(
-                            180.,
-                            gpui_kit::linear_color_stop(background.opacity(0.), 0.),
-                            gpui_kit::linear_color_stop(background, 1.),
-                        )),
-                )
+                grid.child(form::fade(background, px(ICON_ROWS_HEIGHT / 2.)))
             });
-        let icon = v_flex().gap_1().child(grid).child(
-            div().child(
-                Button::new("editor-icons-expand")
-                    .xsmall()
-                    .ghost()
-                    .icon(if expanded {
-                        IconName::ChevronUp
-                    } else {
-                        IconName::ChevronDown
-                    })
-                    .label(if expanded {
-                        "Show fewer".to_owned()
-                    } else {
-                        format!("Show all {count}")
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.appearance.toggle_expanded();
-                        cx.notify();
-                    })),
-            ),
-        );
+        let icon = v_flex().gap_1().child(grid).child(div().child(
+            form::fold_button("editor-icons-expand", expanded, count).on_click(cx.listener(
+                |this, _, _, cx| {
+                    this.appearance.toggle_expanded();
+                    cx.notify();
+                },
+            )),
+        ));
         icon.into_any_element()
     }
     fn color_control(&self, cx: &mut Context<ConnectionEditor>) -> AnyElement {

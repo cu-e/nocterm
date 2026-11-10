@@ -40,7 +40,7 @@
 | `layout.dialog_width` | "number" | `30.0` | Width of the connection editor dialog. |
 | `layout.local_terminal_height` | "number" | `15.0` | Initial height of the independent local terminal dock, in rem. |
 | `layout.picker_width` | "number" | `22.0` | Width of the "new tab" picker. |
-| `layout.settings_width` | "number" | `45.0` | Maximum width of the settings form and its footer. |
+| `layout.settings_width` | "number" | `52.0` | Maximum width of the settings form and its footer. |
 | `layout.sidebar_max_width` | "number" | `64.0` | Widest the sidebar can be dragged. |
 | `layout.sidebar_min_width` | "number" | `12.0` | Narrowest the sidebar can be dragged. |
 | `layout.sidebar_width` | "number" | `17.0` | Initial width of the left sidebar. |

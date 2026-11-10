@@ -20,6 +20,7 @@ pub struct SessionProbe {
     exec: Option<Arc<dyn nocterm_session::HostExec>>,
     generation: u64,
     parent: Option<Rc<dyn nocterm_workspace_ports::ProjectParentCapture>>,
+    title_reads: std::cell::Cell<usize>,
 }
 #[derive(Debug, thiserror::Error)]
 #[error("test session generation is exhausted")]
@@ -51,7 +52,12 @@ impl SessionProbe {
             exec: None,
             generation: 0,
             parent: None,
+            title_reads: Default::default(),
         })
+    }
+    /// How many times the tab strip asked for this Item's title: once per drawn tab bar.
+    pub fn title_reads(&self) -> usize {
+        self.title_reads.get()
     }
     /// Supply structured execution without a native session in feature tests.
     pub fn set_executor(
@@ -127,6 +133,7 @@ impl Item for SessionProbe {
             .expect("test session generation is available");
     }
     fn tab_title(&self, _: &App) -> gpui_kit::SharedString {
+        self.title_reads.set(self.title_reads.get() + 1);
         self.spec.title.clone()
     }
     fn session(&self, _: &App) -> Option<SessionContext> {
@@ -222,6 +229,7 @@ impl crate::ConnectionFactSession for ProbeState {
         let owner = self.owner.upgrade()?;
         let probe = owner.read(cx);
         Some(crate::FactSessionSnapshot {
+            source: None,
             expected: ExpectedSession::new(owner.entity_id(), probe.generation),
             session: SessionContext::new(
                 probe.spec.target.clone(),
@@ -238,6 +246,8 @@ impl TerminalState for ProbeState {
         let owner = self.owner.upgrade()?;
         let probe = owner.read(cx);
         Some(TerminalInfo {
+            source: None,
+            source_current: true,
             title: probe.spec.title.clone(),
             local: false,
             target: Some(probe.spec.target.clone()),

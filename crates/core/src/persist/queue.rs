@@ -28,7 +28,7 @@ pub struct WriteQueue<C> {
     limit: usize,
     draining: bool,
     closing: bool,
-    writes: Arc<AtomicUsize>,
+    writes: InFlight,
 }
 
 /// Marks one disk write as in flight until dropped.
@@ -36,7 +36,7 @@ pub struct WriteQueue<C> {
 pub struct Writing(Arc<AtomicUsize>);
 
 /// Counts the writes in flight, independently of the queue.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct InFlight(Arc<AtomicUsize>);
 
 impl<C> WriteQueue<C> {
@@ -47,7 +47,7 @@ impl<C> WriteQueue<C> {
             limit,
             draining: false,
             closing: false,
-            writes: Arc::default(),
+            writes: InFlight::default(),
         }
     }
 
@@ -99,12 +99,11 @@ impl<C> WriteQueue<C> {
     /// Marks a disk write as in flight until the guard drops. Writes made
     /// outside the queue, such as of related files, may use it too.
     pub fn begin_write(&self) -> Writing {
-        self.writes.fetch_add(1, Ordering::AcqRel);
-        Writing(self.writes.clone())
+        self.writes.begin_write()
     }
 
     pub fn in_flight(&self) -> InFlight {
-        InFlight(self.writes.clone())
+        self.writes.clone()
     }
 }
 
@@ -115,6 +114,13 @@ impl Drop for Writing {
 }
 
 impl InFlight {
+    /// Tracks native work independently from a pending queue or its caller.
+    /// The returned guard belongs to the actual task through physical completion.
+    pub fn begin_write(&self) -> Writing {
+        self.0.fetch_add(1, Ordering::AcqRel);
+        Writing(self.0.clone())
+    }
+
     pub fn count(&self) -> usize {
         self.0.load(Ordering::Acquire)
     }

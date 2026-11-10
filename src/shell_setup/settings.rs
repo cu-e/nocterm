@@ -15,6 +15,7 @@ pub(crate) struct GuestInputs<'a> {
     keymap: nocterm_keymap::KeymapHandle,
     files: &'a nocterm_files::Installed,
     projects: Option<&'a nocterm_projects::Installed>,
+    hubs: Option<&'a nocterm_hubs_ui::Installed>,
     layout: &'a nocterm_ui::LayoutHandle,
 }
 
@@ -24,7 +25,6 @@ impl<'a> GuestInputs<'a> {
         ui: &'a nocterm_ui::UiReady,
         keymap: nocterm_keymap::KeymapHandle,
         files: &'a nocterm_files::Installed,
-        projects: Option<&'a nocterm_projects::Installed>,
         layout: &'a nocterm_ui::LayoutHandle,
     ) -> Self {
         Self {
@@ -32,9 +32,25 @@ impl<'a> GuestInputs<'a> {
             ui,
             keymap,
             files,
-            projects,
+            projects: None,
+            hubs: None,
             layout,
         }
+    }
+
+    /// The settings page of projects, when projects are installed.
+    pub(crate) fn with_projects(
+        mut self,
+        projects: Option<&'a nocterm_projects::Installed>,
+    ) -> Self {
+        self.projects = projects;
+        self
+    }
+
+    /// The Servers settings page, when hubs are installed.
+    pub(crate) fn with_hubs(mut self, hubs: Option<&'a nocterm_hubs_ui::Installed>) -> Self {
+        self.hubs = hubs;
+        self
     }
 }
 
@@ -51,6 +67,7 @@ pub(crate) fn install_guest_pages(
         keymap,
         files,
         projects,
+        hubs,
         layout,
     } = inputs;
     let directory = plugins
@@ -65,6 +82,7 @@ pub(crate) fn install_guest_pages(
         monitor,
         files,
         projects,
+        hubs,
         page,
         plugins.catalog().clone(),
     )

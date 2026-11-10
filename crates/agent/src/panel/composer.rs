@@ -5,10 +5,9 @@ use super::{
     menu::{ConfigurationSelection, FavoriteSelection, ModeSelection},
 };
 use crate::thread::Attachment;
-use gpui_kit::{AnyElement, PathPromptOptions};
+use gpui_kit::AnyElement;
 use nocterm_ai::images::PromptImage;
 use nocterm_ai::model::ids::AuthMethodId;
-use nocterm_ai::model::usage::ContextUsage;
 use std::path::PathBuf;
 
 impl AgentPanel {
@@ -25,7 +24,8 @@ impl AgentPanel {
         }
         self.sync_composer_draft(cx);
         self.sync_command_token(window, cx);
-        cx.notify();
+        // Typing redraws the footer with the composer, not the transcript or history.
+        self.layout.parts().notify(parts::PartKind::Footer, cx);
     }
     pub(super) fn submit_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.send(window, cx);
@@ -167,10 +167,11 @@ impl AgentPanel {
     ) {
         self.composer.select_command_token(range, window, cx);
     }
+    /// The composer of the open chat: its field, attachments, controls and notices.
     pub(super) fn render_composer(
         &mut self,
+        frame: &composer_frame::ComposerFrame,
         thread: &Entity<AgentThread>,
-        usage: Option<&ContextUsage>,
         labels: &attachments::AttachmentLabels,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -184,16 +185,19 @@ impl AgentPanel {
             cx,
         );
         let input = composer_renderer::ComposerRenderer::render_input(&self.composer, cx);
+        let stop = composer_frame::RenderedStop::capture(thread, cx);
         let footer = composer_renderer::ComposerRenderer::render_footer(
+            frame,
             &self.composer,
             &self.menus,
             thread,
-            usage,
+            stop,
             cx,
         );
+        let terminal = self.host.sign_in().is_some();
         let notices = composer_renderer::ComposerRenderer::render_notices(
             &self.composer,
-            self.host.sign_in().is_some(),
+            terminal,
             thread,
             cx,
         );
@@ -207,6 +211,25 @@ impl AgentPanel {
             cx,
         )
     }
+    /// The Local chat's queued prompts above the composer; none while the queue is empty.
+    pub(super) fn render_queue(
+        &mut self,
+        thread: &Entity<AgentThread>,
+        labels: &attachments::AttachmentLabels,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if thread.read(cx).composer().queue().is_empty() {
+            return None;
+        }
+        let prompts = if self.composer.queue_open() {
+            thread.read(cx).composer().queue().to_vec()
+        } else {
+            Vec::new()
+        };
+        let previews =
+            preview_operation::PreviewOperation::queued_previews(&mut self.messages, &prompts, cx);
+        queue::QueueRenderer::render_queue(&self.composer, prompts, previews, thread, labels, cx)
+    }
     pub(super) fn prepare_images(
         &mut self,
         work: impl std::future::Future<Output = Result<Vec<PromptImage>, ImageAttachError>>
@@ -217,7 +240,7 @@ impl AgentPanel {
         let Some(thread) = self.current() else {
             return;
         };
-        if self.preparing_queue_edit()
+        if self.preparing_images()
             || !thread
                 .read(cx)
                 .agent_info()
@@ -225,11 +248,18 @@ impl AgentPanel {
         {
             return;
         }
+        let Some(permit) = self.messages.admit_image_work() else {
+            self.notices
+                .set_error(Some(ImageAttachError::Busy.to_string()));
+            cx.notify();
+            return;
+        };
         let binding = self.composer.prepare_images(thread.entity_id());
         cx.notify();
         let ticket = thread.read(cx).session_ticket();
         let owner = thread.downgrade();
-        image_preparation::ImagePreparation::new(binding, owner, ticket, Box::pin(work)).launch(cx);
+        image_preparation::ImagePreparation::new(binding, owner, ticket, Box::pin(work), permit)
+            .launch(cx);
     }
     pub(super) fn on_composer_images_prepared(
         &mut self,
@@ -269,38 +299,47 @@ impl AgentPanel {
         cx.notify();
     }
     pub(super) fn add_image_bytes(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        let Some(thread) = self.current() else {
+            return;
+        };
+        let budget = nocterm_ai::images::ImageCollectionBudget::remaining(
+            thread.read(cx).composer().images(),
+        );
         let inspector = self.messages.inspector();
         self.prepare_images(
-            async move { Ok(vec![PromptImage::validate(bytes, inspector.as_ref())?]) },
+            async move {
+                let mut budget = budget?;
+                budget.admit(bytes.len())?;
+                Ok(vec![PromptImage::validate(bytes, inspector.as_ref())?])
+            },
             cx,
         );
     }
     pub(super) fn add_images(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let Some(thread) = self.current() else {
+            return;
+        };
+        let budget = nocterm_ai::images::ImageCollectionBudget::remaining(
+            thread.read(cx).composer().images(),
+        );
         let inspector = self.messages.inspector();
         self.prepare_images(
-            async move { images::read_images(paths, inspector.as_ref()) },
+            async move { images::read_images(paths, inspector.as_ref(), budget?) },
             cx,
         );
     }
-    pub(super) fn on_image_paths_picked(
-        &mut self,
-        operation: image_picker::ImagePickerOperation,
-        paths: Vec<PathBuf>,
-        cx: &mut Context<Self>,
-    ) {
-        if operation.current(
-            self.current().map(|thread| thread.entity_id()),
-            self.composer.revision(),
-        ) {
-            self.add_images(paths, cx);
-        }
+    /// Whether the composer takes images and files: a chat is open.
+    pub(super) fn composer_attaches(&self, _cx: &App) -> bool {
+        self.current().is_some()
     }
-    pub(super) fn pick_images(&mut self, cx: &mut Context<Self>) {
-        let operation = image_picker::ImagePickerOperation::new(
-            self.current().map(|thread| thread.entity_id()),
-            self.composer.revision(),
-        );
-        let picked = cx.prompt_for_paths(PathPromptOptions {
+    /// The paperclip: files of any kind, picked for the open chat.
+    pub(super) fn pick_files(&mut self, cx: &mut Context<Self>) {
+        if !self.composer_attaches(cx) {
+            return;
+        }
+        let chat = self.current().map(|thread| thread.entity_id());
+        let pick = attach_files::AttachPick::new(chat, self.composer.revision());
+        let picked = cx.prompt_for_paths(gpui_kit::PathPromptOptions {
             files: true,
             directories: false,
             multiple: true,
@@ -309,9 +348,49 @@ impl AgentPanel {
         cx.spawn(async move |this, cx| {
             if let Ok(Ok(Some(paths))) = picked.await {
                 let _ = this.update(cx, |this, cx| {
-                    this.on_image_paths_picked(operation, paths, cx)
+                    let chat = this.current().map(|thread| thread.entity_id());
+                    if pick.current(chat, this.composer.revision()) {
+                        this.attach_paths(paths, cx);
+                    }
                 });
             }
+        })
+        .detach();
+    }
+    /// Attaches `paths`: images the agent takes as images, every other file as a link.
+    pub(super) fn attach_paths(&mut self, paths: Vec<PathBuf>, cx: &mut Context<Self>) {
+        let Some(thread) = self.current() else {
+            return;
+        };
+        let images_taken = thread
+            .read(cx)
+            .agent_info()
+            .is_none_or(|info| info.capabilities.image_prompts);
+        let (images, files) = attach_files::split(paths, images_taken);
+        if !images.is_empty() {
+            self.add_images(images, cx);
+        }
+        if files.is_empty() {
+            return;
+        }
+        let chat = thread.entity_id();
+        let read = cx
+            .background_executor()
+            .spawn(async move { attach_files::link(&files) });
+        cx.spawn(async move |this, cx| {
+            let linked = read.await;
+            let _ = this.update(cx, |this, cx| {
+                let Some(thread) = this.chats.find(chat).cloned() else {
+                    return;
+                };
+                let added = linked.and_then(|files| {
+                    thread.update(cx, |thread, cx| thread.add_composer_files(files, cx))
+                });
+                if let Err(error) = added {
+                    this.notices.set_error(Some(error.to_string()));
+                }
+                cx.notify();
+            });
         })
         .detach();
     }
@@ -362,6 +441,7 @@ impl AgentPanel {
     pub(super) fn preparing_images(&self) -> bool {
         self.composer.preparing()
     }
+    #[cfg(test)]
     pub(super) fn preparing_queue_edit(&self) -> bool {
         self.composer.preparing_edit()
     }
@@ -480,13 +560,23 @@ impl AgentPanel {
             return;
         };
         let draft = self.original_composer_text(cx);
-        let ready = prompt.saved().images.is_empty();
+        let ready = !prompt
+            .saved()
+            .images
+            .iter()
+            .any(|content| matches!(content, nocterm_ai::model::content::Content::Image(_)));
+        let files = prompt
+            .saved()
+            .images
+            .iter()
+            .filter_map(nocterm_ai::prompt_files::PromptFile::of)
+            .collect();
         let binding = self
             .composer
             .begin_edit(thread.entity_id(), id, draft.clone(), ready);
         thread.update(cx, |thread, cx| {
             thread.set_draft(draft, cx);
-            thread.begin_composer_edit(Vec::new(), prompt.attachments().to_vec(), cx);
+            thread.begin_composer_edit(Vec::new(), files, prompt.attachments().to_vec(), cx);
             cx.notify();
         });
         if !ready {
@@ -513,7 +603,7 @@ impl AgentPanel {
             thread.read(cx).session_ticket(),
             id,
             saved,
-            self.messages.inspector(),
+            self.messages.image_deps(),
         )
         .launch(cx);
         self.composer.install_edit_preparation(&binding, id, task);
@@ -561,16 +651,6 @@ impl AgentPanel {
         self.composer.set_text(draft, window, cx);
     }
 
-    pub(super) fn on_queue_height_observed(
-        &mut self,
-        chat: EntityId,
-        height: gpui_kit::Pixels,
-        cx: &mut Context<Self>,
-    ) {
-        if self.composer.observe_queue_height(chat, height) {
-            cx.notify();
-        }
-    }
     pub(super) fn sync_composer_draft(&mut self, cx: &mut Context<Self>) {
         let Some(thread) = self.current() else {
             return;
@@ -580,7 +660,6 @@ impl AgentPanel {
             thread.update(cx, |thread, cx| thread.set_draft(text, cx));
         }
     }
-    /// Reads the plan limits again when the card opens.
     pub(super) fn close_menus(&mut self, cx: &mut Context<Self>) {
         self.menus.reset();
         cx.notify();
@@ -593,7 +672,7 @@ impl AgentPanel {
             return;
         }
         self.composer.toggle_queue();
-        cx.notify();
+        self.layout.parts().notify(parts::PartKind::Footer, cx);
     }
     pub(super) fn on_attachment_selected(
         &mut self,
@@ -618,18 +697,28 @@ impl AgentPanel {
             });
         }
     }
+    pub(super) fn on_file_removed(
+        &mut self,
+        chat: gpui_kit::EntityId,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(thread) = self.chats.find(chat).cloned() {
+            thread.update(cx, |thread, cx| thread.remove_composer_file(index, cx));
+        }
+    }
     pub(super) fn on_send_clicked(
         &mut self,
         chat: gpui_kit::EntityId,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(thread) = self.current().filter(|thread| thread.entity_id() == chat) {
-            if composer_renderer::ComposerRenderer::stops(&self.composer, &thread, cx) {
-                thread.update(cx, |thread, cx| thread.stop(cx));
-            } else {
-                self.send(window, cx);
-            }
+        // The send button stops a run through its rendered stop; this sends.
+        if self
+            .current()
+            .is_some_and(|thread| thread.entity_id() == chat)
+        {
+            self.send(window, cx);
         }
     }
     pub(super) fn on_restart_clicked(

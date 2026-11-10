@@ -7,8 +7,8 @@ user-invocable: false
 # Port design
 
 Input: a consumer and what it needs ("the snippets panel needs to paste into the
-user's terminal"). Output: a "Ports" section in `30-design.md`
-(`.claude/skills/feature/plan-bus.md`), then code.
+user's terminal"). Record the contract in the compact plan
+(`.claude/skills/feature/plan-bus.md`) before implementing it.
 
 Rules: AGENTS.md "Where code goes" item 5, design rules 3 and 4; ADR 0006
 (workspace ports), 0017 (local filesystem capabilities), 0032 (narrow terminal
@@ -20,20 +20,22 @@ Search for an existing contract before writing one:
 
 - `nocterm-session`: `Transport`, `RemoteFs`, `LocalFs`/`LocalMutations`,
   `CredentialStore`, `HostExec`, `ProgramOpener`.
-- `nocterm-workspace`: the narrow terminal and connection seams
-  (`LocalTerminal`, `UserTerminalPaste`, `TerminalCapabilities`,
-  `ConnectionDirectory`, …).
+- `nocterm-workspace-ports`: terminal contracts (`UserTerminalPaste`,
+  `TerminalCapabilities`, …), available below the shell (ADR 0062).
+- `nocterm-workspace`: shell seams (`LocalTerminal`, `ConnectionDirectory`, …).
 - `nocterm-store`: `Persisted`, `SnapshotWriter`, `AppendPersisted`, `ShutdownCoordinator`.
 
-Reuse a contract only if the consumer needs **all** of it. Never add a method
-to an existing broad trait for a new feature pair: write a separate port.
+Reuse a cohesive contract when its dependencies, lifetime and authority fit.
+Calling only some methods is not by itself a reason to wrap or duplicate it.
+Use a narrower port when extra capabilities grant unwanted authority or couple
+independent responsibilities. Never grow a broad trait for a new feature pair.
 
 ## 2. Shape
 
 - **Name for the consumer's need**: `UserTerminalPaste`, not `TerminalApi`;
   `ConnectionDirectory`, not `ConnectionsService`.
-- **Minimal surface**: the methods this consumer calls today. More than about
-  six methods, or methods only another consumer uses, means two ports.
+- **Minimal surface**: expose the cohesive capability needed today. Split by
+  independent responsibility or authority, not an arbitrary method count.
 - **Owner of the contract**: the lowest layer both sides may depend on —
   a domain crate (pure contract, e.g. session), `workspace` for feature-to-feature
   seams, a service crate for GPUI handles. Use `placement` if unsure.
@@ -57,7 +59,7 @@ to an existing broad trait for a new feature pair: write a separate port.
 - The real implementation lives in the adapter (I/O) or the providing feature.
 - Composition injects it in `src/bootstrap.rs` (`wiring`).
 
-## Output (in `30-design.md`)
+## Contract to record
 
 ```
 ### Port <Name>
@@ -70,4 +72,4 @@ to an existing broad trait for a new feature pair: write a separate port.
 - Rejected alternative: <broader trait / direct dependency> because …
 ```
 
-End with the Result block.
+Report the relevant changes, evidence and remaining work concisely.

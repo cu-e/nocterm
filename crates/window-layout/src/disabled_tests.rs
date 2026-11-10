@@ -33,9 +33,10 @@ const fn entry(
                 width: WidthClass::Navigation,
                 chrome: PanelChrome::Titled,
             }),
-            ContributionKind::Widget => None,
+            ContributionKind::Widget | ContributionKind::Toolbar => None,
         },
         preview: None,
+        edge: None,
         pinned: false,
     }
 }

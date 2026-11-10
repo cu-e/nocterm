@@ -1,12 +1,16 @@
 //! The session contract: what the rest of nocterm knows about a remote shell.
-//! Owns: targets, authentication, jump-host route values, launch/override validation, opaque IDs, text errors and execution/FS contracts.
+//! Owns: targets, authentication (including a reference to a key kept in the vault), route values (jump hosts, the hub proxy step), launch/override validation, opaque IDs, text errors and execution/FS contracts.
 //! Does not own: transport I/O, OS randomness, durable credentials or presentation.
-//! Ports provided: Transport, HostExec, RemoteFs, CredentialStore, ProgramOpener,
-//! and recording::{OutputLogFactory, OutputLog}.
+//! Ports provided: Transport, HostExec, RemoteFs, CredentialStore, ProgramOpener, RelayDialer,
+//! command_jobs::{CommandJobs, CommandJobsFactory}, and recording::{OutputLogFactory, OutputLog}.
+//! A relay stream is two bounded frame channels (`RELAY_FRAMES` of at most `RELAY_FRAME_BYTES`);
+//! the hub is named by an opaque address string, so no hub type appears in this crate.
 //! Recording diagnostics use foundation shared typed causes and domain constructors;
 //! semantic equality retains category, path and append offset.
 //! Settings sections: ssh and local (existing adapter configuration). Globals: none.
 //! Invariants: IDs use explicit bytes; launch validation performs no I/O or value expansion.
+//! `Event::Restore` carries the screen a host holds when a session is attached again: the
+//! owner discards what it drew and paints it, and it is never output of the program.
 //! InvalidLaunch/InvalidOptions preserve typed causes; errors never retain environment values.
 //!
 //! A [`Session`] is a pair of channels. The owner sends [`Command`]s (input,
@@ -22,12 +26,27 @@
 //! `ProgramOpener`, `local_fs::{LocalFs, LocalMutations, LocalDirectory, LocalSource, LocalStage}`.
 //! Settings sections: SSH and local shell options (adapter-ownership migration debt).
 //! Globals: none. Invariants: bounded channels carry ordered output and explicit closure.
+//! Short-output collection distinguishes a complete response from overflow; remote
+//! document collection bounds chunks and bytes while callers retain close policy.
 //! Local filesystem diagnostics use foundation SharedError for immutable typed causes;
 //! native adapters construct partial outcomes through domain methods without core access.
 
-#[cfg(feature = "test-support")]
+//! Runtime connection options retain a captured, non-I/O source guard separately
+//! from descriptive requests. Native producers check it at I/O and on resumed
+//! futures; legacy producers reject constrained opens. Producer closure wakes
+//! retained native stream waiters. Connection failures retain typed causes.
+
+#[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
+pub mod command_jobs;
+
+mod connection_failure;
+mod connection_source;
+pub use connection_failure::{ConnectionFailure, ConnectionFailureKind};
+pub use connection_source::{
+    ConnectionOpenOptions, ConnectionSource, ConnectionSourceError, ConnectionSourceGuard,
+};
 mod credentials;
 pub mod exec;
 pub mod fs;
@@ -38,6 +57,7 @@ mod options;
 mod program;
 mod program_opener;
 pub mod recording;
+mod relay;
 mod secret;
 mod session;
 mod settings;
@@ -47,21 +67,28 @@ mod text;
 pub use credentials::{CredentialFuture, CredentialStore, CredentialStoreError};
 pub use exec::{
     Collected, ErrorTail, ExecError, ExecExit, ExecFuture, ExecOutput, ExecRequest, ExecSink,
-    HostExec,
+    HostExec, OutputLimitExceeded,
 };
 pub use fs::{DirEntry, EntryKind, FileMetadata, FsCapabilities, FsError, FsFuture, RemoteFs};
 pub use jump::{HostAddress, JumpHost, MAX_JUMP_HOSTS, PromptHop, ResolvedJump};
+pub use relay::{
+    RELAY_FRAME_BYTES, RELAY_FRAMES, RelayDialer, RelayError, RelayPeer, RelayReceiver,
+    RelayRefusal, RelaySender, RelayStream,
+};
 pub use secret::Secret;
 pub use session::{
     CloseReason, Command, ConnectRequest, ConnectStage, Event, HostKeyDecision, Prompt, PtySize,
     Reply, SecretRequest, Session, SessionDriver, SessionError, Transport, channel,
+    channel_with_source,
 };
 pub use target::{
     Auth, CredentialId, CredentialIdParseError, DEFAULT_PORT, ParseTargetError, Target,
 };
 pub use text::TextEncodingError;
 
-pub use launch::{LaunchValidationError, ShellLaunch, quote_posix, quote_powershell};
+pub use launch::{
+    LaunchValidationError, ShellLaunch, ShellLaunchPreparation, quote_posix, quote_powershell,
+};
 pub use program::{ProgramTransport, TerminalRequest};
 pub use program_opener::{ProgramOpenError, ProgramOpenFuture, ProgramOpenRequest, ProgramOpener};
 

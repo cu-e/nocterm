@@ -81,7 +81,7 @@ fn module() -> Vec<u8> {
 /// Everything one session leaves for a test to look at.
 struct Session {
     shell: UserShell,
-    plugins: HostPlugins,
+    plugins: std::rc::Rc<HostPlugins>,
     state: TempDir,
     file: String,
     _work: TempDir,
@@ -96,10 +96,6 @@ fn session(mode: impl FnOnce(&Path) -> UserPluginMode, cx: &mut TestAppContext) 
     let paths = nocterm_core::Paths::rooted_at(state.path());
     let mode = mode(&file);
     let settings = super::gate::allowing(cx);
-    let dev = match &mode {
-        UserPluginMode::Dev(file) => Some(file.clone()),
-        UserPluginMode::Installed | UserPluginMode::SafeMode => None,
-    };
     let shell = cx.update(|cx| {
         UserShell::install(
             &catalog,
@@ -112,15 +108,22 @@ fn session(mode: impl FnOnce(&Path) -> UserPluginMode, cx: &mut TestAppContext) 
         )
     });
     Session {
-        plugins: HostPlugins::new(
-            shell.host().expect("the shell loads user plugins").clone(),
-            dev,
-        ),
+        plugins: shell.management().unwrap(),
         shell,
         state,
         file: file.to_str().unwrap().to_owned(),
         _work: work,
     }
+}
+
+fn complete<T: 'static>(
+    cx: &mut TestAppContext,
+    action: impl FnOnce(
+        &mut gpui_kit::App,
+    ) -> gpui_kit::Task<Result<T, nocterm_plugins_ui::UserPluginError>>,
+) -> Result<T, nocterm_plugins_ui::UserPluginError> {
+    let task = cx.update(action);
+    cx.foreground_executor().block_test(task)
 }
 
 fn dev(file: &Path) -> UserPluginMode {
@@ -138,10 +141,9 @@ fn plugin() -> PluginId {
 /// Consents to the package, changes a setting and presses the widget so that it stores an entry,
 /// then lets the debounced writes of an installation land. The same steps run in every mode.
 fn use_the_plugin(session: &Session, cx: &mut TestAppContext) {
-    let candidate = cx
-        .update(|cx| session.plugins.inspect(&session.file, cx))
+    let candidate = complete(cx, |cx| session.plugins.inspect(&session.file, cx))
         .expect("the package is acceptable");
-    cx.update(|cx| {
+    complete(cx, |cx| {
         session.plugins.install(
             InstallRequest {
                 location: session.file.clone(),
@@ -186,6 +188,7 @@ fn use_the_plugin(session: &Session, cx: &mut TestAppContext) {
             zone: Zone::Right,
         },
         in_focus: true,
+        terminal: None,
     };
     session
         .shell
@@ -260,15 +263,14 @@ fn the_dev_session_lists_the_file_it_loads(cx: &mut TestAppContext) {
         cx.update(|cx| first.plugins.dev_location(cx)),
         Some(first.file.clone())
     );
-    let candidate = cx
-        .update(|cx| first.plugins.inspect(&first.file, cx))
-        .unwrap();
+    let candidate = complete(cx, |cx| first.plugins.inspect(&first.file, cx)).unwrap();
     assert!(candidate.dev, "the consent of a session is a DEV consent");
 
     let installation = session(installed, cx);
     assert_eq!(cx.update(|cx| installation.plugins.dev_location(cx)), None);
-    let candidate = cx
-        .update(|cx| installation.plugins.inspect(&installation.file, cx))
-        .unwrap();
+    let candidate = complete(cx, |cx| {
+        installation.plugins.inspect(&installation.file, cx)
+    })
+    .unwrap();
     assert!(!candidate.dev);
 }

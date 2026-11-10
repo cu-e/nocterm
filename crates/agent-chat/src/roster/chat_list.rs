@@ -23,6 +23,9 @@ pub struct ChatList {
     active: Option<EntityId>,
 }
 impl ChatList {
+    pub fn deselect(&mut self) {
+        self.active = None;
+    }
     pub fn current(&self) -> Option<Entity<AgentThread>> {
         self.active.and_then(|id| self.find(id)).cloned()
     }

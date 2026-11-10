@@ -15,10 +15,15 @@ impl SurfaceContent {
         }
     }
     pub(super) fn frame(&self, view: AnyView, cx: &App) -> SurfaceFrame {
+        let centre = self.tabs.panes(DockPlacement::Center, cx);
         SurfaceFrame {
             view,
             visible: self.tabs.has_visible_tabs(cx),
             local_visible: self.tabs.local_visible(cx),
+            only_group: match centre.as_slice() {
+                [only] => Some(only.node()),
+                _ => None,
+            },
         }
     }
     pub(super) fn presentation(&self, cx: &App) -> (Option<NodeId>, bool) {
@@ -304,6 +309,8 @@ pub(in crate::workspace) struct SurfaceFrame {
     view: AnyView,
     visible: bool,
     local_visible: bool,
+    /// The tab group of the centre when it holds only one.
+    only_group: Option<NodeId>,
 }
 impl SurfaceFrame {
     pub(in crate::workspace) fn view(&self) -> AnyView {
@@ -314,5 +321,9 @@ impl SurfaceFrame {
     }
     pub(in crate::workspace) fn local_visible(&self) -> bool {
         self.local_visible
+    }
+    /// The tab group that draws the top toolbars under its tab bar: the centre's only one.
+    pub(in crate::workspace) fn only_group(&self) -> Option<NodeId> {
+        self.only_group
     }
 }

@@ -136,7 +136,8 @@ fn forged_cache_cannot_change_authoritative_scope_or_displayed_metadata() {
     .unwrap();
     save(dir.path(), &chat).unwrap();
     let path = document(dir.path(), chat.header.scope, &chat.header.id, "meta");
-    let mut cache: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let mut cache =
+        serde_json::to_value(nocterm_ai::history::ChatSummary::from_chat(&chat)).unwrap();
     cache["scope"] = serde_json::json!({"kind": "general"});
     cache["title"] = serde_json::json!("forged title");
     cache["name"] = serde_json::json!("forged name");
@@ -173,7 +174,7 @@ fn catalog_filters_scope_before_its_restored_record_budget() {
 
 #[cfg(unix)]
 #[test]
-fn a_linked_sidecar_is_rebuilt_without_touching_its_foreign_target() {
+fn an_obsolete_linked_sidecar_is_ignored_without_touching_its_foreign_target() {
     use std::os::unix::fs::symlink;
     let directory = tempfile::tempdir().unwrap();
     let chat = chat();
@@ -186,12 +187,12 @@ fn a_linked_sidecar_is_rebuilt_without_touching_its_foreign_target() {
     );
     let foreign = directory.path().join("foreign-cache");
     fs::write(&foreign, b"foreign private bytes").unwrap();
-    fs::remove_file(&path).unwrap();
+    assert!(!path.exists());
     symlink(&foreign, &path).unwrap();
     assert_eq!(
         load_catalog(directory.path(), ContextId::General)[0].title(),
         "first message"
     );
     assert_eq!(fs::read(&foreign).unwrap(), b"foreign private bytes");
-    assert!(!fs::symlink_metadata(path).unwrap().file_type().is_symlink());
+    assert!(fs::symlink_metadata(path).unwrap().file_type().is_symlink());
 }

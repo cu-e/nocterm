@@ -10,18 +10,28 @@
 //! accepted), the effect broker with its queue, gesture tokens, per-capability rate limits and
 //! apply-time re-check, the sampling cadence and render budget, fault counting, the caps of
 //! design 5.12, the `PluginRecords` and `PluginData` ports and their documents, and the
-//! handling of the storage effects, and the session-only in-memory implementations of both
+//! handling of the storage effects; the deferred effects it performs itself (`net.request`,
+//! built from the plugin's settings with the secret it never sees and sent through the
+//! `PluginNet` port on a background thread, and `timers.set`) with their in-flight bounds and
+//! the epochs that drop a late answer; secret settings, kept out of every snapshot and forgotten
+//! when the origin they were entered for changes; and the session-only in-memory implementations of both
 //! ports (`SessionRecords`, `SessionData`), which a developer session composes so nothing is
 //! written.
+//! Owns: checked publication receipts and prepared package/runtime admission, bounded
+//! per-window samples and fair retry admission; closing a window releases its retained samples.
 //! Does not own: any provider or the `Observe`/`Apply` traits (`nocterm-plugin-ports`), the
 //! packages on disk (`PluginPackages`), a runtime, views, consent dialogs, settings forms or any
 //! settings section.
-//! Ports used: `PluginPackages`, `PluginRuntime`, `PluginRecords`, `PluginData`, and the window's
+//! Ports used: `PluginPackages`, `PluginRuntime`, `PluginRecords`, `PluginData`, `PluginNet`
+//! (optional: without it a request is answered with status 0), and the window's
 //! `PluginProviders`, which arrive with each call. Provided: none.
 //! Settings section: none. Globals: none. The host is an entity composed by the application,
 //! never looked up.
 //! Invariants: an effect is bound to `(plugin, sha256, window, contribution)` when queued and
-//! checked again when applied (grant, enabled, own contribution, gesture, rate, surface);
+//! checked again when applied (grant, enabled, own contribution, gesture, rate, surface, and
+//! `terminals.files` for a tab that serves files); a
+//! window's provider applies an effect only once the host's update has ended, so a provider may
+//! read the host or open a view that does, and outcomes keep the order the plugin asked in;
 //! disabling, replacing, removing or faulting a plugin drops what is queued for it; a gesture
 //! token is single-use, valid for one second and minted only by a pointer or an unrepeated
 //! Enter or Space; observations are sampled no faster than 1 Hz (4 Hz for a panel with focus);
@@ -33,10 +43,13 @@ mod broker;
 mod cadence;
 mod caps;
 mod data;
+mod deferred;
 mod error;
 mod faults;
 mod gesture;
 mod host;
+mod inputs;
+mod net;
 mod rate;
 mod records;
 mod registry;
@@ -55,11 +68,12 @@ pub use error::{
     RecordsError,
 };
 pub use gesture::Input;
-pub use host::{Call, HostPorts, PluginHost};
+pub use host::PluginHost;
+pub use inputs::{Call, HostPorts, PreparedPlugin};
 pub use records::{
     AuditAction, AuditEntry, MAX_AUDIT, MAX_RECORDS, PluginRecord, PluginRecords, RecordsDoc,
 };
-pub use registry::{PluginStatus, PluginSummary};
+pub use registry::{PluginStatus, PluginSummary, RestoredPlugin};
 pub use session::{SessionData, SessionRecords};
 
 #[cfg(test)]

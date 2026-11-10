@@ -1,8 +1,11 @@
 //! Shared error ownership, filesystem primitives and standard application locations.
 //!
-//! Owns: paths, exclusive private creation, atomic publication, bounded no-follow reads of
-//! regular files, TOML persistence,
-//! ordered write queues, shutdown deadlines, immutable concrete error causes and the wall-clock
+//! Owns: paths, exclusive private creation, replacing or no-clobber atomic publication,
+//! strict opened private-file policy, bounded no-follow reads of
+//! regular files, bounded in-memory byte sinks, TOML persistence with cooperative
+//! document locks and observed-revision conflict detection,
+//! ordered write queues, shutdown deadlines, opaque allocation lifetime carriers,
+//! immutable concrete error causes and the wall-clock
 //! contract (`clock::{WallClock, WallTime}`; no I/O, no time-zone data).
 //! Does not own: transport protocols, encryption, storage schemas, views or tasks.
 //! Ports used: none. Ports provided: `clock::WallClock`, implemented by `nocterm-local`; its
@@ -12,6 +15,8 @@
 //! opens before it checks, refuses links, pipes and devices, and never exceeds its cap.
 //! Parent directories must be trusted; traversal capabilities belong to adapters.
 
+pub mod allocation;
+pub mod bounded_io;
 pub mod clock;
 pub mod error;
 pub mod fs;

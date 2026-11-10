@@ -24,6 +24,7 @@ pub const EXPLORER: SystemContribution = SystemContribution {
         chrome: PanelChrome::Titled,
     }),
     preview: None,
+    edge: None,
     pinned: false,
 };
 
@@ -41,6 +42,7 @@ pub const TRANSFERS: SystemContribution = SystemContribution {
     },
     panel: None,
     preview: None,
+    edge: None,
     pinned: false,
 };
 

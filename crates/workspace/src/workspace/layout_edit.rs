@@ -32,9 +32,17 @@ pub(super) fn hide(
     window: &mut Window,
     cx: &mut Context<Workspace>,
 ) {
-    let task = workspace
-        .shell
-        .edit(EditTarget::Selected, EditOp::RemoveToTray { id }, cx);
+    apply(workspace, EditOp::RemoveToTray { id }, window, cx);
+}
+
+/// Applies an edit of the selected layout from a menu, and tells the user when it fails.
+pub(super) fn apply(
+    workspace: &mut Workspace,
+    op: EditOp,
+    window: &mut Window,
+    cx: &mut Context<Workspace>,
+) {
+    let task = workspace.shell.edit(EditTarget::Selected, op, cx);
     window
         .spawn(cx, async move |cx| {
             let result = task.await;

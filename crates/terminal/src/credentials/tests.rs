@@ -173,3 +173,24 @@ fn a_jump_host_prompt_is_labelled_with_its_hop() {
     );
     assert!(!retry && masked);
 }
+
+#[test]
+fn a_vault_key_prompt_is_titled_by_fingerprint_and_asks_for_no_typing() {
+    let request = SecretRequest::PrivateKey {
+        credential: nocterm_session::CredentialId::from_bytes([1; 16]),
+        public_key:
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+                .into(),
+    };
+    let (title, retry, _) = super::describe(&request, None);
+    assert!(title.contains("SHA256:"), "{title}");
+    assert!(!retry);
+    let unreadable = SecretRequest::PrivateKey {
+        credential: nocterm_session::CredentialId::from_bytes([1; 16]),
+        public_key: "garbage".into(),
+    };
+    assert_eq!(
+        super::describe(&unreadable, None).0,
+        "Sign in with a vault key"
+    );
+}

@@ -11,8 +11,10 @@
 //! bound to `(PluginId, sha256)`, the declarative template language and its interpreter
 //! (`DeclarativeRuntime`), the code package format (`package_format`: kind detection and the
 //! bounded scan for the manifest section of a WebAssembly module), `Runtimes` (which picks the
-//! declarative or the injected code runtime by the manifest), and the `PluginPackages` and
-//! `PluginRuntime` ports with their errors.
+//! declarative or the injected code runtime by the manifest), the requests and answers of a
+//! terminal tab's files (`capability::files`) and the base64 their bytes travel in, the bar of a
+//! terminal tab (`terminals.bar`) and the snapshot's `terminal` its calls name, and the
+//! `PluginPackages`, `PluginRuntime` and `PluginNet` ports with their errors.
 //! Does not own: file access, TOML parsing, hashing, the broker, rate limits, providers, views
 //! or any GPUI type.
 //! Ports used/provided: provides `PluginPackages` (implemented by `nocterm-plugin-packages`)
@@ -31,6 +33,7 @@ extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
+pub mod base64;
 pub mod capability;
 mod contribution;
 mod declarative;
@@ -54,28 +57,29 @@ pub use capability::{
     CAPABILITIES, Capability, CapabilityEntry, Deprecation, EffectTarget, Family, TableError,
     validate_table,
 };
-pub use contribution::{ContributionContext, Kind, Zone};
+pub use contribution::{ContributionContext, Edge, Kind, Tabs, Zone};
 pub use declarative::DeclarativeRuntime;
 pub use effects::{
     Effect, EffectOutcome, EffectRequest, Effects, EffectsError, Event, MAX_EFFECT_KEY, MAX_EFFECTS,
 };
 pub use error::{HostError, LimitError};
 pub use grant::{Additions, Grant, GrantError};
-pub use icon::PluginIcon;
+pub use icon::{Glyph, PluginIcon};
 pub use identity::{ContentHash, HashError, LocalId};
 pub use manifest::{
-    ChoiceOptionDto, ContributionDto, ContributionError, DeclareError, DefaultDto, FieldDto,
-    FieldKindName, GroupDto, HostContext, MAX_CONTRIBUTIONS, MAX_DECLARED, MAX_DESCRIPTION,
-    MAX_NAME, MAX_REASON, Manifest, ManifestDto, ManifestError, ManifestHeader, OptionalCapability,
-    Runtime, SettingsDto, SettingsError,
+    ChoiceOptionDto, ContributionDto, ContributionError, Credential, DeclareError, DefaultDto,
+    FieldDto, FieldKindName, GroupDto, HostContext, MAX_CONTRIBUTIONS, MAX_DECLARED,
+    MAX_DESCRIPTION, MAX_NAME, MAX_REASON, Manifest, ManifestDto, ManifestError, ManifestHeader,
+    Network, NetworkDto, NetworkError, NetworkTableError, OptionalCapability, Runtime, SettingsDto,
+    SettingsError,
 };
 pub use package_format::{MANIFEST_SECTION, PackageKind, SectionError, kind, manifest_section};
 pub use ports::{
     Cause, MAX_MODULE_BYTES, MAX_PACKAGE_BYTES, ModuleError, Package, PackageError, PluginInstance,
-    PluginPackages, PluginRuntime, ProtocolError, RuntimeError,
+    PluginNet, PluginPackages, PluginRuntime, ProtocolError, RuntimeError,
 };
 pub use runtimes::Runtimes;
-pub use sanitize::sanitize_display;
+pub use sanitize::{sanitize_code, sanitize_display};
 pub use snapshot::{Observed, Snapshot};
 pub use surface::{
     EFFECT_REQUESTS, EVENTS, FILTERS, HOST_ERRORS, Key, KeyType, LIMITS, MANIFEST_KEYS, REFRESHES,
@@ -83,8 +87,9 @@ pub use surface::{
 };
 pub use version::{API_VERSION, ApiVersion, VersionError};
 pub use view::{
-    MAX_BADGE, MAX_BUTTON, MAX_DEPTH, MAX_LIST_ITEMS, MAX_NODE_KEY, MAX_NODES, MAX_TEXT,
-    MIN_REFRESH_MS, Node, NodeKind, Refresh, Tone, View, ViewError,
+    MAX_BADGE, MAX_BUTTON, MAX_CHART_POINTS, MAX_CHART_SERIES, MAX_CODE, MAX_DEPTH, MAX_LIST_ITEMS,
+    MAX_NODE_KEY, MAX_NODES, MAX_TEXT, MIN_REFRESH_MS, Node, NodeKind, Refresh, Tone, View,
+    ViewError,
 };
 
 #[cfg(test)]

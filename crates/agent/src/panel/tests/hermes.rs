@@ -9,7 +9,6 @@ use nocterm_ai::model::tools::{ToolChanges, ToolContent, ToolPatch, ToolRecord, 
 use nocterm_ai::{
     ApprovalPolicy, ExecCommand, ReadCommand, TerminalCall, thread::Entry, tool_display,
 };
-use nocterm_session::ExecExit;
 use serde_json::{Value, json};
 
 /// The text Hermes reports for an MCP result, as `tool_dispatch_helpers` builds it.
@@ -114,7 +113,7 @@ fn assert_completed_command(
     thread: &Entity<crate::thread::AgentThread>,
     session: &SessionId,
     terminal_id: String,
-    program: &Program,
+    program: &Arc<Program>,
     cx: &mut TestAppContext,
 ) {
     let script = "qm config 9000; echo '--- PVE STORAGE ---'; pvesm status";
@@ -136,15 +135,9 @@ fn assert_completed_command(
         cx,
     );
     let started = bridge(f, TerminalCall::ExecCommand(request), cx);
-    let sink = program.sink.lock().unwrap().take().unwrap();
-    assert!(futures::executor::block_on(
-        sink.send(b"boot: order=scsi0\n".to_vec())
-    ));
-    sink.finish(ExecExit {
-        status: Some(0),
-        stderr: String::new(),
-    });
-    drop(sink);
+    let executor: Arc<dyn nocterm_session::HostExec> = program.clone();
+    assert!(Arc::ptr_eq(&f._directory.jobs.executor(0), &executor));
+    f._directory.jobs.finish(0, b"boot: order=scsi0\n", 0, "");
     cx.run_until_parked();
     let finished = bridge(
         f,

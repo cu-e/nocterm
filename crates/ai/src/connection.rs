@@ -198,6 +198,8 @@ pub type ConnectError = AgentError;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BridgeRegistrationError {
+    #[error("The original account source is unavailable: {0}")]
+    AccountSource(#[from] nocterm_hubs_model::source_identity::LocalAccountSourceError),
     #[error("{0}")]
     Origin(#[from] crate::execution_origin::ExecutionOriginError),
     #[error("The chat is no longer open.")]
@@ -230,6 +232,7 @@ pub struct BridgeRegistration {
     pub id: u64,
     launch: BridgeLaunch,
     revoke: Option<Arc<dyn Fn(u64) + Send + Sync>>,
+    offer: Option<Arc<dyn Fn(u64, crate::ToolOffer) + Send + Sync>>,
 }
 impl BridgeRegistration {
     pub fn new(id: u64, launch: BridgeLaunch, revoke: Arc<dyn Fn(u64) + Send + Sync>) -> Self {
@@ -237,6 +240,19 @@ impl BridgeRegistration {
             id,
             launch,
             revoke: Some(revoke),
+            offer: None,
+        }
+    }
+    /// A registration whose bridge lists the tools a chat offers, and tells its agent when they
+    /// change.
+    pub fn with_offer(mut self, offer: Arc<dyn Fn(u64, crate::ToolOffer) + Send + Sync>) -> Self {
+        self.offer = Some(offer);
+        self
+    }
+    /// What the chat offers its agent now. Offering the same again changes nothing.
+    pub fn offer(&self, offer: crate::ToolOffer) {
+        if let Some(set) = &self.offer {
+            set(self.id, offer);
         }
     }
     pub fn launch(&self) -> &BridgeLaunch {

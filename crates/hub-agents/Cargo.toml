@@ -1,0 +1,29 @@
+[package]
+name = "nocterm-hub-agents"
+description = "The agents, agent servers and chat lists of the signed-in hubs, kept per hub and refreshed on change."
+version = "0.0.0"
+edition.workspace = true
+license-file.workspace = true
+publish = false
+
+[package.metadata.nocterm]
+layer = "service"
+
+[dependencies]
+nocterm-ai.workspace = true
+nocterm-hub-agents-model.workspace = true
+nocterm-hubs-model.workspace = true
+nocterm-ssh-keys.workspace = true
+
+futures.workspace = true
+gpui.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+nocterm-hub-agents-model = { workspace = true, features = ["test-support"] }
+nocterm-ssh-keys = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

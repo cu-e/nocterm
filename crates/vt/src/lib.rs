@@ -1,11 +1,14 @@
 //! Terminal emulation: turns a byte stream into a grid, and input into bytes.
 //!
-//! Owns: screen emulation, selection, bounded text/search and negotiated input encoding.
+//! Owns: screen emulation, selection, bounded text/search, negotiated input encoding,
+//! incremental charset conversion and bounded shell-protocol observations.
 //! Does not own: PTYs, transport I/O, window rendering or application scheduling.
 //! Ports used/provided: none. Settings section: none. Globals: none.
 //! Invariants: input follows the negotiated terminal modes; snapshots expose this
 //! crate's types; searches report typed limits instead of truncating silently,
-//! and cancellation never publishes matches from an older generation.
+//! and cancellation never publishes matches from an older generation. `Emulator::reset`
+//! clears the screen in place and keeps the generation counting forward. Shell markers
+//! describe observed output and never grant session or command-input authority.
 //!
 //! This crate is the only place that knows the emulation library
 //! (`alacritty_terminal`). Everything it exposes is expressed in its own
@@ -24,11 +27,14 @@ mod mouse;
 mod osc_guard;
 mod paste;
 mod search;
+mod shell_integration;
 mod text;
+mod text_codec;
 
 pub use search::{
-    MAX_REGEX_LINE_BYTES, MAX_SEARCH_QUERY, RegexWork, SearchBatch, SearchDirection, SearchError,
-    SearchMatch, SearchOptions, SearchPoint, SearchProgress, SearchResult, SearchScan,
+    MAX_NAVIGATION_MATCHES, MAX_REGEX_LINE_BYTES, MAX_SEARCH_QUERY, RegexWork, SearchBatch,
+    SearchDirection, SearchError, SearchMatch, SearchOptions, SearchPoint, SearchProgress,
+    SearchResult, SearchScan,
 };
 
 pub use emulator::{
@@ -42,3 +48,6 @@ pub use keys::{
 pub use mouse::{MouseButton, MouseEvent, MouseEventKind, encode_mouse};
 pub use paste::{encode_focus, encode_paste};
 pub use text::{TextQuery, TextTail};
+
+pub use shell_integration::ShellIntegration;
+pub use text_codec::TextCodec;

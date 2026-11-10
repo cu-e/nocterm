@@ -1,6 +1,6 @@
 //! Bounded, session-owned SFTP requests and streaming transfers.
 use crate::login::Client;
-use futures::{FutureExt, StreamExt as _, channel::oneshot};
+use futures::{StreamExt as _, channel::oneshot};
 use nocterm_session::{
     DirEntry, EntryKind, FileMetadata, FsCapabilities, FsError, FsFuture, RemoteFs,
     fs::{RemoteDownload, RemoteUpload, UploadMode, path},
@@ -21,6 +21,7 @@ const REQUEST_BACKLOG: usize = 64;
 const CONCURRENT_REQUESTS: usize = 16;
 const MAX_CHUNK: usize = 32 * 1024;
 const MAX_WRITE_BATCH: usize = 8;
+const MAX_READ_BATCH: usize = 8;
 const MAX_OPEN_DOWNLOADS: usize = 128;
 const MAX_OPEN_UPLOADS: usize = 128;
 const MAX_DIRECTORY_ENTRIES: usize = 100_000;
@@ -45,6 +46,7 @@ pub(crate) enum FsRequest {
     Cancel(Uuid, Answer<()>),
     Download(String, Answer<Box<dyn RemoteDownload>>),
     Read(Uuid, usize, Answer<Vec<u8>>),
+    ReadBatch(Uuid, usize, usize, Answer<Vec<Vec<u8>>>),
     CloseDownload(Uuid, Answer<()>),
 }
 enum Cleanup {
@@ -54,6 +56,7 @@ enum Cleanup {
 #[derive(Clone)]
 pub(crate) struct SshFs {
     requests: mpsc::Sender<FsRequest>,
+    source: nocterm_session::ConnectionSource,
     cleanup: mpsc::UnboundedSender<Cleanup>,
 }
 pub(crate) struct FsRequests {
@@ -61,11 +64,15 @@ pub(crate) struct FsRequests {
     cleanup: mpsc::UnboundedReceiver<Cleanup>,
     sender: SshFs,
 }
-pub(crate) fn channel() -> (SshFs, FsRequests) {
+pub(crate) fn channel(source: nocterm_session::ConnectionSource) -> (SshFs, FsRequests) {
     let (requests, receiver) = mpsc::channel(REQUEST_BACKLOG);
     // Cleanup notices carry identities only; file data never uses this channel.
     let (cleanup, cleanup_receiver) = mpsc::unbounded_channel();
-    let sender = SshFs { requests, cleanup };
+    let sender = SshFs {
+        requests,
+        cleanup,
+        source,
+    };
     (
         sender.clone(),
         FsRequests {
@@ -81,20 +88,19 @@ impl SshFs {
         request: impl FnOnce(Answer<T>) -> FsRequest + Send + 'static,
     ) -> FsFuture<T> {
         let sender = self.requests.clone();
-        async move {
+        self.source.guard(async move {
             let (answer, result) = oneshot::channel();
             sender
                 .send(request(answer))
                 .await
                 .map_err(|_| FsError::NotConnected)?;
             result.await.unwrap_or(Err(FsError::NotConnected))
-        }
-        .boxed()
+        })
     }
 }
 impl RemoteFs for SshFs {
     fn capabilities(&self) -> FsCapabilities {
-        let available = !self.requests.is_closed();
+        let available = !self.requests.is_closed() && self.source.check().is_ok();
         FsCapabilities {
             metadata: available,
             rename: available,

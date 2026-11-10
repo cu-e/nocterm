@@ -1,5 +1,6 @@
 //! Bounded authoritative discovery facts live before the transcript payload.
 use super::{ContextId, FileStamp, SavedChat, SavedHeader, TranscriptVersion};
+use crate::local_environment::{ChatScope, LocalEnvironment};
 use crate::{model::content::Content, thread::Entry};
 use serde::{Deserialize, Serialize};
 
@@ -10,6 +11,8 @@ pub struct CatalogHeader {
     id: String,
     agent_id: String,
     scope: ContextId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    environment: Option<LocalEnvironment>,
     title: Option<String>,
     name: Option<String>,
     pinned: bool,
@@ -24,13 +27,37 @@ impl CatalogHeader {
     pub fn scope(&self) -> ContextId {
         self.scope
     }
+    pub fn environment(&self) -> LocalEnvironment {
+        self.environment.clone().unwrap_or_default()
+    }
+    pub fn chat_scope(&self) -> ChatScope {
+        ChatScope::new(self.environment(), self.scope)
+    }
+    pub(super) fn require_version(&self, version: u32) -> Result<(), super::HistoryCodecError> {
+        if (version == super::ENVIRONMENT_VERSION) != self.environment.is_some() {
+            return Err(super::HistoryCodecError::InvalidHeader);
+        }
+        super::header::validate_environment(version, &self.environment())
+    }
+    pub fn transcript_version(&self) -> TranscriptVersion {
+        if self.environment.is_some() {
+            TranscriptVersion::ENVIRONMENT
+        } else {
+            TranscriptVersion::SCOPED
+        }
+    }
     pub fn summary(&self, stamp: FileStamp) -> Option<ChatSummary> {
         (self.has_content || self.name.is_some() || self.pinned).then(|| self.to_summary(stamp))
     }
     pub(super) fn to_summary(&self, stamp: FileStamp) -> ChatSummary {
         ChatSummary {
             cache_version: 3,
-            transcript_version: TranscriptVersion::SCOPED,
+            transcript_version: if self.environment.is_some() {
+                TranscriptVersion::ENVIRONMENT
+            } else {
+                TranscriptVersion::SCOPED
+            },
+            environment: self.environment(),
             id: self.id.clone(),
             agent_id: self.agent_id.clone(),
             scope: self.scope,
@@ -52,6 +79,7 @@ impl CatalogHeader {
             &Preview::new(&chat.entries[start..]),
             chat.draft.as_deref(),
             queued || !chat.queue.is_empty(),
+            chat.version,
         )
     }
     pub(super) fn for_persistence(chat: &SavedChat, queued: bool) -> Self {
@@ -62,6 +90,7 @@ impl CatalogHeader {
             &Preview::persisted(&chat.entries[start..]),
             chat.draft.as_deref(),
             queued || !chat.queue.is_empty(),
+            chat.version,
         )
     }
     pub(super) fn from_parts(
@@ -70,11 +99,13 @@ impl CatalogHeader {
         preview: &Preview,
         draft: Option<&str>,
         queued: bool,
+        version: u32,
     ) -> Self {
         Self {
             id: saved.id.clone(),
             agent_id: bounded(&saved.agent_id),
             scope: saved.scope,
+            environment: (version == super::ENVIRONMENT_VERSION).then(|| saved.environment.clone()),
             title: saved
                 .title
                 .as_deref()
@@ -168,6 +199,8 @@ pub struct ChatSummary {
     pub id: String,
     pub agent_id: String,
     pub scope: ContextId,
+    #[serde(default, skip_serializing_if = "LocalEnvironment::is_this_computer")]
+    pub environment: LocalEnvironment,
     pub title: Option<String>,
     pub name: Option<String>,
     pub pinned: bool,
@@ -182,11 +215,16 @@ impl ChatSummary {
     /// This does not validate an unread transcript payload or issue authority.
     pub fn validate(&self) -> Result<(), super::HistoryCodecError> {
         self.transcript_version.require_scope(self.scope)?;
+        self.transcript_version
+            .require_environment(&self.environment)?;
         validate_metadata(
             &self.id,
             &self.agent_id,
             [&self.title, &self.name, &self.model],
         )
+    }
+    pub fn chat_scope(&self) -> ChatScope {
+        ChatScope::new(self.environment.clone(), self.scope)
     }
     pub fn transcript_version(&self) -> TranscriptVersion {
         self.transcript_version

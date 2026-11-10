@@ -50,6 +50,11 @@ gpui_kit::assets::icon_assets!(
         Gauge,
         MessageSquarePlus,
         PanelRight,
+        // The status bar's Toolbars menu.
+        PanelTop,
+        PanelBottom,
+        PanelLeft,
+        EyeOff,
         ShieldCheck,
         Wrench,
         ListTodo,

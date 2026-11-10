@@ -24,6 +24,12 @@ for directory in python bun node java; do ensure_dir "$base/$directory/releases"
 work=$(mktemp -d "$base/.stage.XXXXXX")
 staged_target=
 trap 'rm -rf "$work"; if test -n "$staged_target"; then rm -rf "$staged_target"; fi' EXIT HUP INT TERM
+allocate_release() {
+    releases=$1
+    count=$(find "$releases" -mindepth 1 -maxdepth 1 -type d -name 'install.*' -print | wc -l)
+    test "$count" -lt 8 || exit 80
+    mktemp -d "$releases/install.XXXXXX"
+}
 link_managed() {
     target=$1; destination=$2
     if test -L "$destination"; then case "$(readlink "$destination")" in "$base/"*|/usr/bin/*|/bin/*|/usr/lib/jvm/*) :;; *) exit 79;; esac
@@ -38,19 +44,15 @@ fetch() {
 }
 export CARGO_HOME="$base/rust/cargo"
 export RUSTUP_HOME="$base/rust/rustup"
-export PATH="$base/bin:$CARGO_HOME/bin:$base/bun/current/bin:$base/node/current/bin:$base/java/current/bin:$PATH"
 "#;
-pub(super) const FINISH: &str = r#"cat > "$work/env.sh" <<'NOCTERM_ENV'
-nocterm_toolchains="$HOME/.local/share/nocterm/toolchains"
-export PATH="$nocterm_toolchains/bin:$nocterm_toolchains/rust/cargo/bin:$nocterm_toolchains/bun/current/bin:$nocterm_toolchains/node/current/bin:$nocterm_toolchains/java/current/bin:$PATH"
-if test -x "$nocterm_toolchains/rust/cargo/bin/rustup"; then
-    export CARGO_HOME="$nocterm_toolchains/rust/cargo"
-    export RUSTUP_HOME="$nocterm_toolchains/rust/rustup"
-fi
-if test -x "$nocterm_toolchains/bun/current/bin/bun"; then export BUN_INSTALL="$nocterm_toolchains/bun/current"; fi
-if test -x "$nocterm_toolchains/java/current/bin/java"; then export JAVA_HOME="$nocterm_toolchains/java/current"; fi
-unset nocterm_toolchains
-NOCTERM_ENV
+pub(super) fn finish() -> String {
+    format!(
+        "cat > \"$work/env.sh\" <<'NOCTERM_ENV'\n{}{}",
+        crate::managed::shell(),
+        FINISH
+    )
+}
+const FINISH: &str = r#"NOCTERM_ENV
 if test -e "$base/env.sh" && test ! -f "$base/env.sh" || test -L "$base/env.sh"; then exit 79; fi
 mv -f "$work/env.sh" "$base/env.sh"
 staged_target=

@@ -4,7 +4,7 @@ use nocterm_ai::{
     AgentConnection, AgentInfo, AgentResourceSettings, AiSettings, SandboxMode,
     history::ContextId,
     model::auth::{AuthMethod, TerminalSetup},
-    testing::{ScriptedUsageSource, ScriptedWorkdirResolver},
+    testing::ScriptedWorkdirResolver,
 };
 
 struct LocalLaunch {
@@ -44,7 +44,6 @@ impl LocalLaunch {
                 connector.clone(),
                 storage,
                 directory.path(),
-                Arc::new(ScriptedUsageSource::default()),
                 resolver.clone(),
                 cx,
             );
@@ -126,6 +125,7 @@ fn launch() -> AgentLaunch {
         args: vec!["--base".into()],
         env: Default::default(),
         inherit_env: vec![],
+        hub: None,
     }
 }
 fn auth_method() -> AuthMethod {

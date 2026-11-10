@@ -65,7 +65,7 @@ struct IncomingEnvelope {
 }
 impl IncomingEnvelope {
     fn finish(self) -> Result<SavedChat, HistoryCodecError> {
-        if self.version != super::VERSION {
+        if !matches!(self.version, super::VERSION | super::ENVIRONMENT_VERSION) {
             return Err(HistoryCodecError::UnsupportedVersion(self.version));
         }
         let chat = self.chat.finish()?;
@@ -86,7 +86,7 @@ fn legacy(chat: IncomingChat) -> Result<SavedChat, HistoryCodecError> {
     Ok(chat)
 }
 pub(super) fn decode_bytes(bytes: &[u8], id: &str) -> Result<SavedChat, HistoryCodecError> {
-    if bytes.starts_with(super::prefix::START) {
+    if super::prefix::is_scoped(bytes) {
         super::decode_catalog_header(bytes, id)?;
         serde_json::from_slice::<IncomingEnvelope>(bytes)?.finish()
     } else {
@@ -145,7 +145,7 @@ pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
             let version = (key == "version")
                 .then(|| map.next_value::<u32>())
                 .transpose()?;
-            let scoped = version == Some(super::VERSION);
+            let scoped = matches!(version, Some(super::VERSION | super::ENVIRONMENT_VERSION));
             let replay = MapAccessDeserializer::new(ReplayMap {
                 key: Some(key),
                 value: version,

@@ -1,7 +1,16 @@
 pub mod catalog;
 mod failure;
+pub mod files;
+pub mod output;
+pub mod transfer;
 
-pub use failure::{TerminalCallError, ToolFailure};
+pub use catalog::{ToolGroup, ToolOffer};
+pub use failure::{TerminalCallError, ToolArgumentsError, ToolFailure};
+pub use files::{DeletePath, EditFile, ListFiles, MakeDirectory, MovePath, ReadFile, WriteFile};
+pub use transfer::{
+    CancelTransfer, MAX_TRANSFER_FAILURES, MAX_TRANSFER_PATH_BYTES, MAX_TRANSFER_SOURCE_BYTES,
+    MAX_TRANSFER_SOURCES, ReadTransfer, TransferFiles,
+};
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -63,12 +72,15 @@ pub enum ToolCapability {
     LiveInput,
     Execution,
     Connection,
+    Transfer,
+    /// Changing the files of a terminal that runs no programs.
+    Files,
 }
-/// Connects to an attached offline server without opening a tab.
+/// Opens an allowlisted server or reuses its already connected terminal.
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenTerminal {
-    /// An `offline_servers` entry of `list_terminals`.
+    /// A `server_id` from the terminals or offline servers in `list_terminals`.
     pub server_id: String,
 }
 #[derive(Clone, Debug)]
@@ -81,18 +93,79 @@ pub enum TerminalCall {
     ExecCommand(ExecCommand),
     ReadCommand(ReadCommand),
     CancelCommand(CancelCommand),
+    TransferFiles(TransferFiles),
+    ReadTransfer(ReadTransfer),
+    CancelTransfer(CancelTransfer),
+    ListFiles(ListFiles),
+    ReadFile(ReadFile),
+    WriteFile(WriteFile),
+    EditFile(EditFile),
+    MakeDirectory(MakeDirectory),
+    DeletePath(DeletePath),
+    MovePath(MovePath),
 }
 impl TerminalCall {
+    /// Canonical semantic arguments, using the same DTOs as catalog parsing.
+    /// No execution or provider metadata is included.
+    pub fn arguments(&self) -> Result<serde_json::Value, ToolArgumentsError> {
+        match self {
+            Self::ListTerminals => Ok(serde_json::json!({})),
+            Self::ReadTerminal(v) => serde_json::to_value(v),
+            Self::SendInput(v) => serde_json::to_value(v),
+            Self::RunCommand(v) => serde_json::to_value(v),
+            Self::OpenTerminal(v) => serde_json::to_value(v),
+            Self::ExecCommand(v) => serde_json::to_value(v),
+            Self::ReadCommand(v) => serde_json::to_value(v),
+            Self::CancelCommand(v) => serde_json::to_value(v),
+            Self::TransferFiles(v) => serde_json::to_value(v),
+            Self::ReadTransfer(v) => serde_json::to_value(v),
+            Self::CancelTransfer(v) => serde_json::to_value(v),
+            Self::ListFiles(v) => serde_json::to_value(v),
+            Self::ReadFile(v) => serde_json::to_value(v),
+            Self::WriteFile(v) => serde_json::to_value(v),
+            Self::EditFile(v) => serde_json::to_value(v),
+            Self::MakeDirectory(v) => serde_json::to_value(v),
+            Self::DeletePath(v) => serde_json::to_value(v),
+            Self::MovePath(v) => serde_json::to_value(v),
+        }
+        .map_err(ToolArgumentsError::from)
+    }
     pub fn terminal_id(&self) -> Option<&str> {
         match self {
-            Self::ListTerminals | Self::OpenTerminal(_) => None,
+            Self::ListTerminals
+            | Self::OpenTerminal(_)
+            | Self::ReadTransfer(_)
+            | Self::CancelTransfer(_) => None,
+            Self::TransferFiles(v) => Some(&v.destination_terminal_id),
             Self::ReadTerminal(v) => Some(&v.terminal_id),
             Self::SendInput(v) => Some(&v.terminal_id),
             Self::RunCommand(v) => Some(&v.terminal_id),
             Self::ExecCommand(v) => Some(&v.terminal_id),
             Self::ReadCommand(v) => Some(&v.terminal_id),
             Self::CancelCommand(v) => Some(&v.terminal_id),
+            Self::ListFiles(v) => Some(&v.terminal_id),
+            Self::ReadFile(v) => Some(&v.terminal_id),
+            Self::WriteFile(v) => Some(&v.terminal_id),
+            Self::EditFile(v) => Some(&v.terminal_id),
+            Self::MakeDirectory(v) => Some(&v.terminal_id),
+            Self::DeletePath(v) => Some(&v.terminal_id),
+            Self::MovePath(v) => Some(&v.terminal_id),
         }
+    }
+    /// The terminal whose host holds the sources of a transfer.
+    pub fn source_terminal_id(&self) -> Option<&str> {
+        match self {
+            Self::TransferFiles(v) => Some(&v.source_terminal_id),
+            _ => None,
+        }
+    }
+    /// Every terminal the call touches: `terminal_id`, then a distinct `source_terminal_id`.
+    pub fn terminals(&self) -> impl Iterator<Item = &str> {
+        let destination = self.terminal_id();
+        let source = self
+            .source_terminal_id()
+            .filter(|source| Some(*source) != destination);
+        destination.into_iter().chain(source)
     }
     pub fn server_id(&self) -> Option<&str> {
         match self {
@@ -104,7 +177,7 @@ impl TerminalCall {
     pub fn target(&self) -> Option<&str> {
         self.terminal_id().or_else(|| self.server_id())
     }
-    /// Typing, running and connecting change something; reading does not.
+    /// Typing, running, connecting and changing files change something; reading does not.
     pub fn writes(&self) -> bool {
         matches!(
             self,
@@ -113,16 +186,36 @@ impl TerminalCall {
                 | Self::OpenTerminal(_)
                 | Self::ExecCommand(_)
                 | Self::CancelCommand(_)
+                | Self::TransferFiles(_)
+                | Self::CancelTransfer(_)
+                | Self::WriteFile(_)
+                | Self::EditFile(_)
+                | Self::MakeDirectory(_)
+                | Self::DeletePath(_)
+                | Self::MovePath(_)
         )
+    }
+    /// A file tool: the call acts on the files of a terminal that runs no programs.
+    pub fn is_file_tool(&self) -> bool {
+        self.group() == ToolGroup::Files
     }
     pub fn capability(&self) -> ToolCapability {
         match self {
             Self::SendInput(_) | Self::RunCommand(_) => ToolCapability::LiveInput,
             Self::ExecCommand(_) | Self::CancelCommand(_) => ToolCapability::Execution,
             Self::OpenTerminal(_) => ToolCapability::Connection,
-            Self::ListTerminals | Self::ReadTerminal(_) | Self::ReadCommand(_) => {
-                ToolCapability::Read
-            }
+            Self::TransferFiles(_) | Self::CancelTransfer(_) => ToolCapability::Transfer,
+            Self::WriteFile(_)
+            | Self::EditFile(_)
+            | Self::MakeDirectory(_)
+            | Self::DeletePath(_)
+            | Self::MovePath(_) => ToolCapability::Files,
+            Self::ListTerminals
+            | Self::ReadTerminal(_)
+            | Self::ReadCommand(_)
+            | Self::ReadTransfer(_)
+            | Self::ListFiles(_)
+            | Self::ReadFile(_) => ToolCapability::Read,
         }
     }
     pub fn validate(&self) -> Result<(), TerminalCallError> {
@@ -182,6 +275,16 @@ impl TerminalCall {
             Self::CancelCommand(v) if v.command_id.is_empty() || v.command_id.len() > 128 => {
                 Err(TerminalCallError::InvalidCommandId)
             }
+            Self::TransferFiles(v) => v.validate(),
+            Self::ReadTransfer(v) => v.validate(),
+            Self::CancelTransfer(v) => v.validate(),
+            Self::ListFiles(v) => v.validate(),
+            Self::ReadFile(v) => v.validate(),
+            Self::WriteFile(v) => v.validate(),
+            Self::EditFile(v) => v.validate(),
+            Self::MakeDirectory(v) => v.validate(),
+            Self::DeletePath(v) => v.validate(),
+            Self::MovePath(v) => v.validate(),
             _ => Ok(()),
         }
     }

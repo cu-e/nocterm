@@ -83,6 +83,7 @@ pub(super) static SCHEMA: LazyLock<SettingsSchema> = LazyLock::new(|| SettingsSc
                         default: Cow::Borrowed(""),
                         max_len: 8,
                         placeholder: Some(Cow::Borrowed("a name")),
+                        secret: false,
                     },
                 ),
             ]

@@ -35,6 +35,7 @@ pub(crate) fn default_context(action: &str, defaults: &[Binding]) -> Option<Stri
 
 pub(crate) fn rows(keymap: &KeymapHandle, cx: &App) -> Vec<Row> {
     let docs = cx.action_documentation();
+    let customized = keymap.customized_actions(cx);
     let row = |action: &str, binding: Option<&Binding>| Row {
         action: action.to_owned(),
         label: humanize(action).into(),
@@ -46,9 +47,13 @@ pub(crate) fn rows(keymap: &KeymapHandle, cx: &App) -> Vec<Row> {
         keystrokes: binding.map(|binding| binding.keystrokes.clone()),
         context: binding.and_then(|binding| binding.context.clone()),
         source: binding.map(|binding| binding.source),
-        customized: keymap.is_customized(action, cx),
+        customized: customized.contains(action),
     };
     let bindings = keymap.bindings(cx);
+    let bound: std::collections::BTreeSet<_> = bindings
+        .iter()
+        .map(|binding| binding.action.as_str())
+        .collect();
     let mut rows: Vec<Row> = bindings
         .iter()
         .filter(|binding| offered(&binding.action))
@@ -62,7 +67,7 @@ pub(crate) fn rows(keymap: &KeymapHandle, cx: &App) -> Vec<Row> {
         // A command that cannot be built without arguments is sent by a menu; a binding to it
         // would be skipped when the keymap loads.
         .filter(|name| cx.build_action(name, None).is_ok())
-        .filter(|name| !bindings.iter().any(|binding| binding.action == *name))
+        .filter(|name| !bound.contains(name))
         .collect();
     unbound.sort_unstable();
     unbound.dedup();
@@ -75,32 +80,50 @@ pub(crate) fn rows(keymap: &KeymapHandle, cx: &App) -> Vec<Row> {
 /// name, description, shortcut or context, ignoring case. A query that reads
 /// as a shortcut (`ctrl-shift-p`, `shift-ctrl-p`) also matches the shortcut
 /// however its modifiers are ordered.
-pub(crate) fn matches(row: &Row, query: &str) -> bool {
-    let query = query.trim().to_lowercase();
-    if query.is_empty() {
-        return true;
+pub(crate) struct Query {
+    text: String,
+    keys: Option<String>,
+}
+impl Query {
+    pub(crate) fn new(query: &str) -> Self {
+        let text = query.trim().to_lowercase();
+        let keys = text
+            .contains('-')
+            .then(|| normalize(&text).ok())
+            .flatten()
+            .map(|keys| keys.to_lowercase());
+        Self { text, keys }
     }
-    if query.contains('-')
-        && let (Ok(wanted), Some(keys)) = (normalize(&query), &row.keystrokes)
-        && normalize(keys).is_ok_and(|keys| keys.to_lowercase() == wanted.to_lowercase())
-    {
-        return true;
+    pub(crate) fn matches(&self, row: &Row) -> bool {
+        if self.text.is_empty() {
+            return true;
+        }
+        if let (Some(wanted), Some(keys)) = (&self.keys, &row.keystrokes)
+            && normalize(keys).is_ok_and(|keys| keys.to_lowercase() == *wanted)
+        {
+            return true;
+        }
+        let haystack = format!(
+            "{} {} {} {} {}",
+            row.label,
+            row.action,
+            row.description,
+            row.keystrokes.as_deref().unwrap_or("unbound"),
+            row.context.as_deref().unwrap_or_default(),
+        )
+        .to_lowercase();
+        self.text
+            .split_whitespace()
+            .all(|word| haystack.contains(word))
     }
-    let haystack = format!(
-        "{} {} {} {} {}",
-        row.label,
-        row.action,
-        row.description,
-        row.keystrokes.as_deref().unwrap_or("unbound"),
-        row.context.as_deref().unwrap_or_default(),
-    )
-    .to_lowercase();
-    query.split_whitespace().all(|word| haystack.contains(word))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn matches(row: &Row, query: &str) -> bool {
+        Query::new(query).matches(row)
+    }
 
     fn row(keys: Option<&str>) -> Row {
         Row {

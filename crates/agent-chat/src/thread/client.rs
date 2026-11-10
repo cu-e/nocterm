@@ -4,6 +4,8 @@ use super::{AgentThread, approval_inbox::ApprovalToken, permissions::PermissionG
 use super::{
     approval_inbox::{ToolDecision, ToolRejection},
     bound_call::BoundToolCall,
+    execution::WaitSubject,
+    tool_runtime::TransferAdmission,
 };
 use crate::runtime::SessionEvent;
 use gpui::{App, Context};
@@ -22,6 +24,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 impl AgentThread {
+    pub fn source_current(&self) -> bool {
+        self.deps.runtime().check_current().is_ok()
+    }
     pub(super) fn on_tool_completion(
         &mut self,
         call: BridgeCall,
@@ -32,29 +37,24 @@ impl AgentThread {
         cx.notify();
     }
 
+    /// Offers the agent the file tools while an attached terminal takes them.
+    pub(super) fn offer_tools(&mut self, cx: &gpui::App) {
+        let input = super::tool_runtime::resolution::Resolution::observe(self.deps.seat(), cx);
+        let registration = self.session.registration().as_ref();
+        self.tools.offer_tools(
+            &input,
+            self.composer.default_attachments(),
+            registration,
+            cx,
+        );
+    }
+
     pub fn revoke_executions(&mut self, cx: &gpui::App) {
-        if self.tools.active_commands().next().is_none() && self.tools.live_empty() {
+        if !self.tools.has_active_executions() && self.tools.live_empty() {
             return;
         }
         let resolved = self.resolved(cx);
-        let attached = resolved
-            .iter()
-            .map(|(id, _, _)| id.clone())
-            .collect::<Vec<_>>();
-        let current = resolved
-            .into_iter()
-            .map(|(id, entry, _)| {
-                let executor = entry.capabilities.state().info(cx).and_then(|info| {
-                    entry
-                        .capabilities
-                        .execution()?
-                        .executor(info.expected, cx)
-                        .ok()
-                });
-                (id, executor)
-            })
-            .collect::<Vec<_>>();
-        self.tools.revoke_replaced_executors(&current, &attached);
+        self.tools.revoke_replaced(resolved, cx);
     }
 
     pub(super) fn on_execution_watch(&mut self, cx: &gpui::App) -> bool {
@@ -63,7 +63,7 @@ impl AgentThread {
         } else {
             self.revoke_executions(cx);
         }
-        if self.tools.active_commands().next().is_none() {
+        if !self.tools.has_active_executions() {
             self.tools.finish_watch();
             false
         } else {
@@ -73,6 +73,42 @@ impl AgentThread {
 
     pub(super) fn cancel_execution(&mut self) {
         self.tools.cancel_execution();
+    }
+
+    pub(super) fn start_transfer(&mut self, admission: TransferAdmission, cx: &mut Context<Self>) {
+        let source = self
+            .resolved(cx)
+            .into_iter()
+            .find(|(id, _, _)| admission.reads_from(id))
+            .map(|(_, entry, _)| entry);
+        match self.tools.start_transfer(admission, source, cx) {
+            Ok(started) => {
+                let (call, id, yield_ms) = started.into_parts();
+                self.start_execution_watch(cx);
+                self.wait_tool(WaitSubject::transfer(&id.to_string()), yield_ms, call, cx);
+            }
+            Err(rejected) => {
+                let (call, error) = rejected.into_parts();
+                self.finish(call, Err(error));
+            }
+        }
+    }
+
+    pub(super) fn read_transfer(&mut self, call: BridgeCall, cx: &mut Context<Self>) {
+        let TerminalCall::ReadTransfer(request) = &call.call else {
+            return;
+        };
+        let subject = WaitSubject::transfer(&request.transfer_id);
+        self.wait_tool(subject, request.yield_ms.unwrap_or(0), call, cx);
+    }
+
+    pub(super) fn cancel_transfer(&mut self, call: BridgeCall, cx: &mut Context<Self>) {
+        let TerminalCall::CancelTransfer(request) = &call.call else {
+            return;
+        };
+        let redact = self.deps.ai(cx).approval.redact_secrets;
+        let result = self.tools.cancel_transfer(&request.transfer_id, redact);
+        self.finish(call, result);
     }
 
     pub(super) fn command_payload(
@@ -150,32 +186,11 @@ impl AgentThread {
         let gate = self.tool_gate(&call.call, cx);
         let expected = gate.expected();
         let decision = self.tools.approval_receive_tool(
-            BoundToolCall::new(call, expected),
+            BoundToolCall::new(call, expected).with_source(gate.source_expected()),
             &gate,
             &self.deps.ai(cx).approval,
         );
         self.apply_tool_decision(decision, cx);
-    }
-
-    fn tool_destination(
-        &mut self,
-        request: &TerminalCall,
-        entry: Option<&TerminalEntry>,
-        cx: &App,
-    ) -> Option<String> {
-        if let Some(entry) = entry {
-            let info = entry.capabilities.state().info(cx)?;
-            if info.local {
-                return Some("This computer".into());
-            }
-            let target = info.target?;
-            return Some(format!("{} · {target}", entry.title));
-        }
-        let server = request.server_id()?;
-        self.offline_servers(cx)
-            .into_iter()
-            .find(|(descriptor, _)| descriptor.server_id == server)
-            .map(|(descriptor, summary)| format!("{} · {}", descriptor.name, summary.target))
     }
 
     fn normalize_tool_displays(&mut self) {
@@ -227,7 +242,14 @@ impl AgentThread {
             .into_iter()
             .find(|(id, _, _)| Some(id.as_str()) == call.call.terminal_id())
             .map(|(_, entry, _)| entry);
-        let destination = self.tool_destination(&call.call, provided_entry.or(entry.as_ref()), cx);
+        let input = super::tool_runtime::resolution::Resolution::observe(self.deps.seat(), cx);
+        let (entry, defaults) = (
+            provided_entry.or(entry.as_ref()),
+            self.composer.default_attachments(),
+        );
+        let destination = self
+            .tools
+            .destination(&call.call, entry, &input, defaults, cx);
         let mut display = ToolDisplay::requested(tool.into(), arguments.clone());
         display.destination = destination.map(|text| nocterm_ai::redact::redact(&text));
         if self.deps.ai(cx).approval.redact_secrets {
@@ -243,18 +265,27 @@ impl AgentThread {
         cx.notify();
     }
 
-    pub fn apply_presented_update(&mut self, mut update: SessionUpdate) -> ThreadChange {
+    pub fn apply_presented_update(
+        &mut self,
+        mut update: SessionUpdate,
+    ) -> Result<ThreadChange, nocterm_ai::history::HistoryCodecError> {
         self.tools
             .prepare_displays(self.session.turn(), self.state.entries().len());
         tool_display::strip_provider_meta(&mut update);
+        let tools_changed = matches!(
+            &update,
+            SessionUpdate::ToolCall(_) | SessionUpdate::ToolCallUpdate(_)
+        );
         let change = if self.config.report_control(&update) {
             ThreadChange::Controls
         } else {
-            self.state.apply_transcript(update, self.deps.timestamp())
+            self.state.apply_transcript(update, self.deps.timestamp())?
         };
-        let patches = self.tools.normalize_displays(self.state.entries());
-        self.state.patch_tool_rows(patches, self.deps.timestamp());
-        change
+        if tools_changed {
+            let patches = self.tools.normalize_displays(self.state.entries());
+            self.state.patch_tool_rows(patches, self.deps.timestamp());
+        }
+        Ok(change)
     }
 
     pub(super) fn on_prompt_completion(
@@ -283,11 +314,6 @@ impl AgentThread {
                 if response.usage.is_some() {
                     self.state.tokens(response.usage);
                 }
-                // Agents that keep limits in their own files have
-                // just written this turn's.
-                let agent = self.state.agent_id().to_owned();
-                let runtime = self.deps.runtime().clone();
-                cx.defer(move |cx| runtime.refresh_limits(&agent, cx));
                 self.notice.present(if self.session.stopped() {
                     "Stopped".into()
                 } else {
@@ -336,6 +362,12 @@ impl AgentThread {
             self.config
                 .keep_control(self.session.ticket(), notification);
         }
+        if let SessionUpdate::Turn(activity) = &notification.update {
+            if self.session().as_ref() == Some(&notification.session) {
+                self.external_turn(activity, cx);
+            }
+            return;
+        }
         if self.session().as_ref() != Some(&notification.session)
             || !self.session.accepts_updates()
             || matches!(notification.update, SessionUpdate::UserMessageChunk(_))
@@ -354,7 +386,14 @@ impl AgentThread {
             notification.update,
             SessionUpdate::ConfigOptionUpdate(_) | SessionUpdate::CurrentModeUpdate(_)
         );
-        match self.apply_presented_update(notification.update.clone()) {
+        let change = match self.apply_presented_update(notification.update.clone()) {
+            Ok(change) => change,
+            Err(error) => {
+                self.fail(&error.to_string(), cx);
+                return;
+            }
+        };
+        match change {
             ThreadChange::Transcript => {
                 if let Some(index) = index {
                     self.mark_dirty(index);
@@ -489,7 +528,14 @@ impl AgentThread {
             self.session.retain_failed_restore(ticket, pending_restore);
         }
         match result {
-            Ok(response) => {
+            Ok(mut response) => {
+                let history = response.history.take().filter(|_| restored == Some(true));
+                if let Some(history) = history
+                    && let Err(error) = self.state.replace_history(history, self.deps.timestamp())
+                {
+                    self.fail(&error.to_string(), cx);
+                    return true;
+                }
                 let session = response.session;
                 if !self.session.accept_open(
                     ticket,
@@ -544,6 +590,8 @@ impl AgentThread {
             self.fail("Terminal bridge is unavailable.", cx);
             return;
         };
+        // An agent that keeps its sessions reopens one even when nothing of it was saved here.
+        let keeps_history = info.capabilities.keeps_history;
         if !self
             .session
             .begin_open(commands.clone(), info, workdir.clone())
@@ -557,7 +605,9 @@ impl AgentThread {
             .session
             .restore()
             .clone()
-            .filter(|restore| !self.state.entries().is_empty() && restore.workdir.is_absolute())
+            .filter(|restore| {
+                keeps_history || (!self.state.entries().is_empty() && restore.workdir.is_absolute())
+            })
             .map(|mut restore| {
                 restore.workdir = workdir.clone();
                 restore
@@ -664,7 +714,10 @@ impl AgentThread {
     }
     pub(super) fn runtime_event(&mut self, event: SessionEvent, cx: &mut Context<Self>) {
         match event {
-            SessionEvent::Leased(lease) => self.begin_lease(lease),
+            SessionEvent::Leased(lease) => {
+                self.begin_lease(lease);
+                self.offer_tools(cx);
+            }
             SessionEvent::Connected {
                 connection,
                 commands,

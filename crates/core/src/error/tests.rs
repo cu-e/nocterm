@@ -74,3 +74,14 @@ fn construction_from_arc_reuses_the_existing_allocation() {
         erased.downcast_ref().unwrap()
     ));
 }
+
+#[test]
+fn a_chain_lists_the_error_and_every_cause_outermost_first() {
+    let error = Operation(SharedCause::new(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "denied",
+    )));
+    assert_eq!(chain(&error), "operation failed: denied: denied: denied");
+    let plain = io::Error::new(io::ErrorKind::NotFound, "missing");
+    assert_eq!(chain(&plain), "missing");
+}

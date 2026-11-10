@@ -4,7 +4,7 @@ use std::{borrow::Cow, fmt};
 
 use crate::wire::{BarItemWire, GroupEntryWire};
 
-use nocterm_plugin_model::{ContributionId, GroupId, Side, Zone};
+use nocterm_plugin_model::{ContributionId, Edge, GroupId, Side, Zone};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -68,6 +68,62 @@ pub struct LayoutPreset {
     /// Panels opened when the preset is selected.
     #[schemars(with = "Vec<String>")]
     pub open: Vec<ContributionId>,
+    /// The toolbars along the edges of the tab area. A toolbar named neither here nor in the
+    /// tray follows its hints.
+    #[serde(skip_serializing_if = "Toolbars::is_empty")]
+    pub toolbars: Toolbars,
+}
+
+/// The toolbars along each edge of the tab area, each edge in order.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Toolbars {
+    #[schemars(with = "Vec<String>")]
+    pub top: Vec<ContributionId>,
+    #[schemars(with = "Vec<String>")]
+    pub bottom: Vec<ContributionId>,
+    #[schemars(with = "Vec<String>")]
+    pub left: Vec<ContributionId>,
+    #[schemars(with = "Vec<String>")]
+    pub right: Vec<ContributionId>,
+}
+
+impl Toolbars {
+    pub fn edge(&self, edge: Edge) -> &[ContributionId] {
+        match edge {
+            Edge::Top => &self.top,
+            Edge::Bottom => &self.bottom,
+            Edge::Left => &self.left,
+            Edge::Right => &self.right,
+        }
+    }
+
+    pub(crate) fn edge_mut(&mut self, edge: Edge) -> &mut Vec<ContributionId> {
+        match edge {
+            Edge::Top => &mut self.top,
+            Edge::Bottom => &mut self.bottom,
+            Edge::Left => &mut self.left,
+            Edge::Right => &mut self.right,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        Edge::ALL.iter().all(|edge| self.edge(*edge).is_empty())
+    }
+
+    /// The edge that names the toolbar first, if any does.
+    pub fn edge_of(&self, id: &ContributionId) -> Option<Edge> {
+        Edge::ALL
+            .into_iter()
+            .find(|edge| self.edge(*edge).contains(id))
+    }
+
+    /// Takes the toolbar off every edge.
+    pub(crate) fn remove(&mut self, id: &ContributionId) {
+        for edge in Edge::ALL {
+            self.edge_mut(edge).retain(|named| named != id);
+        }
+    }
 }
 
 /// The three zones of the status bar, each in order.

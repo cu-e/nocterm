@@ -46,7 +46,6 @@ fn endpoint_authentication_and_launch_validation_keep_their_order() {
     draft.endpoint.host.clear();
     draft.endpoint.port = "invalid".into();
     draft.authentication.kind = AuthKind::Key;
-    draft.authentication.credential = "invalid".into();
     draft.launch.override_launch = true;
     draft.launch.args = "invalid".into();
     assert!(matches!(
@@ -64,13 +63,6 @@ fn endpoint_authentication_and_launch_validation_keep_their_order() {
         ValidationField::Key
     );
     draft.authentication.key_path = "/supplied/key".into();
-    assert!(matches!(
-        draft.validate(&defaults()),
-        Err(ProfileValidationError::Credential(
-            CredentialIdParseError::InvalidShape
-        ))
-    ));
-    draft.authentication.credential.clear();
     assert_eq!(
         draft.validate(&defaults()).unwrap_err().field(),
         ValidationField::Arguments
@@ -176,4 +168,28 @@ fn jump_hosts_flow_from_the_draft_into_the_saved_profile() {
     assert_eq!(validated.jump_hosts, draft.jump_hosts);
     let profile = validated.into_profile(crate::test_support::profile_id_for("db"));
     assert_eq!(profile.jump_hosts, draft.jump_hosts);
+}
+#[test]
+fn a_vault_key_draft_becomes_an_auth_that_names_the_record_and_its_public_half() {
+    let mut draft = draft();
+    draft.authentication.kind = AuthKind::VaultKey;
+    let error = draft.validate(&defaults()).unwrap_err();
+    assert!(matches!(error, ProfileValidationError::MissingVaultKey));
+    assert_eq!(error.field(), ValidationField::Key);
+    let credential = CredentialId::from_bytes([4; 16]);
+    draft.authentication.vault_key = Some(VaultKeyChoice {
+        credential,
+        public_key: "ssh-ed25519 AAAA".into(),
+    });
+    // The typed file path and password reference are not part of this method.
+    draft.authentication.key_path = "~/.ssh/ignored".into();
+    let profile = draft.validate(&defaults()).unwrap();
+    assert_eq!(
+        profile.auth,
+        Auth::VaultKey {
+            credential,
+            public_key: "ssh-ed25519 AAAA".into()
+        }
+    );
+    assert_eq!(profile.credential, None);
 }

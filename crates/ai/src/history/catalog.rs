@@ -16,6 +16,8 @@ struct Legacy {
     version: u32,
     #[serde(default)]
     scope: Option<ContextId>,
+    #[serde(default)]
+    environment: Option<crate::local_environment::LocalEnvironment>,
     id: String,
     agent_id: String,
     #[serde(default)]
@@ -147,11 +149,13 @@ pub fn decode_summary(
 ) -> Result<Option<ChatSummary>, HistoryCodecError> {
     super::check_size(bytes.len())?;
     super::preflight::check(bytes)?;
-    if bytes.starts_with(super::prefix::START) {
+    if super::prefix::is_scoped(bytes) {
         let header = super::decode_catalog_header(bytes, id)?;
         let envelope: ScopedSummary = serde_json::from_slice(bytes)?;
-        if envelope.version != super::VERSION
-            || envelope.chat.version != super::VERSION
+        if !matches!(
+            envelope.version,
+            super::VERSION | super::ENVIRONMENT_VERSION
+        ) || envelope.chat.version != envelope.version
             || envelope.catalog != header
             || envelope.chat.catalog(id)? != header
         {
@@ -179,6 +183,17 @@ struct ScopedSummary {
 impl Legacy {
     fn catalog(self, id: &str) -> Result<super::CatalogHeader, HistoryCodecError> {
         let scope = super::header::resolve_scope(self.version, self.scope)?;
+        let environment = self
+            .environment
+            .ok_or(HistoryCodecError::MissingEnvironment)
+            .or_else(|error| {
+                if self.version <= 2 {
+                    Ok(crate::local_environment::LocalEnvironment::ThisComputer)
+                } else {
+                    Err(error)
+                }
+            })?;
+        super::header::validate_environment(self.version, &environment)?;
         if self.id != id {
             return Err(HistoryCodecError::IdentityMismatch);
         }
@@ -189,6 +204,7 @@ impl Legacy {
             id: self.id,
             agent_id: self.agent_id,
             scope,
+            environment,
             title: self.title.or(self.entries.title),
             name: self.name,
             pinned: self.pinned,
@@ -200,6 +216,7 @@ impl Legacy {
             &super::catalog_header::Preview::for_title(None, content),
             None,
             false,
+            self.version,
         ))
     }
 }

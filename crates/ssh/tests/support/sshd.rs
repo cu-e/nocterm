@@ -74,7 +74,7 @@ impl Sshd {
                  PasswordAuthentication no\n\
                  KbdInteractiveAuthentication no\n\
                  Subsystem sftp internal-sftp\n\
-                 LogLevel ERROR\n\
+                 LogLevel DEBUG3\n\
                  {extra_config}",
                 root = root.display(),
             ),
@@ -143,7 +143,9 @@ impl Sshd {
         })?;
         self.process = Some(
             Command::new(binary)
-                .args(["-D", "-e", "-f"])
+                .args(["-D", "-E"])
+                .arg(self.root().join("sshd.log"))
+                .arg("-f")
                 .arg(self.root().join("sshd_config"))
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -223,7 +225,7 @@ pub(crate) async fn connect(session: &Session, mut answer: impl FnMut(Prompt)) {
             Event::Connected => return,
             Event::Prompt(prompt) => answer(prompt),
             Event::Closed(reason) => panic!("closed while connecting: {reason:?}"),
-            Event::Connecting(_) | Event::Output(_) => {}
+            Event::Connecting(_) | Event::Output(_) | Event::Restore(_) => {}
         }
     }
 }

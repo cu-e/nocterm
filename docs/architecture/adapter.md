@@ -4,8 +4,8 @@ Part of the [architecture overview](../ARCHITECTURE.md).
 
 Adapters implement domain contracts with real I/O and depend only on the
 domain and foundation: `nocterm-ssh`, `nocterm-local`, `nocterm-localfs`,
-`nocterm-transfer-runtime`, `nocterm-acp`, `nocterm-device-unlock`,
-`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-agent-usage`, `nocterm-image-codec`, `nocterm-connections-io`, `nocterm-project-storage`, `nocterm-project-runtime`, `nocterm-project-environment`, `nocterm-project-container-fs`, `nocterm-directory-io` and `nocterm-snippets-io`. The composition root chooses
+`nocterm-transfer-runtime`, `nocterm-acp`, `nocterm-agent-tools`, `nocterm-device-unlock`,
+`nocterm-vault-store`, `nocterm-agent-storage`, `nocterm-image-codec`, `nocterm-connections-io`, `nocterm-project-storage`, `nocterm-project-runtime`, `nocterm-project-environment`, `nocterm-project-container-fs`, `nocterm-directory-io` and `nocterm-snippets-io`. The composition root chooses
 and injects them
 ([app layer](app.md)).
 
@@ -79,7 +79,9 @@ for a missing remote source
 
 `nocterm-ssh` implements
 that contract using russh and lazily opened SFTP channels on a dedicated Tokio
-runtime.
+runtime. Authentication with a vault key reads the record through the credential store,
+checks its public half against the profile and signs without SHA-1 for RSA
+([ADR 0102](../adr/0102-ssh-keys-are-kept-in-the-vault.md)).
 `nocterm-local` adapts portable-pty to
 the same session events and launch contract. Integration supplies bounded OSC 7
 cwd and prompt markers without parsing rendered prompt text. It also implements the
@@ -91,15 +93,17 @@ in effect at that instant ([ADR 0088](../adr/0088-wall-clock-contract-and-the-cl
 `nocterm-plugin-packages` implements the `PluginPackages` port of `nocterm-plugin-api`. It reads a
 package file (a TOML file of at most 256 KiB, or a code package below) without following links through
 `nocterm_core::fs::read_regular_bounded`, hashes the exact bytes it then parses, validates the
-manifest, publishes a package privately and atomically as one file per validated `user-`
-plugin id (`<root>/<id>.toml`), re-hashes it at load and removes it. Its I/O is limited to those `nocterm_core::fs`
+manifest and publishes immutable private files per validated `user-` plugin id and hash
+(`<root>/<id>.<hash>.toml`). Records select one exact version; old versions remain until
+the matching records receipt succeeds. Loads also accept legacy id-only files and recheck
+the requested hash. Its I/O is limited to those `nocterm_core::fs`
 calls and metadata and removal under the package root ([ADR 0089](../adr/0089-user-plugin-contract.md)).
 A code package is one `.wasm` module, at most 2 MiB, that carries the manifest in its custom
-section `nocterm.manifest`; the store keeps `<id>.wasm` or `<id>.toml` per plugin and the hash
+section `nocterm.manifest`; the store keeps `<id>.<hash>.wasm` or `<id>.<hash>.toml` and the hash
 covers the whole file ([ADR 0091](../adr/0091-user-plugin-code-runs-in-process-on-wasmi.md)).
 `SessionStore` is the store of a developer session: it reads a file with the same bounded read but
 publishes, loads (re-checking the hash) and removes packages in memory, so no package directory is
-ever created.
+ever created. See [ADR0141](../adr/0141-versioned-plugin-publication.md).
 
 `nocterm-plugin-wasm` implements the `PluginRuntime` port on wasmi for code packages. It reads no
 file: the bytes come from the package port. It validates and compiles a module when a plugin is
@@ -107,6 +111,14 @@ instantiated, caches at most 16 compiled modules, runs each call under a fuel bu
 limit, allows at most 16 live instances, bounds every read of guest memory, and maps a trap, a
 missed deadline or a memory fault to a `RuntimeError` that the host counts. Guests import
 nothing; their log lines go to an injected `GuestLog`. The crate has no thread and no global.
+
+`nocterm-plugin-net` implements the `PluginNet` port for the `net.request` capability. The host
+builds each call from the plugin's settings: the origin the user typed and, from a secret setting,
+the credential header. The adapter parses the address again and refuses one that is not at that
+origin, follows no redirect, keeps no cookies, sends JSON with a plugin user agent, waits at most
+15 seconds and reads at most 256 KiB of the answer. A failure is a status-0 answer, not an error.
+Calls block, so the host runs them on a background thread; the crate is compiled only with
+`user-plugins` ([ADR 0153](../adr/0153-toolbars-and-user-plugin-requests-timers-and-terminals.md)).
 
 ## Bounded I/O
 
@@ -119,6 +131,13 @@ enumerate and kill arbitrary detached jobs. Explicit input refusal
 is surfaced in the terminal instead of silently discarding text.
 HTTP CONNECT/SOCKS5 tunnel creation belongs to the SSH adapter, inside the same
 connection timeout and target host-key policy as a direct connection.
+A hub proxy (`ProxyConfig::Hub`) takes its first stream from the injected
+`RelayDialer` port instead of a socket: `SshTransport::with_relay` supplies it, and
+without one such a session fails to connect. The adapter bridges the stream's two
+bounded frame channels (`RELAY_FRAMES` frames of at most `RELAY_FRAME_BYTES`) to the
+async stream the handshake needs, so a relay that stops reading stalls the writer
+instead of growing a buffer. Closing either side ends both directions. The relay
+carries bytes only: the host key checked and the sign-in are the destination's.
 
 The adapter also establishes jump-host routes ([ADR 0060](../adr/0060-ssh-jump-host-routes.md)).
 `ConnectRequest.jumps` lists resolved hops; each is reached through a `direct-tcpip`
@@ -197,6 +216,22 @@ chunks with at most eight acknowledged upload chunks per batch, and owns entropy
 cancellable reservations and cleanup. Local operations run through bounded blocking
 slots; the adapter imports no concrete filesystem adapter or GPUI.
 
+Downloads and relays walk remote sources through one bounded DFS. Its destination
+retains either a held `LocalDirectory` or the admitted remote filesystem and parent
+path, with separate native-download and remote-publication name policies. Their
+shared double-buffer pipeline joins both pending operations before returning a
+failure, so a local writer regains its stage before cleanup.
+
+A relay request walks its source tree on the source `RemoteFs`, prepares directories on
+the destination and streams each file from a `RemoteDownload` into a staged
+`RemoteUpload` with double buffering: the next read batch is in flight while the previous
+write batch is acknowledged, so a worker holds at most two batches of buffers. Staging,
+reservation, collision policy and publication are shared with uploads. `read_batch` is an
+additive `RemoteDownload` method (sequential by default); the SFTP adapter keeps up to
+eight READs in flight and returns the in-order prefix up to the first short or
+end-of-file reply, and downloads use it too. The runtime also implements the narrow `TransferRequests` port for agents
+([ADR 0128](../adr/0128-agents-transfer-files-through-the-shared-transfer-runtime.md)).
+
 Sources open relative to held directories. Local destination reservations combine
 directory identity and native name, and late Rename collisions reuse an already
 synced stage. SSH uploads seal their acknowledged stage and retry publication under
@@ -211,21 +246,24 @@ common shutdown coordinator; the adapter introduces no quit hook or separate bud
 
 ## Agent history and preferences
 
+New Local transcripts use held `scoped-v3/<environment-key>/general` or
+`scoped-v3/<environment-key>/projects/<project-id>` descendants. The authoritative
+bounded header and body must match the requested environment and context before
+payload reads or mutation. Older namespaces are readable only by ThisComputer;
+obsolete sidecars are ignored and cannot select membership. See [ADR 0110](../adr/0110-local-history-environment-partitions.md).
+
 `nocterm-agent-storage` implements the AI domain's `ChatRepository` and
 `AgentStateRepository`. It owns bounded transcript reads, private atomic JSON/TOML
-publication, catalog scanning and rebuildable metadata sidecars. The transcript
-is authoritative: a sidecar failure cannot revoke a successful publication.
-Version-two documents and their rebuildable sidecars live under
+publication and catalog scanning. The transcript is authoritative; obsolete `.meta` files
+are neither read nor written. Version-two documents remain under
 `scoped-v2/general/<chat-id>` or `scoped-v2/projects/<project-id>/<chat-id>`;
 legacy flat discovery cannot enter Project history. The captured scope and UUID
 select one bucket, so identical chat IDs in different scopes are independent.
-Discovery verifies the transcript's bounded authoritative v2 header before using
-any sidecar metadata, then applies the 200-row limit within that scope. Ordinary
-v2 catalog reads and overwrite checks read at most the 16 KiB prefix rather than
-the full transcript. Arbitrarily ordered valid General v1 files keep their
-bounded full scan, including late metadata and first-user fallback titles; no
-sidecar is trusted to avoid that compatibility cost and no migration rewrites
-v1 bytes. A scoped General document takes precedence over a legacy duplicate,
+Discovery reads bounded authoritative headers, then applies the 200-row limit within that
+scope. Ordinary v2 catalog reads and overwrite checks read at most the 16 KiB prefix rather
+than the full transcript. Arbitrarily ordered valid General v1 files keep their bounded full
+scan, including late metadata and first-user fallback titles; no migration rewrites v1 bytes.
+A scoped General document takes precedence over a legacy duplicate,
 including when damaged; deletion validates both and removes legacy first so a
 failed removal cannot resurrect its stale fallback.
 
@@ -243,29 +281,13 @@ dependency. Repository futures run filesystem work when polled on the background
 executor. The adapter owns no writer loop, per-chat gate or shutdown timer.
 See [ADR0022](../adr/0022-agent-storage-owners.md).
 
-## Agent account usage
+## Agent usage boundary
 
-`nocterm_agent_usage::native_sources()` resolves the readers' locations once and
-registers one reader per `AccountUsage` kind in AI's `UsageSources`. The runtime
-asks with the agent's kind from its profile, so readers never inspect launches and
-agents without a profile or kind are never read.
-
-`nocterm-agent-usage::ClaudeUsageReader` serves `OAuthAccount` agents. Composition
-supplies Claude Code's configuration directory (`CLAUDE_CONFIG_DIR` or
-`~/.claude`); the reader takes the unexpired OAuth access token from
-`.credentials.json`, requests the account's plan limits from Anthropic's API with a
-10-second timeout and a 1 MiB response bound, and converts percentage windows to
-shares. Missing credentials, an expired token or a rejected request produce no
-report; it never refreshes or writes credentials. Rate-limit records the agent
-attaches to usage updates still merge into the same limits between reads.
-
-`nocterm-agent-usage::CodexUsageReader` serves `SessionLog` agents. Composition
-supplies its optional home directory (`CODEX_HOME` or `~/.codex`). The reader selects the newest lexical date and log, scans at most the
-last 256 KiB and returns the last usable account report. Missing or malformed reports
-produce no replacement; physical failures preserve typed I/O causes.
-AI owns typed shared usage causes and category-specific constructors; native readers
-retain the original I/O classification and deeper cause through standard traversal.
-Clones share the original payload without changing account selection or tail limits.
+The ACP adapter maps the connected agent's context usage, token totals and usage
+metadata into AI's neutral records. No adapter in Nocterm reads provider sign-in
+tokens or session logs, or requests private provider account endpoints. The agent
+owns its authentication, requests and state files
+([ADR 0105](../adr/0105-provider-usage-through-acp-only.md)).
 
 ## Agent workspace and sandbox
 
@@ -294,7 +316,8 @@ process shutdown port retains its existing stringified AgentError diagnostic.
 ## Connection files and native values
 
 `nocterm-connections-io` implements the connection repository with the shared
-foundation codecs. Profiles use `save_preserving` so configuration symlinks,
+foundation codecs. Profiles use `RevisionedFile::save_preserving` with observed-revision
+conflict detection and a persistent sibling publication lock, so configuration symlinks,
 comments and retained top-level tables keep their existing semantics; recents
 and facts use rebuildable snapshot files. A malformed profile load retains a
 typed read-only diagnostic; informational documents fall back to empty values.
@@ -302,6 +325,10 @@ The adapter supplies user/home defaults, UUID entropy and Unix timestamps.
 Application startup preloads documents and defaults on its background executor;
 bootstrap installs only prepared documents and writer ports. The existing
 memory-only composition constructs no native repository or HTTP clients.
+One lazy HTTP client per observation bundle shares connection pooling for country and flag
+requests. Native DNS has four physical workers and four queued requests, with an eight-second
+caller deadline. Expired queued work is skipped. An uncancellable system lookup retains its
+worker until actual return, isolating optional country acquisition from other fact jobs.
 ## Image codec
 
 `nocterm-image-codec::NativeImageCodec` implements AI's image inspector and
@@ -331,3 +358,111 @@ The adapter preserves the original PersistError behind typed operation errors, a
 performs no validation/fallback, queue or GUI work. Native UUIDv4 acquisition occurs
 only when the editor requests a new draft. See
 [ADR0055](../adr/0055-snippet-storage-boundaries.md).
+
+## Hub connections
+
+`nocterm-hub-io` is the only crate that speaks the hub protocol. It uses the hub contract
+(`nocterm-hub-client`, `nocterm-hub-model`, `nocterm-hub-proto`, `nocterm-keys`), a public
+repository outside this workspace that is pinned by commit, and implements the `HubTrust`,
+`HubSignIn` and `AccountDevices` ports of `nocterm-hubs-model` on its own small Tokio runtime,
+like `nocterm-ssh`. `tonic` and
+`prost` values stop at its boundary. The device key and tokens of each hub are kept in one
+mode-0600 file in a mode-0700 directory the application supplies; the contract rotates tokens
+under an inter-process lock that the adapter takes on a sibling `.lock` file, so two processes
+never spend a refresh token twice. A hub has one client while it is trusted the same way, so the
+contract's own turn serializes refreshes inside the process, and a wait for the file lock does not
+hold up a worker of the runtime. Writers of the file take the same lock. A revoked device erases its file. A failed connection is
+explained by reading the certificate the hub presents and comparing it with the pinned one,
+which separates a changed certificate from a hub that is not there. See
+[ADR 0096](../adr/0096-hub-contract-outside-the-workspace.md).
+
+`HubAccount::local_credentials` supplies a terminal credential store restricted to
+one captured native account. Only an in-flight worker holds the original open
+keys and client; each StoreOps call uses that client or fails. Cache reads and
+publication verify the original key pointer and account under the Slot mutex,
+so a late A result cannot read or overwrite B. Returned results check the source
+again after worker completion. A stale captured store never revives at unlock;
+a new attempt obtains a new source and credential store. Its SDK SessionStore
+rejects adoption or publication of another account/device or explicit local
+login under the shared file lock. A fallible random local login identity changes
+at explicit sign-in, including the same account/device, and survives ordinary
+refresh. File and pooled membership publication share the clients mutex, ordered
+before the file lock. Captured revocation compares the original local file login;
+an old response cannot erase replacement credentials in the publication window.
+Already admitted remote A operations retain their existing cancellation limits.
+
+Personal-vault refresh snapshots publish monotonically within a collection: an older
+cursor cannot replace a newer cached deletion. Identical refreshes leave the cache file
+untouched, and reading one credential copies only its encrypted object and envelope.
+Account-cache encoding and acquisition share a 32 MiB file limit; a refused oversized
+publication preserves the previous readable file.
+
+`HubAccount::local_source` captures the configured hub and the actual pooled account for
+device-local history. The history partition is derived from the account id alone, so a locked
+vault never blocks chats; an address or leaf certificate does not establish a stable
+authority. The account handle keeps a small provider so capture can be retried. Each returned source keeps only weak key,
+pool membership and owner references. Lock, sign-out and replacement login make
+old captures stale, including an A→B→A round trip; ordinary refresh preserves the
+membership only for the same account, device and trust. Pool eviction invalidates
+captures before waiting for remote device revocation. General account notices
+are independent from this validity check.
+
+`pool::captured::CapturedClient` is shared by fixed credential-store and relay
+consumers. It retains the original SDK client, weak native membership and optional
+weak key owner. Refresh uses that client only. Retirement compares exact native
+membership; cache/key erase additionally requires the original open-key pointer.
+Without that key owner it may retire original membership but never erase another
+account's cache. `HubAccount::local_relay` adds the captured source and account
+partition. Capturing a relay binds hub and complete target before spawning;
+workers and returned streams recheck the original owner after waits. A constrained
+hub open requires an explicit captured relay collaborator and never selects the
+ordinary desktop relay as a fallback.
+
+`HubRelay` implements `RelayDialer` of `nocterm-session` over the same runtime and the same
+signed-in clients ([ADR 0100](../adr/0100-the-hub-is-a-route-step.md)). It finds the hub by
+address among the hubs this device is signed in to and never signs in on demand. After the hub
+opens the connection, one task carries frames between the bounded channels of the `RelayStream`
+and the hub's stream: the two runtimes share nothing else. A target that is silent does not
+keep a closed session alive, and each direction ends on its own: dropping the sender is end of
+file for the target, which may still answer. A refusal is told by the hub's code, never by its
+text.
+
+`HubAgentsLink` implements the `HubAgentDirectory`, `HubServers` and `HubChanges` ports of
+`nocterm-hub-agents-model` over the hub's agent and server services; its hints come from
+one `Watch` of the account per tracked hub (chat changes, and `AccountChanged` for agents,
+providers and servers). `HubAgentConnector` implements
+`nocterm_ai::AgentConnector` for agents whose launch names a hub
+([ADR 0148](../adr/0148-hub-chats-run-on-the-hub-and-use-the-agent-chat-ui.md)): a new
+session is shown with the agent's model and mode and its first message creates the hub chat
+under the id the session already has, a restore reads its history and watches it, a prompt uploads its
+attachments, sends the message and resolves at the end of the first run that started after
+it, cancel stops the run, approvals answer the chat's pending approval, and the model option
+sets the chat's model. Runs started from another device become neutral turn notices. A
+`Watch` per open chat is the only stream; nothing polls. `HubChatRepository` decorates the
+local `ChatRepository`: in a hub environment it lists, renames, pins and deletes the hub's chats
+and keeps only which local documents started which hub chats in a private file; a hub chat's
+transcript is never written locally.
+
+## Agent command execution
+
+`nocterm-agent-tools` supplies the session-domain `CommandJobsFactory` and `CommandJobs`
+ports. Each chat gets an independent registry with four active and sixteen retained commands.
+The adapter drains all stdout while retaining a 64KiB prefix, preserves typed startup
+errors and the transport's bounded stderr tail, and holds each original executor.
+The host schedules returned futures and supplies absolute deadlines; cancellation drops
+the held transport output and preserves a readable outcome with an unknown exit.
+The app injects the factory through the retained agent installation. Neither the
+chat service nor its views depend on the adapter ([ADR 0106](../adr/0106-shared-terminal-tool-ownership.md)).
+
+## Native hub account admission
+
+`nocterm-hub-io` captures authenticated native membership before account work is queued. Opened replicas and terminal credential facades never select a replacement login; the general vault captures membership separately for unlock while keys are locked. Pool admission and Slot lifecycle receipts make key/cache and idle-timer publication conditional on their original owner. Reconnect/login/sign-out retain the original private-file login generation. Recovery offers bind the original recipient and displayed action. See [ADR 0114](../adr/0114-native-captured-account-operations.md).
+
+
+Agent access edits of `authorized_keys` use the SFTP adapter's fixed no-clobber owner lock,
+with no expiry or automatic orphan recovery. Different Nocterm sessions/devices coordinate
+through that lock. Existing empty files use Replace; absence uses Create. Final comparison and
+checked lock cleanup remain best effort against arbitrary external editors. Busy and
+unsupported protocol failures retain typed causes; the agent key's line can still be copied
+and added by hand.
+See [ADR0139](../adr/0139-cooperative-authorized-keys-edits.md).

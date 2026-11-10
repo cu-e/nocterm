@@ -69,9 +69,10 @@ fn setup_recording_test(
     gpui_kit::Entity<Terminal>,
     nocterm_session::Session,
     nocterm_session::SessionDriver,
+    std::sync::Arc<nocterm_session::testing::recording::ScriptedOutputLog>,
 ) {
     let (session, driver) = nocterm_session::channel(None);
-    let terminal = cx.update(|cx| {
+    let (terminal, log) = cx.update(|cx| {
         gpui_kit::init(cx);
         let mut settings = nocterm_settings::SettingsDocument::default();
         settings.update::<nocterm_session::LoggingOptions>(|section| section.auto_start = true);
@@ -116,7 +117,7 @@ fn setup_recording_test(
             &ui,
             cx,
         );
-        cx.new(|cx| {
+        let terminal = cx.new(|cx| {
             Terminal::new(
                 installed.clone(),
                 SessionSpec {
@@ -131,9 +132,10 @@ fn setup_recording_test(
                 },
                 cx,
             )
-        })
+        });
+        (terminal, log)
     });
-    (terminal, session, driver)
+    (terminal, session, driver, log)
 }
 
 #[gpui_kit::test]
@@ -141,7 +143,7 @@ fn automatic_logs_exclude_authentication_and_input_and_drain_on_disconnect(
     cx: &mut TestAppContext,
 ) {
     let directory = tempfile::tempdir().unwrap();
-    let (terminal, _session, driver) = setup_recording_test(directory.path(), cx);
+    let (terminal, _session, driver, _log) = setup_recording_test(directory.path(), cx);
     let (reply, answer) = Reply::channel();
     cx.update(|cx| {
         terminal.update(cx, |terminal, cx| {
@@ -189,4 +191,51 @@ fn automatic_logs_exclude_authentication_and_input_and_drain_on_disconnect(
     let status = status.unwrap();
     assert!(status.finished());
     assert!(status.error().is_none());
+}
+
+fn recorded(log: &nocterm_session::testing::recording::ScriptedOutputLog) -> Vec<u8> {
+    log.requests()
+        .iter()
+        .flat_map(|block| block.bytes().to_vec())
+        .collect()
+}
+
+#[gpui_kit::test]
+fn restored_screens_are_not_recorded_as_program_output(cx: &mut TestAppContext) {
+    let directory = tempfile::tempdir().unwrap();
+    let (terminal, _session, _driver, log) = setup_recording_test(directory.path(), cx);
+    cx.update(|cx| {
+        terminal.update(cx, |terminal, cx| {
+            terminal.handle_event(Event::Connected, cx);
+            terminal.handle_event(Event::Output(b"live\n".to_vec()), cx);
+            terminal.handle_event(Event::Restore(b"picture\n".to_vec()), cx);
+            terminal.handle_event(Event::Closed(CloseReason::ClosedByUser), cx);
+        })
+    });
+    cx.run_until_parked();
+    assert_eq!(recorded(&log), b"live\n".to_vec());
+}
+
+#[gpui_kit::test]
+fn connected_again_after_a_reconnect_does_not_start_another_automatic_recording(
+    cx: &mut TestAppContext,
+) {
+    let directory = tempfile::tempdir().unwrap();
+    let (terminal, _session, _driver, _log) = setup_recording_test(directory.path(), cx);
+    cx.update(|cx| {
+        terminal.update(cx, |terminal, cx| {
+            terminal.handle_event(Event::Connected, cx);
+            assert!(terminal.is_recording(), "the first connection records");
+            terminal.stop_recording(cx);
+            terminal.handle_event(
+                Event::Connecting(ConnectStage::Connecting { hop: None }),
+                cx,
+            );
+            terminal.handle_event(Event::Connected, cx);
+            assert!(
+                !terminal.is_recording(),
+                "the same connection continuing is not a new start"
+            );
+        })
+    });
 }

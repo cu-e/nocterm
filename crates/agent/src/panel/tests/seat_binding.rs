@@ -149,3 +149,85 @@ fn chats_keep_their_workspace_terminals_while_another_workspace_is_active(cx: &m
     })
     .unwrap();
 }
+
+#[gpui_kit::test]
+fn simultaneous_account_sources_filter_foreign_terminals_and_relogin_cannot_reclaim_old_authority(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_ai::local_environment::LocalEnvironmentAccess;
+    use nocterm_hubs_model::{
+        source_identity::{
+            AccountIdentity, AccountScope, Fingerprint, HubIdentity, LocalAccountPartition,
+            LocalAccountSourceFactory, NamespaceId,
+        },
+        testing::ScriptedLocalAccountFactory,
+    };
+    let f = fixture(cx);
+    let partition = |hub| {
+        LocalAccountPartition::Stable(AccountScope::new(
+            HubIdentity::new(
+                NamespaceId::new("same-instance-id").unwrap(),
+                Fingerprint::from_bytes([hub; 32]),
+            ),
+            AccountIdentity::new(
+                NamespaceId::new("same-account-id").unwrap(),
+                Fingerprint::from_bytes([3; 32]),
+            ),
+        ))
+    };
+    let a = Arc::new(ScriptedLocalAccountFactory::default());
+    let b = Arc::new(ScriptedLocalAccountFactory::default());
+    a.sign_in(partition(1));
+    b.sign_in(partition(2));
+    let access_a = Access::new(None, Rc::default());
+    let access_b = Access::new(None, Rc::default());
+    access_a.bind_source(LocalEnvironmentAccess::capture(a.capture().unwrap()).unwrap());
+    access_b.bind_source(LocalEnvironmentAccess::capture(b.capture().unwrap()).unwrap());
+    let (id_a, id_b) = cx
+        .update_window(f.handle, |_, window, cx| {
+            let terminal_a = cx.new(|cx| FakeTerminal::new(access_a, cx));
+            let terminal_b = cx.new(|cx| FakeTerminal::new(access_b, cx));
+            f.workspace.update(cx, |workspace, cx| {
+                workspace.add_item(terminal_a.clone(), window, cx);
+                workspace.add_item(terminal_b.clone(), window, cx);
+            });
+            (terminal_a.entity_id(), terminal_b.entity_id())
+        })
+        .unwrap();
+    let deps = |factory: Arc<ScriptedLocalAccountFactory>, cx: &App| {
+        f._directory.deps(
+            f.workspace.downgrade(),
+            f.installation.installed.with_account_source(factory),
+            cx,
+        )
+    };
+    let (a_seat, b_seat) = cx.update(|cx| {
+        (
+            deps(a.clone(), cx).seat().clone(),
+            deps(b.clone(), cx).seat().clone(),
+        )
+    });
+    cx.update(|cx| {
+        assert_eq!(terminal_ids(&a_seat, cx), [id_a]);
+        assert_eq!(terminal_ids(&b_seat, cx), [id_b]);
+        assert!(nocterm_agent_chat::seat::current_session(&b_seat, id_a, cx).is_none());
+    });
+    a.close();
+    cx.update(|cx| {
+        assert!(a_seat.terminals(cx).is_none());
+        assert_eq!(terminal_ids(&b_seat, cx), [id_b]);
+    });
+    a.sign_in(partition(1));
+    cx.update(|cx| {
+        let fresh = deps(a, cx);
+        assert!(
+            fresh.seat().terminals(cx).unwrap().is_empty(),
+            "the old terminal keeps its original login lease"
+        );
+        assert!(
+            a_seat.terminals(cx).is_none(),
+            "a new login does not revive an old seat"
+        );
+        assert_eq!(terminal_ids(&b_seat, cx), [id_b]);
+    });
+}

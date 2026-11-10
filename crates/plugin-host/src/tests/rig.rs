@@ -20,7 +20,8 @@ use nocterm_plugin_ports::{
 use crate::{
     Call, CallError, HostPorts, Input, ManageError, PluginHost,
     test_support::{
-        MemoryData, MemoryPackages, MemoryRecords, Script, ScriptedRuntime, package, plugin_id,
+        MemoryData, MemoryNet, MemoryPackages, MemoryRecords, Script, ScriptedRuntime, package,
+        plugin_id,
     },
 };
 
@@ -35,6 +36,7 @@ pub(super) struct Rig {
     pub(super) badge: Rc<RecordingApply<SetPanelBadge>>,
     pub(super) surface: Rc<ScriptedSurface>,
     pub(super) clock: Rc<ScriptedObserve<Now>>,
+    pub(super) net: Arc<MemoryNet>,
     pub(super) providers: PluginProviders,
     pub(super) window: WindowId,
 }
@@ -80,11 +82,13 @@ impl Rig {
             .with_open(open.clone())
             .with_badge(badge.clone())
             .with_surface(surface.clone());
+        let net = MemoryNet::new();
         let ports = HostPorts {
             records: records.clone(),
             data: data.clone(),
             packages: packages.clone(),
             runtime: ScriptedRuntime::new(&script),
+            net: Some(net.clone()),
         };
         let host = cx.new(|_| PluginHost::new(ports));
         let window = windows(cx)[0];
@@ -99,6 +103,7 @@ impl Rig {
             badge,
             surface,
             clock,
+            net,
             providers,
             window,
         }
@@ -134,6 +139,7 @@ impl Rig {
                 zone: Zone::Right,
             },
             in_focus: false,
+            terminal: None,
         }
     }
 

@@ -130,6 +130,8 @@ fn source_type(source: &Source, scope: &Scope<'_>) -> Result<ValueType, Template
             .field(key)
             .and_then(|field| match field.kind {
                 FieldKind::Toggle { .. } => Some(ValueType::Bool),
+                // A template never shows a credential: it reads as an unknown setting.
+                FieldKind::Text { secret: true, .. } => None,
                 FieldKind::Choice { .. } | FieldKind::Text { .. } => Some(ValueType::Text),
                 FieldKind::Number { .. } => Some(ValueType::Number),
                 FieldKind::MultiChoice { .. } => None,

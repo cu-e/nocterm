@@ -6,7 +6,7 @@ link_managed "$system_python" "$base/bin/python"
 "#;
 pub(super) const MANAGED: &str = r#"fetch https://astral.sh/uv/install.sh "$work/install.sh"
 UV_UNMANAGED_INSTALL="$work/bin" sh "$work/install.sh"
-staged_target=$(mktemp -d "$base/python/releases/install.XXXXXX")
+staged_target=$(allocate_release "$base/python/releases")
 UV_PYTHON_INSTALL_DIR="$staged_target" UV_PYTHON_BIN_DIR="$work/pythonbin" "$work/bin/uv" python install --default "$version"
 interpreter=$(readlink -f "$work/pythonbin/python3")
 "$interpreter" -c 'import sys; want=tuple(map(int,sys.argv[1].split("."))); assert sys.version_info[:len(want)] == want' "$version"

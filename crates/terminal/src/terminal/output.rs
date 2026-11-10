@@ -36,6 +36,30 @@ impl Terminal {
         self.refresh_find(cx);
         self.emit_output(cx);
     }
+    /// Paints the screen the host holds. The bytes are a picture, not output of
+    /// the program: they are not recorded, and the decoder starts afresh so a
+    /// character cut off before the reattach cannot corrupt the picture.
+    pub(super) fn restore_screen(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
+        let charset = self.lifecycle.spec().options.charset.unwrap_or(
+            self.deps
+                .settings()
+                .setting::<nocterm_ui::TerminalSettings>(cx)
+                .charset,
+        );
+        // A decoder that has finished cannot be used again, so a picture is
+        // decoded as a stream and the decoder is dropped afterwards: a cut-off
+        // character at its end must not join the next output.
+        self.input.reset_charset(charset);
+        let bytes = self.input.decode(bytes, false);
+        self.input.reset_charset(charset);
+        self.input.forget_shell_state();
+        let effects = self.screen.restore(&bytes);
+        self.apply(effects, cx);
+        self.schedule_sync(cx);
+        self.refresh_find(cx);
+        self.emit_output(cx);
+        cx.emit(TerminalEvent::Changed);
+    }
     pub(crate) fn display_revision(&self) -> u64 {
         self.screen.revision()
     }

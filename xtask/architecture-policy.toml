@@ -1,10 +1,18 @@
 # Explicit plain-data exemptions only. Stateful entities are never DTOs.
 [dto]
+"nocterm_monitor_service::WatchPlan" = "Immutable metric set and cadence supplied by each monitor consumer."
 "nocterm_agent::AgentServices" = "Composition dependencies, copied into constructors."
 "nocterm_agent_runtime::RuntimeServices" = "Composition dependencies, copied into constructors."
 "nocterm_agent_runtime::TerminalAuthRequest" = "Authentication request passed to a feature through the runtime event."
 "nocterm_connections::os::Os" = "Detected operating-system facts value."
 "nocterm_files::local::LocalEntry" = "Filesystem listing row returned by the adapter."
+"nocterm_hubs::installed::Deps" = "Composition dependencies, copied into constructors."
+"nocterm_hub_agents::installed::Deps" = "Composition dependencies, copied into constructors."
+"nocterm_hubs::registry::HubSummary" = "One row of the hubs list, copied by value."
+"nocterm_hubs_ui::servers::detail::TabViews" = "The views of a server's tabs, borrowed for one render."
+"nocterm_hub_agents::access::AgentTarget" = "The saved server an Agent access change names, copied by value."
+"nocterm_connections::agent_access::AgentServer" = "The saved server the editor shows Agent access of, copied by value."
+"nocterm_connections::saved_password::SavedPassword" = "A password the vault keeps, as the editor lists it, copied by value."
 "nocterm_layout_ui::user_facts::UserFacts" = "What the host knows of one installed user plugin, copied by value to the inspector."
 "nocterm_explorer::settings::ExplorerSettings" = "Serialized settings section."
 "nocterm_explorer::settings::IndexingSettings" = "Serialized settings values."
@@ -14,8 +22,8 @@
 "nocterm_monitor::settings::MonitorSettings" = "Serialized settings section."
 "nocterm_vault::settings::VaultSettings" = "Serialized settings section."
 "nocterm_plugin_host::data::PluginDataDoc" = "Serialized plugin data document."
-"nocterm_plugin_host::host::Call" = "One contribution of one plugin in one window, passed by value to a call."
-"nocterm_plugin_host::host::HostPorts" = "Composition dependencies, moved into the host constructor."
+"nocterm_plugin_host::inputs::Call" = "One contribution of one plugin in one window, passed by value to a call."
+"nocterm_plugin_host::inputs::HostPorts" = "Composition dependencies, moved into the host constructor."
 "nocterm_plugin_host::records::AuditEntry" = "Serialized audit line."
 "nocterm_plugin_host::records::PluginRecord" = "Serialized record of one installed plugin."
 "nocterm_plugin_host::records::RecordsDoc" = "Serialized records document."
@@ -51,6 +59,8 @@ guest_only = ["nocterm-plugin-sdk"]
 
 # Named lists of external crates (package names) that a row may reach transitively.
 [isolation.external]
+# Pure Unicode 16 category lookup; no_std, no allocation or transitive dependencies.
+unicode_categories = ["unicode-general-category"]
 base = [
     "proc-macro2",
     "quote",
@@ -62,7 +72,8 @@ base = [
     "thiserror-impl",
     "unicode-ident",
 ]
-# The closure of nocterm-core as `cargo metadata` resolves it for every target (59 crates).
+# Platform/persistence closure of nocterm-core for every target; its SHA-256
+# dependency uses the already reviewed sha2 group below.
 core = [
     "bitflags",
     "bumpalo",
@@ -174,50 +185,50 @@ windows-sys = "Reached through nocterm-core on Windows; not a direct dependency.
 [isolation.crates.nocterm-plugin-model]
 kind = "no-std"
 closure = []
-direct = ["serde", "thiserror"]
-external = ["base"]
+direct = ["serde", "thiserror", "unicode-general-category"]
+external = ["base", "unicode_categories"]
 
 [isolation.crates.nocterm-plugin-api]
 kind = "no-std"
 closure = ["nocterm-plugin-model"]
 direct = ["serde", "thiserror"]
-external = ["base"]
+external = ["base", "unicode_categories"]
 
 [isolation.crates.nocterm-plugin-abi]
 kind = "no-std"
 closure = ["nocterm-plugin-api", "nocterm-plugin-model"]
 direct = ["postcard", "serde", "thiserror"]
-external = ["base", "postcard"]
+external = ["base", "postcard", "unicode_categories"]
 
 [isolation.crates.nocterm-plugin-wasm]
 kind = "std"
 closure = ["nocterm-plugin-abi", "nocterm-plugin-api", "nocterm-plugin-model"]
 direct = ["wasmi"]
-external = ["base", "postcard", "wasmi"]
+external = ["base", "postcard", "wasmi", "unicode_categories"]
 
 [isolation.crates.nocterm-plugin-packages]
 kind = "std"
 closure = ["nocterm-plugin-api", "nocterm-plugin-model", "nocterm-core"]
 direct = ["sha2", "thiserror", "toml"]
-external = ["base", "core", "sha2"]
+external = ["base", "core", "sha2", "unicode_categories"]
 
 [isolation.crates.nocterm-plugin-ports]
 kind = "gpui"
 closure = ["nocterm-plugin-api", "nocterm-plugin-model"]
 direct = ["gpui-pre"]
-external = ["base"]
+external = ["base", "unicode_categories"]
 
 [isolation.crates.nocterm-plugin-view]
 kind = "gpui"
 closure = ["nocterm-plugin-api", "nocterm-plugin-model"]
 direct = ["gpui-pre"]
-external = ["base"]
+external = ["base", "unicode_categories"]
 
 [isolation.crates.nocterm-plugin-host]
 kind = "gpui"
 closure = ["nocterm-plugin-ports", "nocterm-plugin-api", "nocterm-plugin-model"]
 direct = ["gpui-pre", "serde", "serde_json", "thiserror", "tracing"]
-external = ["base"]
+external = ["base", "unicode_categories"]
 
 # Modules (or whole packages) that may reach file-system, process, environment or dependency
 # I/O paths (I2b), each with a reason. Keys are module paths (`nocterm_plugin_packages::store`)
@@ -229,12 +240,13 @@ nocterm_plugin_packages = "Bounded file I/O is the adapter's job: nocterm_core::
 # that gpui crates may name (I3), each with a reason. The list starts empty and grows per PR.
 [isolation.gpui_allowed]
 new = "AppContext::new makes an entity from a context; the plugin crates write `new` only for constructors of their own types and make no entity through a context."
-background_executor = "nocterm-plugin-host reads the executor clock for rate limits, gesture lifetimes and cadence, so tests can drive time."
+background_executor = "nocterm-plugin-host reads the executor clock for rate limits, gesture lifetimes and cadence, so tests can drive time, and runs a plugin's requests and timers off the UI thread."
 defer = "nocterm-plugin-host applies queued effects after the current entity update ends, never inside it."
 notify = "nocterm-plugin-host tells observers (the application's plugin source) that its installed set, enablement or placement changed."
-spawn = "nocterm-plugin-host awaits the records write task only to log its failure."
-update = "nocterm-plugin-host re-enters its own entity from the deferred apply through a weak handle."
+spawn = "nocterm-plugin-host awaits the records write task only to log its failure, and awaits a plugin's requests and timers to deliver their events."
+update = "nocterm-plugin-host re-enters its own entity from the deferred apply, and from a finished request or timer, through a weak handle."
 weak_entity = "nocterm-plugin-host holds a weak handle to itself for the deferred apply."
+stop_propagation = "nocterm-plugin-view keeps a click on a control inside a list row from also activating the row."
 
 [isolation.providers]
 # Direct dependents of nocterm-plugin-ports (I5).
@@ -253,6 +265,7 @@ crates = [
     "nocterm-plugin-abi",
     "nocterm-plugin-api",
     "nocterm-plugin-host",
+    "nocterm-plugin-net",
     "nocterm-plugin-packages",
     "nocterm-plugin-ports",
     "nocterm-plugin-view",

@@ -1,4 +1,4 @@
-//! The package directory: one `<plugin id>.toml` or `<plugin id>.wasm` per installed plugin.
+//! Immutable hash-addressed packages; legacy id-only files remain readable until migration.
 
 use std::{
     fs, io,
@@ -15,6 +15,7 @@ use crate::parse::{parse_package, sha256};
 
 /// The kinds of package file, in the order an installed plugin is looked for.
 const KINDS: [PackageKind; 2] = [PackageKind::Module, PackageKind::Manifest];
+const MAX_VERSIONS: usize = 8;
 
 /// Packages under one directory.
 #[derive(Clone, Debug)]
@@ -45,6 +46,42 @@ impl PackageStore {
         parse_package(bytes, &names)
     }
 
+    fn version_path(
+        &self,
+        plugin: &PluginId,
+        hash: &ContentHash,
+        kind: PackageKind,
+    ) -> Result<PathBuf, PackageError> {
+        self.path_of(plugin, kind)?;
+        Ok(self
+            .root
+            .join(format!("{plugin}.{hash}.{}", kind.extension())))
+    }
+
+    fn versions(&self, plugin: &PluginId) -> Result<Vec<PathBuf>, PackageError> {
+        self.path_of(plugin, PackageKind::Manifest)?;
+        let entries = match fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(unwritable(error)),
+        };
+        let prefix = format!("{plugin}.");
+        entries
+            .filter_map(|entry| match entry {
+                Ok(entry)
+                    if entry
+                        .file_name()
+                        .to_str()
+                        .is_some_and(|name| name.starts_with(&prefix)) =>
+                {
+                    Some(Ok(entry.path()))
+                }
+                Ok(_) => None,
+                Err(error) => Some(Err(unwritable(error))),
+            })
+            .collect()
+    }
+
     /// Reads the bounded bytes of the regular file at `path`, without following a link. The
     /// bound is the largest package of any kind; [`parse_package`] applies the limit of the
     /// kind it finds.
@@ -58,14 +95,6 @@ impl PackageStore {
             }
             BoundedReadError::Io { source, .. } => unreadable(&source),
         })
-    }
-
-    /// Removes the file of `kind`; a file that is not there is not an error.
-    fn remove_kind(&self, plugin: &PluginId, kind: PackageKind) -> Result<(), PackageError> {
-        match fs::remove_file(self.path_of(plugin, kind)?) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(unwritable(error)),
-            _ => Ok(()),
-        }
     }
 }
 
@@ -92,27 +121,24 @@ impl PluginPackages for PackageStore {
         self.parse(Self::read_bytes(Path::new(location))?)
     }
 
-    /// Writes the file of the package's kind, then removes the file of the other kind, so an
-    /// update that changes the runtime leaves one file.
+    /// Publishes immutable bytes under their hash. Existing consent still loads its original
+    /// version if the application stops before the new records document commits.
     fn publish(&self, package: &Package, replace: bool) -> Result<(), PackageError> {
         if sha256(package.bytes()) != *package.hash() {
             return Err(PackageError::HashChanged);
         }
         let id = package.manifest().plugin().id();
         let package_kind = kind(package.bytes());
-        let path = self.path_of(id, package_kind)?;
-        if !replace {
-            for other in KINDS {
-                if fs::symlink_metadata(self.path_of(id, other)?).is_ok() {
-                    return Err(PackageError::Duplicate(id.clone()));
-                }
-            }
+        let path = self.version_path(id, package.hash(), package_kind)?;
+        let versions = self.versions(id)?;
+        if !replace && !versions.is_empty() {
+            return Err(PackageError::Duplicate(id.clone()));
+        }
+        if !versions.contains(&path) && versions.len() >= MAX_VERSIONS {
+            return Err(PackageError::PendingVersions { max: MAX_VERSIONS });
         }
         write_private_atomic(&path, package.bytes())
             .map_err(|error| unwritable(error.into_io_error()))?;
-        for other in KINDS.into_iter().filter(|other| *other != package_kind) {
-            self.remove_kind(id, other)?;
-        }
         Ok(())
     }
 
@@ -120,33 +146,63 @@ impl PluginPackages for PackageStore {
     fn load(&self, plugin: &PluginId, expected: &ContentHash) -> Result<Package, PackageError> {
         let mut outcome = PackageError::NotFound;
         for file_kind in KINDS {
-            match Self::read_bytes(&self.path_of(plugin, file_kind)?) {
-                Ok(bytes) if sha256(&bytes) == *expected => {
-                    let package = self.parse(bytes)?;
-                    if package.manifest().plugin().id() != plugin {
-                        return Err(PackageError::HashChanged);
+            for path in [
+                self.version_path(plugin, expected, file_kind)?,
+                self.path_of(plugin, file_kind)?,
+            ] {
+                match Self::read_bytes(&path) {
+                    Ok(bytes) if sha256(&bytes) == *expected => {
+                        let package = self.parse(bytes)?;
+                        if package.manifest().plugin().id() != plugin {
+                            return Err(PackageError::HashChanged);
+                        }
+                        return Ok(package);
                     }
-                    return Ok(package);
-                }
-                Ok(_) => outcome = PackageError::HashChanged,
-                Err(PackageError::NotFound) => {}
-                Err(error) => {
-                    if outcome == PackageError::NotFound {
-                        outcome = error;
+                    Ok(_) => outcome = PackageError::HashChanged,
+                    Err(PackageError::NotFound) => {}
+                    Err(error) => {
+                        if outcome == PackageError::NotFound {
+                            outcome = error;
+                        }
                     }
                 }
             }
+        }
+        if outcome == PackageError::NotFound && !self.versions(plugin)?.is_empty() {
+            outcome = PackageError::HashChanged;
         }
         Err(outcome)
     }
 
     fn remove(&self, plugin: &PluginId) -> Result<(), PackageError> {
         let mut outcome = Ok(());
-        for file_kind in KINDS {
-            if let Err(error) = self.remove_kind(plugin, file_kind) {
+        for path in self.versions(plugin)? {
+            if let Err(error) = fs::remove_file(path).map_err(unwritable) {
                 outcome = outcome.and(Err(error));
             }
         }
         outcome
+    }
+
+    fn retain(&self, plugin: &PluginId, expected: &ContentHash) -> Result<(), PackageError> {
+        // Validate the retained bytes before removing any recovery version.
+        let package = self.load(plugin, expected)?;
+        let path = self.version_path(plugin, expected, kind(package.bytes()))?;
+        let already_published =
+            Self::read_bytes(&path).is_ok_and(|bytes| sha256(&bytes) == *expected);
+        if !already_published {
+            write_private_atomic(&path, package.bytes())
+                .map_err(|error| unwritable(error.into_io_error()))?;
+        }
+        let kept: Vec<_> = KINDS
+            .into_iter()
+            .map(|kind| self.version_path(plugin, expected, kind))
+            .collect::<Result<_, _>>()?;
+        for path in self.versions(plugin)? {
+            if !kept.contains(&path) {
+                fs::remove_file(path).map_err(unwritable)?;
+            }
+        }
+        Ok(())
     }
 }

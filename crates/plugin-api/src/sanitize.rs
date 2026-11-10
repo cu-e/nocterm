@@ -12,3 +12,16 @@ use nocterm_plugin_model::sanitize_text;
 pub fn sanitize_display(text: &str, cap: usize) -> String {
     sanitize_text(text).chars().take(cap).collect()
 }
+
+/// `text` as inert lines of at most `cap` characters in all: each line as
+/// [`sanitize_display`] keeps it, tabs as four spaces, and `\n` between the lines.
+pub fn sanitize_code(text: &str, cap: usize) -> String {
+    let mut out = String::with_capacity(text.len().min(cap));
+    for (index, line) in text.split('\n').enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        out.push_str(&sanitize_text(&line.replace('\t', "    ")));
+    }
+    out.chars().take(cap).collect()
+}

@@ -129,6 +129,33 @@ impl<T: Clone + PartialEq + Send + 'static> Persisted<T> {
         }
     }
 
+    /// Install an externally acquired baseline before any edit has been admitted.
+    /// Updates the same visible/durable/publication state without scheduling a write.
+    pub fn initialize(&mut self, initial: T, cx: &mut Context<Self>) -> Result<(), StoreError> {
+        if self.queue.is_closing() {
+            return Err(StoreError::Closing);
+        }
+        if self.revision != 0
+            || self.is_dirty()
+            || !self.queue.is_empty()
+            || self.control.is_running()
+            || self.latest_pending
+        {
+            return Err(StoreError::BaselineLocked);
+        }
+        let previous = self.visible().clone();
+        self.desired = initial.clone();
+        self.durable = Committed::new(initial, 0);
+        self.projection.record(self.durable.clone());
+        if previous != *self.visible() {
+            if let Some(hook) = &self.hook {
+                hook(&previous, self.visible(), cx);
+            }
+            cx.notify();
+        }
+        Ok(())
+    }
+
     /// Install a synchronous derived-state transition before accepting edits.
     /// The hook must not access this same entity or start I/O.
     pub fn with_publication_hook(
@@ -192,19 +219,24 @@ impl<T: Clone + PartialEq + Send + 'static> Persisted<T> {
             return Err(StoreError::Closing);
         }
         let (completion, receipt) = Completion::new();
-        let mut desired = self.desired.clone();
+        let mut desired = None;
         let edit: Option<Edit<T>> = if self.publication == Publication::Optimistic {
-            edit(&mut desired)?;
-            if desired == self.desired && !self.is_dirty() {
+            let mut candidate = self.desired.clone();
+            edit(&mut candidate)?;
+            if candidate == self.desired && !self.is_dirty() {
                 completion.finish(Ok(self.revision));
                 return Ok(receipt);
             }
+            desired = Some(candidate);
             None
         } else {
             Some(Box::new(edit))
         };
         let revision = self.revision
-            + u64::from(self.publication == Publication::Durable || desired != self.desired);
+            + u64::from(
+                self.publication == Publication::Durable
+                    || desired.as_ref().is_some_and(|next| next != &self.desired),
+            );
         self.queue
             .push(Change {
                 revision,
@@ -216,7 +248,9 @@ impl<T: Clone + PartialEq + Send + 'static> Persisted<T> {
                 Rejected::Full => StoreError::Full,
             })?;
         self.revision = revision;
-        self.desired = desired;
+        if let Some(desired) = desired {
+            self.desired = desired;
+        }
         cx.notify();
         if !self.control.is_running() {
             self.start(cx);
@@ -254,7 +288,7 @@ impl<T: Clone + PartialEq + Send + 'static> Persisted<T> {
     }
 
     fn next(&mut self) -> Option<Candidate<T>> {
-        let mut snapshot = self.durable.snapshot().clone();
+        let mut snapshot;
         let mut completions = Vec::new();
         let revision = if self.publication == Publication::Optimistic {
             let first = self.queue.take();
@@ -271,6 +305,7 @@ impl<T: Clone + PartialEq + Send + 'static> Persisted<T> {
             }
             self.revision
         } else {
+            snapshot = self.durable.snapshot().clone();
             loop {
                 let change = self.queue.take()?;
                 if let Some(edit) = change.edit
@@ -302,6 +337,7 @@ impl<T: Clone + PartialEq + Send + 'static> Persisted<T> {
         let Some(candidate) = self.candidate.take() else {
             return;
         };
+        let had_error = self.error.is_some();
         match &outcome {
             Ok(()) => {
                 let previous = std::mem::replace(
@@ -315,8 +351,13 @@ impl<T: Clone + PartialEq + Send + 'static> Persisted<T> {
             }
             Err(error) => self.error = Some(error.clone()),
         }
+        // An optimistic value was already published when the edit was admitted, so a
+        // successful write changes nothing observers read unless it cleared an error.
+        let changed = self.publication == Publication::Durable || outcome.is_err() || had_error;
         candidate.finish(outcome);
-        cx.notify();
+        if changed {
+            cx.notify();
+        }
     }
 
     /// Hydrate schema metadata in all App-facing projections, including the

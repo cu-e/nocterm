@@ -32,8 +32,13 @@ pub fn tool_result(id: Value, result: Result<Value, ToolFailure>) -> Value {
         }
     }
 }
+/// The notification that tells a connected agent to list the tools again.
+pub fn list_changed() -> Value {
+    json!({"jsonrpc":"2.0","method":"notifications/tools/list_changed"})
+}
 impl McpSession {
-    pub fn handle(&mut self, line: &str) -> McpStep {
+    /// Answers one line under `offer`: only the offered tools are listed or admitted.
+    pub fn handle(&mut self, line: &str, offer: ToolOffer) -> McpStep {
         if line.len() > MAX_MCP_LINE {
             return error(Value::Null, -32600, "Request exceeds limit");
         }
@@ -57,27 +62,36 @@ impl McpSession {
             "initialize" => {
                 self.initialized = true;
                 McpStep::Reply(
-                    json!({"jsonrpc":"2.0","id":id,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"nocterm","version":"1"},"capabilities":{"tools":{}}}}),
+                    json!({"jsonrpc":"2.0","id":id,"result":{"protocolVersion":"2024-11-05","serverInfo":{"name":"nocterm","version":"1"},"capabilities":{"tools":{"listChanged":true}}}}),
                 )
             }
             "ping" => McpStep::Reply(json!({"jsonrpc":"2.0","id":id,"result":{}})),
             _ if !self.initialized => error(id, -32002, "Initialize first"),
             "tools/list" => {
-                let tools: Vec<_> = catalog::TOOLS.iter().map(|spec| {
+                let tools: Vec<_> = offer.tools().map(|spec| {
                     json!({"name":spec.name,"description":spec.description,"inputSchema":(spec.schema)()})
                 }).collect();
                 McpStep::Reply(json!({"jsonrpc":"2.0","id":id,"result":{"tools":tools}}))
             }
-            "tools/call" => call(id, &value["params"]),
+            "tools/call" => call(id, &value["params"], offer),
             _ => error(id, -32601, "Unknown method"),
         }
     }
 }
 
-fn call(id: Value, params: &Value) -> McpStep {
+fn call(id: Value, params: &Value, offer: ToolOffer) -> McpStep {
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
     let tool = params["name"].as_str().unwrap_or_default().to_owned();
-    let call = catalog::get(&tool).and_then(|spec| (spec.parse)(args.clone()));
+    let spec = catalog::get(&tool);
+    if spec.is_some_and(|spec| !offer.offers(spec.group)) {
+        return McpStep::Rejected {
+            id,
+            tool,
+            arguments: args,
+            error: "File tools are offered only while a terminal with file_tools: true is attached; call list_terminals".into(),
+        };
+    }
+    let call = spec.and_then(|spec| (spec.parse)(args.clone()));
     match call {
         Some(call) => match call.validate() {
             Ok(()) => McpStep::Call {

@@ -2,7 +2,9 @@
 //!
 //! Owns: the permanent outer connection dock and inner project docks,
 //! tab membership and cached session context, one authoritative native dock per surface,
-//! window menus and chrome, panel groups (the sidebar and the independent side panel),
+//! window menus and chrome (including the title-bar slot of the environment menu,
+//! `Workspace::set_environment_menu`: a view the application installs), panel groups (the
+//! sidebar and the independent side panel),
 //! registration of panels and widgets under the ids of the plugin catalog (the shell's own
 //! `plugin::{CORE, GROUPS}` and the id queries), the resolved shell layout (`ShellLayout`
 //! follows the app-wide `[layouts]` settings of `nocterm-window-layout`, resolves the selected
@@ -33,7 +35,7 @@
 //! be shown (both read the workspace when they apply, and the window's rules decide), and the
 //! withdrawal of a user contribution (a built-in one is refused),
 //! plus separate state, text,
-//! input, live-command, execution, prompt, reconnect and user-paste ports, plus
+//! input, live-command, execution, prompt, reconnect, user-paste and connection-filesystem ports, plus
 //! the optional consumer-named ConnectionFactSession original-session receipt.
 //! Settings section: owns `[clock]` (`ClockSettings`); reads `[layouts]` (owned by
 //! `nocterm-window-layout`) and `[plugins]` (owned by `nocterm-plugin-enablement`) through the
@@ -101,23 +103,24 @@ pub use host::{Host, HostKey, ProgramSpec, ShellSyntax};
 pub use item::{Item, ItemEvent, ItemHandle, TabState};
 pub use local_terminal::{LocalDirectoryError, LocalTerminal, LocalTerminalTarget};
 use nocterm_workspace_ports::ContextSelectionError;
-pub use panel::{Panel, PanelHandle};
+pub use panel::{Panel, PanelHandle, Provenance};
 // The terminal and connection contracts live below the shell (ADR 0062).
 pub use nocterm_workspace_ports::{
     ConnectionFactSession, ConnectionSummary, ExpectedSession, ExplorerSource, FactSessionSnapshot,
     LiveCommandLease, LiveCommands, ProjectCreationSource, ProjectParentCapture,
-    ProjectParentDescriptor, ProjectParentError, RemoteReconnect, SessionContext, SignInPrompt,
-    SignInPrompts, TerminalCapabilities, TerminalCapability, TerminalEntry, TerminalError,
-    TerminalExecution, TerminalInfo, TerminalInput, TerminalState, TerminalStatus, TerminalText,
-    TerminalTextSource, TextRequest, UserPromptToken, UserTerminalPaste,
+    ProjectParentDescriptor, ProjectParentError, RemoteReconnect, SessionContext, SessionSource,
+    SignInPrompt, SignInPrompts, TerminalCapabilities, TerminalCapability, TerminalEntry,
+    TerminalError, TerminalExecution, TerminalFiles, TerminalFilesystem, TerminalInfo,
+    TerminalInput, TerminalState, TerminalStatus, TerminalText, TerminalTextSource, TextRequest,
+    UserPromptToken, UserTerminalPaste,
 };
 pub use workspace::{
     ContextSelectionReceipt, ContextWindowReceipt, Deps, ExpandablePanel, GeneralTerminalTarget,
     LayoutChoice, LayoutEditError, LayoutSwitchError, MalformedLayouts, PanelEntry,
     PanelRegistration, PanelRequest, ProjectSurface, ProjectSurfaceEvent, ProjectSurfaceFactory,
     ProjectSurfaceReceipt, RegistrationError, SessionFactory, SessionSpec, TabCloseScope, TabPane,
-    TabSnapshot, WidgetRegistration, Workspace, WorkspaceEvent, ZoneAware, admit_project_terminal,
-    edit_layouts, legacy_layout_swapped, validate_project_terminal_target,
+    TabSnapshot, ToolbarRegistration, WidgetRegistration, Workspace, WorkspaceEvent, ZoneAware,
+    admit_project_terminal, edit_layouts, legacy_layout_swapped, validate_project_terminal_target,
 };
 
 /// The key context of the workspace, for keymap entries.

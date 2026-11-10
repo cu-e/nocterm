@@ -45,12 +45,14 @@ impl Activity {
     }
 }
 
-/// Whether a finished upload changed the remote folder `shown` on `target`:
-/// it was copied into that folder or into one of its direct subfolders.
+/// Whether a finished upload or relay changed the remote folder `shown` on
+/// `target`: it was copied into that folder or into one of its direct subfolders.
 pub(crate) fn changes_remote(job: &Progress, host: &HostAddress, shown: &str) -> bool {
     let trim = |value: &str| value.trim_end_matches('/').to_owned();
-    job.direction == TransferDirection::Upload
-        && job.host == *host
+    matches!(
+        job.direction,
+        TransferDirection::Upload | TransferDirection::Relay
+    ) && job.host == *host
         && (trim(&job.destination) == trim(shown)
             || trim(path::parent(&job.destination)) == trim(shown))
 }
@@ -75,6 +77,7 @@ pub(crate) fn strip<'a>(
             let verb = match job.direction {
                 TransferDirection::Upload => "Uploading",
                 TransferDirection::Download => "Downloading",
+                TransferDirection::Relay => "Copying",
             };
             let fraction = if job.total_bytes > 0 {
                 job.sent_bytes as f32 / job.total_bytes as f32
@@ -94,6 +97,7 @@ pub(crate) fn strip<'a>(
                             Icon::new(match job.direction {
                                 TransferDirection::Upload => IconName::ArrowUp,
                                 TransferDirection::Download => IconName::ArrowDown,
+                                TransferDirection::Relay => IconName::ArrowRight,
                             })
                             .xsmall(),
                         )
@@ -207,5 +211,12 @@ mod tests {
         assert!(changes_local(&download, Path::new("/tmp/in")));
         assert!(changes_local(&download, Path::new("/tmp")));
         assert!(!changes_local(&upload, Path::new("/srv/app")));
+        let relay = job(
+            TransferDirection::Relay,
+            "/srv/app",
+            TransferState::Completed,
+        );
+        assert!(changes_remote(&relay, &target, "/srv/app"));
+        assert!(!changes_local(&relay, Path::new("/srv/app")));
     }
 }

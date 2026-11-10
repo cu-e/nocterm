@@ -59,8 +59,12 @@ impl Catalog {
         }
         let mut catalog = Self::default();
         for project in projects {
-            catalog.insert(project)?;
+            let id = project.id();
+            if catalog.projects.insert(id, project).is_some() {
+                return Err(CatalogError::DuplicateId(id));
+            }
         }
+        encode_bounded(catalog.projects.values())?;
         Ok(catalog)
     }
 

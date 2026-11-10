@@ -24,6 +24,7 @@ pub const SERVERS: SystemContribution = SystemContribution {
         chrome: PanelChrome::Titled,
     }),
     preview: None,
+    edge: None,
     pinned: false,
 };
 

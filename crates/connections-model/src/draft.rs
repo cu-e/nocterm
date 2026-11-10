@@ -1,8 +1,8 @@
 //! Text drafts and checked values; defaults and identifiers are supplied by callers.
 use crate::jump_route::JumpHostEntry;
 use nocterm_session::{
-    Auth, CredentialId, CredentialIdParseError, DEFAULT_PORT, LaunchValidationError,
-    SessionOptions, SessionOptionsError, ShellLaunch, Target,
+    Auth, CredentialId, DEFAULT_PORT, LaunchValidationError, SessionOptions, SessionOptionsError,
+    ShellLaunch, Target,
 };
 use std::path::{Path, PathBuf};
 
@@ -12,6 +12,8 @@ pub enum AuthKind {
     Auto,
     Password,
     Key,
+    /// A key kept in the vault, chosen in the editor.
+    VaultKey,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValidationField {
@@ -19,7 +21,6 @@ pub enum ValidationField {
     Port,
     User,
     Key,
-    Credential,
     Arguments,
     Environment,
     Launch,
@@ -42,8 +43,8 @@ pub enum ProfileValidationError {
     MissingUser,
     #[error("Choose the private key file to sign in with.")]
     MissingKey,
-    #[error(transparent)]
-    Credential(#[from] CredentialIdParseError),
+    #[error("Choose a key from the vault, or create or import one.")]
+    MissingVaultKey,
     #[error("Arguments must be a JSON array of strings.")]
     Arguments(#[source] serde_json::Error),
     #[error("Environment must be a JSON object of string values.")]
@@ -65,8 +66,7 @@ impl ProfileValidationError {
             Self::MissingHost | Self::InvalidHost => ValidationField::Host,
             Self::InvalidPort(_) => ValidationField::Port,
             Self::MissingUser => ValidationField::User,
-            Self::MissingKey => ValidationField::Key,
-            Self::Credential(_) => ValidationField::Credential,
+            Self::MissingKey | Self::MissingVaultKey => ValidationField::Key,
             Self::Arguments(_) => ValidationField::Arguments,
             Self::Environment(_) => ValidationField::Environment,
             Self::Launch(_) => ValidationField::Launch,
@@ -93,7 +93,16 @@ pub struct EndpointDraft {
 pub struct AuthenticationDraft {
     pub kind: AuthKind,
     pub key_path: String,
-    pub credential: String,
+    /// The vault record and canonical public half of the chosen vault key.
+    pub vault_key: Option<VaultKeyChoice>,
+    /// The vault record of the password the connection signs in with, as the editor kept it.
+    pub credential: Option<CredentialId>,
+}
+/// A key the vault holds, as the profile will name it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VaultKeyChoice {
+    pub credential: CredentialId,
+    pub public_key: String,
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LaunchDraft {
@@ -168,9 +177,6 @@ impl ProfileDraft {
     ) -> Result<ValidatedProfile, ProfileValidationError> {
         let target = self.endpoint.validate(defaults.user.as_deref())?;
         let auth = self.authentication.validate(defaults.home.as_deref())?;
-        let credential = optional(&self.authentication.credential)
-            .map(|id| id.parse())
-            .transpose()?;
         let launch = self.launch.validate()?;
         self.options.validate()?;
         let appearance = self.appearance.validate()?;
@@ -183,7 +189,7 @@ impl ProfileDraft {
             group: optional(&self.metadata.group),
             target,
             auth,
-            credential,
+            credential: self.authentication.credential,
             options: self.options.clone(),
             launch,
             icon: appearance.icon,
@@ -225,6 +231,16 @@ impl AuthenticationDraft {
                 let path = optional(&self.key_path).ok_or(ProfileValidationError::MissingKey)?;
                 Auth::Key {
                     path: expand_home(&path, home),
+                }
+            }
+            AuthKind::VaultKey => {
+                let key = self
+                    .vault_key
+                    .clone()
+                    .ok_or(ProfileValidationError::MissingVaultKey)?;
+                Auth::VaultKey {
+                    credential: key.credential,
+                    public_key: key.public_key,
                 }
             }
         })

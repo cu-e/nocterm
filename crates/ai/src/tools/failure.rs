@@ -21,6 +21,26 @@ pub enum TerminalCallError {
     ReadCommandRejected,
     #[error("Invalid command id")]
     InvalidCommandId,
+    #[error(
+        "Transfer needs 1–64 absolute source paths and one destination folder (each at most 4096 bytes without control characters, sources at most 64 KiB in total) and a yield of at most 10000 ms"
+    )]
+    TransferRejected,
+    #[error("Invalid transfer id or yield interval")]
+    ReadTransferRejected,
+    #[error("Invalid transfer id")]
+    InvalidTransferId,
+    #[error(
+        "File paths are absolute, at most 4096 bytes, without control characters and without empty, `.` or `..` parts; a change or a read names something below `/`, and a move does not go into itself"
+    )]
+    FilePathRejected,
+    #[error("start_line is at least 1 and max_lines 1–2000")]
+    ReadRangeRejected,
+    #[error("Content is text of at most 512 KiB without NUL")]
+    FileContentRejected,
+    #[error(
+        "old_text is nonempty, old_text and new_text are at most 64 KiB each without NUL, and they differ"
+    )]
+    EditRejected,
 }
 
 /// Agent-facing text of a failed tool call.
@@ -59,5 +79,20 @@ impl From<&str> for ToolFailure {
 impl From<TerminalCallError> for ToolFailure {
     fn from(error: TerminalCallError) -> Self {
         error.to_string().into()
+    }
+}
+
+/// Serialization failed without discarding its original concrete cause.
+#[derive(Clone, thiserror::Error)]
+#[error("Terminal tool arguments could not be encoded")]
+pub struct ToolArgumentsError(#[source] nocterm_core::SharedError<serde_json::Error>);
+impl From<serde_json::Error> for ToolArgumentsError {
+    fn from(error: serde_json::Error) -> Self {
+        Self(nocterm_core::SharedError::from_error(error))
+    }
+}
+impl std::fmt::Debug for ToolArgumentsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ToolArgumentsError")
     }
 }

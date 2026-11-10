@@ -57,10 +57,13 @@ impl PluginSetHandle {
         }
     }
 
-    /// Publishes `set` to every observer. A set with the revision in force is ignored.
+    /// Publishes changed users, revision or availability to every observer.
     pub fn replace(&self, set: PluginSet, cx: &mut App) {
         self.current.update(cx, |current, cx| {
-            if current.set.revision() == set.revision() && current.set.users() == set.users() {
+            if current.set.revision() == set.revision()
+                && current.set.users() == set.users()
+                && current.set.availability() == set.availability()
+            {
                 return;
             }
             current.set = Arc::new(set);

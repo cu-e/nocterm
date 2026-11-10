@@ -15,6 +15,7 @@ pub(crate) struct WorkspaceSeat {
     workspace: WeakEntity<Workspace>,
     source: ProjectSurfaceReceipt,
     key: Option<ChatKey>,
+    runtime: Option<crate::runtime::RuntimeHandle>,
 }
 impl WorkspaceSeat {
     pub(crate) fn new(workspace: WeakEntity<Workspace>, source: ProjectSurfaceReceipt) -> Self {
@@ -22,7 +23,17 @@ impl WorkspaceSeat {
             workspace,
             source,
             key: None,
+            runtime: None,
         }
+    }
+    pub(crate) fn with_runtime(mut self, runtime: crate::runtime::RuntimeHandle) -> Self {
+        self.runtime = Some(runtime);
+        self
+    }
+    fn current(&self) -> bool {
+        self.runtime
+            .as_ref()
+            .is_none_or(|runtime| runtime.check_current().is_ok())
     }
     fn permits(&self, workspace: &Workspace, item: EntityId, cx: &App) -> bool {
         workspace
@@ -33,6 +44,14 @@ impl WorkspaceSeat {
 impl ChatWorkspace for WorkspaceSeat {
     fn for_chat(&self, key: &ChatKey) -> Result<Seat, AgentStorageError> {
         require_chat_scope(self.source.context(), key.scope())?;
+        let environment = match &self.runtime {
+            Some(runtime) => runtime.environment()?.clone(),
+            None => Default::default(),
+        };
+        nocterm_ai::storage::require_local_environment(&environment, key.environment())?;
+        if let Some(runtime) = &self.runtime {
+            runtime.check_current()?;
+        }
         if self.key.as_ref().is_some_and(|original| original != key) {
             return Err(nocterm_ai::history::HistoryCodecError::IdentityMismatch.into());
         }
@@ -40,18 +59,51 @@ impl ChatWorkspace for WorkspaceSeat {
             workspace: self.workspace.clone(),
             source: self.source,
             key: Some(key.clone()),
+            runtime: self.runtime.clone(),
         }))
     }
     fn id(&self) -> EntityId {
         self.workspace.entity_id()
     }
     fn is_open(&self) -> bool {
-        self.workspace.upgrade().is_some()
+        self.current() && self.workspace.upgrade().is_some()
     }
     fn terminals(&self, cx: &App) -> Option<Vec<TerminalEntry>> {
+        if !self.current() {
+            return None;
+        }
         let workspace = self.workspace.upgrade()?;
         let workspace = workspace.read(cx);
-        workspace.context_terminals(self.source, cx).ok()
+        let expected = self
+            .runtime
+            .as_ref()
+            .map(|runtime| runtime.environment().ok().cloned())
+            .unwrap_or(Some(Default::default()))?;
+        Some(
+            workspace
+                .context_terminals(self.source, cx)
+                .ok()?
+                .into_iter()
+                .filter(|entry| {
+                    entry.capabilities.state().info(cx).is_some_and(|info| {
+                        info.source_current
+                            && match (&expected, &info.source) {
+                                (
+                                    nocterm_ai::local_environment::LocalEnvironment::ThisComputer,
+                                    None,
+                                ) => true,
+                                (
+                                    nocterm_ai::local_environment::LocalEnvironment::HubAccount(
+                                        expected,
+                                    ),
+                                    Some(actual),
+                                ) => expected == actual,
+                                _ => false,
+                            }
+                    })
+                })
+                .collect(),
+        )
     }
     fn connections(&self, cx: &App) -> Vec<ConnectionSummary> {
         if self.terminals(cx).is_none() {
@@ -84,6 +136,9 @@ impl ChatWorkspace for WorkspaceSeat {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<EntityId> {
+        if !self.current() {
+            return None;
+        }
         let owner = self.workspace.upgrade()?;
         if self.source.context() == ContextId::General {
             let directory = owner.read(cx).connection_directory()?;

@@ -52,6 +52,9 @@ fn run(
     let mut implementations = BTreeMap::<String, BTreeSet<String>>::new();
     let mut symbols = symbols.clone();
     for module in modules {
+        if paths.as_ref().is_some_and(|(wanted, _)| !wanted(module)) {
+            continue;
+        }
         super::includes::check(&module.items)?;
         let mut visitor = Collector {
             module,
@@ -220,33 +223,13 @@ impl<'ast> Visit<'ast> for Collector<'_> {
     }
 
     fn visit_impl_item(&mut self, item: &'ast syn::ImplItem) {
-        let attrs = match item {
-            syn::ImplItem::Fn(i) => &i.attrs,
-            syn::ImplItem::Const(i) => &i.attrs,
-            syn::ImplItem::Type(i) => &i.attrs,
-            syn::ImplItem::Macro(i) => &i.attrs,
-            _ => {
-                visit::visit_impl_item(self, item);
-                return;
-            }
-        };
-        if !source::test_only(attrs) {
+        if !source::test_only(source::impl_attributes(item)) {
             visit::visit_impl_item(self, item);
         }
     }
 
     fn visit_trait_item(&mut self, item: &'ast syn::TraitItem) {
-        let attrs = match item {
-            syn::TraitItem::Fn(i) => &i.attrs,
-            syn::TraitItem::Const(i) => &i.attrs,
-            syn::TraitItem::Type(i) => &i.attrs,
-            syn::TraitItem::Macro(i) => &i.attrs,
-            _ => {
-                visit::visit_trait_item(self, item);
-                return;
-            }
-        };
-        if !source::test_only(attrs) {
+        if !source::test_only(source::trait_attributes(item)) {
             visit::visit_trait_item(self, item);
         }
     }

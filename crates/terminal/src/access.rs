@@ -1,10 +1,10 @@
 use gpui_kit::{App, WeakEntity};
-use nocterm_session::{HostExec, Prompt, Secret};
+use nocterm_session::{HostExec, Prompt, Secret, SecretRequest};
 use nocterm_workspace::{
     ExpectedSession, LiveCommands, RemoteReconnect, SignInPrompt, SignInPrompts,
-    TerminalCapability, TerminalError, TerminalExecution, TerminalInfo, TerminalInput,
-    TerminalState, TerminalStatus, TerminalText, TerminalTextSource, TextRequest, UserPromptToken,
-    UserTerminalPaste,
+    TerminalCapability, TerminalError, TerminalExecution, TerminalFiles, TerminalFilesystem,
+    TerminalInfo, TerminalInput, TerminalState, TerminalStatus, TerminalText, TerminalTextSource,
+    TextRequest, UserPromptToken, UserTerminalPaste,
 };
 use std::sync::Arc;
 
@@ -32,7 +32,8 @@ impl Access {
             .with_input(access.clone())
             .with_live(access.clone())
             .with_execution(access.clone())
-            .with_paste(access.clone());
+            .with_paste(access.clone())
+            .with_files(access.clone());
         let base = base
             .with_fact_session(access.clone())
             .with_prompts(access.clone())
@@ -53,7 +54,10 @@ impl Access {
             .ok_or(TerminalError::Gone)
     }
     fn check(&self, expected: ExpectedSession, terminal: &Terminal) -> Result<(), TerminalError> {
-        if self.item()? != expected.item() || terminal.connection_epoch() != expected.epoch() {
+        if !terminal.installed().source_current()
+            || self.item()? != expected.item()
+            || terminal.connection_epoch() != expected.epoch()
+        {
             return Err(TerminalError::StaleSession);
         }
         Ok(())
@@ -65,10 +69,11 @@ impl nocterm_workspace::ConnectionFactSession for Access {
         let item = self.item().ok()?;
         let entity = self.terminal.upgrade()?;
         let terminal = entity.read(cx);
-        if terminal.is_local() {
+        if terminal.is_local() || !terminal.installed().source_current() {
             return None;
         }
         Some(nocterm_workspace::FactSessionSnapshot {
+            source: terminal.installed().source(),
             expected: ExpectedSession::new(item, terminal.connection_epoch()),
             session: terminal.session_context(),
             profile: terminal.spec().profile.clone(),
@@ -83,6 +88,8 @@ impl TerminalState for Access {
         let terminal = entity.read(cx);
         let expected = ExpectedSession::new(item, terminal.connection_epoch());
         Some(TerminalInfo {
+            source: terminal.installed().source(),
+            source_current: terminal.installed().source_current(),
             expected,
             title: terminal.spec().title.clone(),
             local: terminal.is_local(),
@@ -105,6 +112,11 @@ impl TerminalState for Access {
             alt_screen: terminal.emulator().modes().alt_screen,
             generation: terminal.emulator().generation(),
             sign_in: match terminal.prompt() {
+                // A vault key is answered by the vault, never by an agent or the user.
+                Some(Prompt::Secret {
+                    request: SecretRequest::PrivateKey { .. },
+                    ..
+                }) => None,
                 Some(Prompt::Secret { request, hop, .. }) => {
                     let (label, retry, masked) = describe(request, hop.as_ref());
                     Some(SignInPrompt {
@@ -182,6 +194,33 @@ impl TerminalExecution for Access {
         terminal.agent_executor().ok_or(TerminalError::Unsupported(
             TerminalCapability::SessionExecution,
         ))
+    }
+}
+
+impl TerminalFiles for Access {
+    fn filesystem(
+        &self,
+        expected: ExpectedSession,
+        cx: &App,
+    ) -> Result<TerminalFilesystem, TerminalError> {
+        self.item()?;
+        let entity = self.terminal.upgrade().ok_or(TerminalError::Gone)?;
+        let terminal = entity.read(cx);
+        self.check(expected, terminal)?;
+        if !terminal.is_connected() || terminal.prompt().is_some() || terminal.awaiting_vault() {
+            return Err(TerminalError::Unavailable);
+        }
+        let context = terminal.session_context();
+        if let Some(fs) = context.fs.clone() {
+            return Ok(TerminalFilesystem::Remote {
+                host: context.address(),
+                fs,
+            });
+        }
+        if terminal.is_local() {
+            return Ok(TerminalFilesystem::Local);
+        }
+        Err(TerminalError::Unsupported(TerminalCapability::Files))
     }
 }
 

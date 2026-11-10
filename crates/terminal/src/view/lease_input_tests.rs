@@ -270,8 +270,53 @@ fn terminal_ports_bind_the_item_and_refuse_each_old_connection_operation(cx: &mu
                 .paste(expected, "forbidden", true, cx),
             Err(TerminalError::StaleSession)
         ));
+        assert!(matches!(
+            ports.files().unwrap().filesystem(expected, cx),
+            Err(TerminalError::StaleSession)
+        ));
     });
     assert!(drain(&scripted_driver(&transport, 1)).is_empty());
+}
+
+#[gpui_kit::test]
+fn terminal_files_name_the_connected_host_and_wait_for_a_reconnecting_session(
+    cx: &mut TestAppContext,
+) {
+    use nocterm_workspace::{TerminalError, TerminalFilesystem};
+    let (handle, view, transport) = fixture(cx);
+    let ports = ports(cx, &view);
+    let expected = cx.update(|cx| ports.state().info(cx).unwrap().expected);
+    cx.update(|cx| {
+        let Ok(TerminalFilesystem::Remote { host, .. }) =
+            ports.files().unwrap().filesystem(expected, cx)
+        else {
+            panic!("a connected remote terminal exposes its filesystem");
+        };
+        assert_eq!(
+            host.target,
+            nocterm_session::Target::new("test", "host", 22)
+        );
+        assert!(host.via.is_empty());
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.dispatch_action(Box::new(nocterm_workspace::ReconnectSession), cx);
+    })
+    .unwrap();
+    cx.run_until_parked();
+    let reconnecting = cx.update(|cx| ports.state().info(cx).unwrap().expected);
+    cx.update(|cx| {
+        assert!(matches!(
+            ports.files().unwrap().filesystem(reconnecting, cx),
+            Err(TerminalError::Unavailable)
+        ));
+    });
+    emit(cx, &transport, 1, Event::Connected);
+    cx.update(|cx| {
+        assert!(matches!(
+            ports.files().unwrap().filesystem(reconnecting, cx),
+            Ok(TerminalFilesystem::Remote { .. })
+        ));
+    });
 }
 
 #[gpui_kit::test]

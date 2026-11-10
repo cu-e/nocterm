@@ -86,11 +86,12 @@ pub(super) fn prepare_tab<T: Item>(
 /// Install native events at the entity boundary, then hand lifetimes to the owner.
 pub(super) fn prepare_topology(
     source: ProjectSurfaceReceipt,
+    top_toolbars: Rc<super::chrome::TopToolbars>,
     window: &mut Window,
     cx: &mut Context<surface::TabSurface>,
 ) -> tabs::topology::DockTopology {
     let (dock, skin) = if source.context() == nocterm_project_model::ContextId::General {
-        DockSkin::dock_area(source.dock_id(), None, window, cx)
+        tabs::shell_skin::ShellDockSkin::dock_area(source.dock_id(), top_toolbars, window, cx)
     } else {
         tabs::project_skin::ProjectDockSkin::dock_area(source.dock_id(), window, cx)
     };
@@ -107,5 +108,12 @@ pub(super) fn prepare_topology(
     let observer = cx.observe_in(&dock, window, move |this, _, window, cx| {
         this.native_dock_visibility_changed(source, window, cx)
     });
+    // The dock draws its tab groups as cached views: a change of the surface's own
+    // state, which the tab bars show, draws them again.
+    let area = dock.downgrade();
+    cx.observe_self(move |_, cx| {
+        _ = area.update(cx, |_, cx| cx.notify());
+    })
+    .detach();
     tabs::topology::DockTopology::new(dock, events, observer)
 }

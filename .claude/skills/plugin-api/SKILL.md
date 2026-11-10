@@ -1,10 +1,10 @@
 ---
 name: plugin-api
-description: Add, change or remove a plugin or anything the window shell hosts. Covers a system plugin (pub static PLUGIN, SystemPlugin with its id, name, description and required flag), a panel or status-bar widget contribution (SystemContribution, register_panel, register_widget, panel and widget factories), a contribution kind, icon, width class or group spec, and the plugin catalog in src/shell_setup.rs. Use when a task asks to expose app data or actions to plugins, user-written widgets or panels, or an API "handle" ("ручка"). No user plugin runtime exists yet, so step 0 stops and escalates instead of adding a getter. Also covers a plugin settings schema (SettingsSchema, FieldGroup, FieldSpec, FieldKind, SettingValue), its SectionBinding to the owner's settings section and the shared plugin settings form. Not for ports between built-in crates (port-design), MCP tools for AI agents (crates/ai tool catalog), GPUI actions or settings sections that no plugin schema exposes.
+description: Work on built-in plugins, shell panels/widgets or feature-gated user plugins. Route built-in contributions through the catalog and workspace registration; route guest capabilities through the existing plugin API/ports/host/runtime with grants, compatibility and safe-mode boundaries. Not for ordinary ports between built-in crates or AI MCP tools.
 user-invocable: false
 ---
 
-# Plugin API: system plugins and contributions
+# Plugin APIs and contributions
 
 Rules: AGENTS.md "Where code goes" and design rules 2 and 3; crate card
 `crates/plugin-model/src/lib.rs`; ADR `docs/adr/0082-system-plugins-and-core-contributions.md`
@@ -17,8 +17,33 @@ registration types in `crates/workspace/src/workspace/registration.rs`; catalog 
 ## 0. Route
 - Consumer is the shell, the layout editor or the Plugins page → this skill.
 - Consumer is another built-in feature → `port-design`.
-- Consumer is a user plugin or user script → stop. No runtime exists. Never add a
-  `Workspace` method, an `Entity` getter or a `pub` field for it. Result `escalate`.
+- Consumer is a user plugin → follow the user-plugin route below. It already
+  exists behind `user-plugins`; a native getter or `pub` field is not a guest API.
+- Consumer is an arbitrary user script → identify the supported entrypoint and
+  trust boundary. Do not invent native script execution or access to app internals.
+  Resolve a genuinely new authority decision under AGENTS.md's workflow policy.
+
+## User-plugin route
+
+Read `docs/plugins/README.md`, the relevant crate cards and ADRs
+`docs/adr/0089-user-plugin-contract.md`,
+`docs/adr/0090-user-plugin-host-and-passive-providers.md`,
+`docs/adr/0091-user-plugin-code-runs-in-process-on-wasmi.md`,
+`docs/adr/0092-plugin-sdk-and-developer-sessions.md` and
+`docs/adr/0093-user-plugins-start-off-and-the-api-stays-compatible.md`.
+
+- Contract/capabilities belong to `nocterm-plugin-api`; native providers use
+  `nocterm-plugin-ports`. The host owns grants/effects, package and WASM adapters
+  own loading/execution, the view crate draws admitted views, and SDK/ABI define
+  the guest interface. Inspect existing types before proposing a new surface.
+- Compose through `src/shell_setup/user_plugins.rs`. Preserve capability grants,
+  consent, gesture/rate/resource bounds, safe mode and the default-off release
+  policy. Do not expose GPUI entities or arbitrary native access to guests.
+- Contract changes preserve API/ABI compatibility and generated references.
+  Run changed-input checks from AGENTS.md, including the user-plugin feature
+  matrix and SDK/example/gated guest tests when applicable.
+
+The following sections describe built-in contributions, not guest registration.
 
 ## 1. Declare
 A core function (connections, files, the workspace shell) declares
@@ -102,10 +127,11 @@ the port simply omits the widget. Never reach a native source from a view.
 
 ## 5. Regenerate
 `docs/reference/plugins.md` is generated from the catalog. After a plugin, descriptor or
-settings change run `.claude/hooks/cargo-serial.sh cargo test -p nocterm plugins_reference`
-with `NOCTERM_BLESS=1` set, and commit the result.
+settings change run `cargo test -p nocterm plugins_reference`
+with `NOCTERM_BLESS=1` set, and include the generated result in the change.
+Commit only when the user requests it.
 
-## Output (in `30-design.md`)
+## Suggested design notes (compact plan or `30-design.md`)
 ### Plugin <id>
 - Owner crate, name, required (and why), contributions
 ### Contribution <id>
@@ -113,4 +139,4 @@ with `NOCTERM_BLESS=1` set, and commit the result.
 - Default changes: none | <what and why>
 - Tests: <names>
 
-End with the Result block.
+Report the relevant design, tests and remaining decisions concisely.

@@ -8,6 +8,14 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "edge": {
+          "enum": [
+            "top",
+            "bottom",
+            "left",
+            "right"
+          ]
+        },
         "icon": {
           "enum": [
             "box",
@@ -21,7 +29,8 @@
         "kind": {
           "enum": [
             "widget",
-            "panel"
+            "panel",
+            "toolbar"
           ]
         },
         "local": {
@@ -31,6 +40,15 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 65535
+        },
+        "shown": {
+          "type": "boolean"
+        },
+        "tabs": {
+          "enum": [
+            "own",
+            "all"
+          ]
         },
         "title": {
           "type": "string"
@@ -72,8 +90,14 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "detail": {
+          "type": "string"
+        },
         "each": {
           "type": "string"
+        },
+        "folded": {
+          "type": "boolean"
         },
         "icon": {
           "enum": [
@@ -82,7 +106,66 @@
             "hexagon",
             "plug",
             "puzzle",
-            "shapes"
+            "shapes",
+            "activity",
+            "arrow-down",
+            "arrow-left",
+            "arrow-up",
+            "bell",
+            "cable",
+            "calendar",
+            "check",
+            "chevron-down",
+            "chevron-left",
+            "chevron-right",
+            "circle-alert",
+            "circle-check",
+            "circle-x",
+            "clock",
+            "container",
+            "copy",
+            "cpu",
+            "ellipsis",
+            "external-link",
+            "eye",
+            "file",
+            "file-text",
+            "folder",
+            "folder-open",
+            "gauge",
+            "globe",
+            "hard-drive",
+            "inbox",
+            "info",
+            "key",
+            "loader",
+            "lock",
+            "memory",
+            "network",
+            "pause",
+            "pencil",
+            "play",
+            "plus",
+            "minus",
+            "refresh",
+            "rotate",
+            "search",
+            "send",
+            "server",
+            "server-off",
+            "settings",
+            "square",
+            "stop",
+            "star",
+            "terminal",
+            "thermometer",
+            "trash",
+            "triangle-alert",
+            "upload",
+            "user",
+            "wrench",
+            "x",
+            "zap"
           ]
         },
         "key": {
@@ -100,7 +183,14 @@
             "toggle",
             "list",
             "divider",
-            "spacer"
+            "spacer",
+            "code",
+            "section",
+            "item",
+            "icon-button",
+            "caption",
+            "field",
+            "chart"
           ]
         },
         "parent": {
@@ -158,6 +248,9 @@
         "name": {
           "type": "string"
         },
+        "network": {
+          "$ref": "#/$defs/network"
+        },
         "optional_capabilities": {
           "type": "array",
           "items": {
@@ -188,6 +281,27 @@
         "id",
         "name",
         "publisher"
+      ]
+    },
+    "network": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "credential_header": {
+          "type": "string"
+        },
+        "credential_prefix": {
+          "type": "string"
+        },
+        "credential_setting": {
+          "type": "string"
+        },
+        "origin_setting": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "origin_setting"
       ]
     },
     "settings": {
@@ -245,7 +359,8 @@
             "choice",
             "multi-choice",
             "number",
-            "text"
+            "text",
+            "secret"
           ]
         },
         "label": {

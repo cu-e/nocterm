@@ -7,6 +7,7 @@ use nocterm_session::{Auth, Target};
 use nocterm_store::{ShutdownCoordinator, SnapshotWriter, StoreError};
 use std::sync::{Arc, Mutex};
 
+mod folders;
 mod publication;
 mod shutdown;
 

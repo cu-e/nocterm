@@ -1,6 +1,6 @@
 //! Feature-owned conversion and foreground open intent; background routes skip recents.
 use crate::Installed;
-use gpui_kit::{App, SharedString, WeakEntity, Window};
+use gpui_kit::{App, EntityId, SharedString, WeakEntity, Window};
 use nocterm_connections_model::{
     jump_route::{JumpRouteError, resolve_jump_route},
     profiles::{Profile, ProfileId, Profiles, Recent},
@@ -118,6 +118,29 @@ pub(crate) fn open_profile(
             false
         }
     }
+}
+/// Opens a saved connection without a tab and returns the session's item, or reports why its
+/// route cannot be resolved. It signs in as a tab would and is not recorded among recents.
+pub(crate) fn open_background(
+    installed: &Installed,
+    workspace: &WeakEntity<Workspace>,
+    profile: &Profile,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<EntityId> {
+    let spec = match spec_for_profile(profile, installed.connections().read(cx).profiles(cx)) {
+        Ok(spec) => spec,
+        Err(error) => {
+            report_route_error(&error, window, cx);
+            return None;
+        }
+    };
+    workspace
+        .update(cx, |workspace, cx| {
+            workspace.open_background_session(spec, window, cx)
+        })
+        .ok()
+        .flatten()
 }
 /// Records the foreground intent before asking the existing workspace session factory.
 pub fn connect(

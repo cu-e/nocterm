@@ -32,6 +32,10 @@ impl Tree {
         &self.roots
     }
 
+    pub(crate) fn nodes(&self) -> &[Node] {
+        &self.nodes
+    }
+
     pub(crate) fn node(&self, index: usize) -> &Node {
         &self.nodes[index]
     }

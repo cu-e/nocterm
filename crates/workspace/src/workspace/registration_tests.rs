@@ -586,3 +586,6 @@ impl Render for Silent {
 
 #[path = "registration_tests/widgets.rs"]
 mod widgets;
+
+#[path = "registration_tests/toolbars.rs"]
+mod toolbars;

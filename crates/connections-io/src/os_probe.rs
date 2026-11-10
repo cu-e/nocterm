@@ -3,7 +3,10 @@ use nocterm_connections_model::{
     os::{self, OsId},
     os_observation::{OsFuture, OsObservationError, RemoteOsDetector},
 };
-use nocterm_session::{EntryKind, FsError, RemoteFs, fs::RemoteDownload};
+use nocterm_session::{
+    EntryKind, FsError, RemoteFs,
+    fs::{DownloadReadError, read_bounded},
+};
 use std::sync::Arc;
 const MAX_OS_RELEASE_BYTES: usize = 16 * 1024;
 pub struct NativeOsDetector;
@@ -93,14 +96,34 @@ async fn read_small(fs: &dyn RemoteFs, path: &str) -> Result<Option<String>, OsO
             });
         }
     };
-    let result = read_bytes(file.as_mut(), path).await.and_then(|bytes| {
-        String::from_utf8(bytes)
-            .map(Some)
-            .map_err(|source| OsObservationError::InvalidUtf8 {
+    let result = read_bounded(file.as_mut(), MAX_OS_RELEASE_BYTES, 4096)
+        .await
+        .map_err(|error| match error {
+            DownloadReadError::Read(source) => OsObservationError::Read {
                 path: path.into(),
                 source,
-            })
-    });
+            },
+            DownloadReadError::TooLarge { limit } => OsObservationError::Oversize {
+                path: path.into(),
+                limit,
+            },
+            DownloadReadError::InvalidChunk {
+                requested,
+                returned,
+            } => OsObservationError::InvalidChunk {
+                path: path.into(),
+                requested,
+                returned,
+            },
+        })
+        .and_then(|bytes| {
+            String::from_utf8(bytes)
+                .map(Some)
+                .map_err(|source| OsObservationError::InvalidUtf8 {
+                    path: path.into(),
+                    source,
+                })
+        });
     if let Err(source) = file.close().await {
         let error = OsObservationError::Close {
             path: path.into(),
@@ -109,39 +132,6 @@ async fn read_small(fs: &dyn RemoteFs, path: &str) -> Result<Option<String>, OsO
         tracing::debug!(%error, "could not close OS release reader");
     }
     result
-}
-async fn read_bytes(
-    file: &mut dyn RemoteDownload,
-    path: &str,
-) -> Result<Vec<u8>, OsObservationError> {
-    let mut bytes = Vec::new();
-    loop {
-        let requested = (MAX_OS_RELEASE_BYTES + 1 - bytes.len()).min(4096);
-        let chunk = file
-            .read(requested)
-            .await
-            .map_err(|source| OsObservationError::Read {
-                path: path.into(),
-                source,
-            })?;
-        if chunk.len() > requested {
-            return Err(OsObservationError::InvalidChunk {
-                path: path.into(),
-                requested,
-                returned: chunk.len(),
-            });
-        }
-        if chunk.is_empty() {
-            return Ok(bytes);
-        }
-        if bytes.len() + chunk.len() > MAX_OS_RELEASE_BYTES {
-            return Err(OsObservationError::Oversize {
-                path: path.into(),
-                limit: MAX_OS_RELEASE_BYTES,
-            });
-        }
-        bytes.extend(chunk);
-    }
 }
 #[cfg(test)]
 mod tests;
