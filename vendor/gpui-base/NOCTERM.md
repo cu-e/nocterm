@@ -1,5 +1,11 @@
 # Nocterm's GPUI Base zoom patch
 
+The input engine exposes its existing synchronous document revision through a
+read-only getter. Programmatic value replacement advances it even when Change
+events are suppressed. The existing counter wraps at u64::MAX; consumers that
+need stale-operation fencing must bind the input instance and reject observed
+revision regression. No input state, event timing or edit semantics change.
+
 This vendored fork, including Nocterm's local modifications, is distributed
 under Apache-2.0, as declared by its original Cargo manifest. Upstream copyright
 notices and LICENSE-APACHE remain in force; the application's PolyForm Perimeter
@@ -53,3 +59,13 @@ close guards and explicit locks. The former zoom-lock test now asserts the reque
 zoomed drag/drop behavior; explicit lock and last-visible regressions remain intact.
 New-panel registration can target a group directly, avoiding a transient cross-group
 move that would otherwise clear zoom when adding into a nonfirst split pane.
+
+`root.rs` draws the window's content view uncached again. Drawing it as a cached view
+(patch 0003) moved the focus a click gives away from a text input in the content, so the
+input registered no input handler and typed text never reached it; patch 0005 undoes it.
+
+`dock/dock_area.rs` draws each tab group as a cached view, so a change in one group,
+such as its active panel's output, draws neither the other groups nor their tab bars.
+The area's own change draws all its groups again. `dock/tab_group.rs` observes the
+views of the panels it holds through Nocterm's `AnyView::observe` in the vendored
+`gpui-pre`, because its tab bar draws every panel's title, including inactive ones.

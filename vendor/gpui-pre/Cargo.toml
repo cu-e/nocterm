@@ -678,3 +678,8 @@ priority = 0
 [[test]]
 name = "nocterm_scroll"
 path = "tests/nocterm_scroll.rs"
+
+[[test]]
+name = "nocterm_list_estimates"
+path = "tests/nocterm_list_estimates.rs"
+required-features = ["test-support"]
