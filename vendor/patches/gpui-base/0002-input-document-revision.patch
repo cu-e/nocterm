@@ -1,0 +1,30 @@
+diff --git a/NOCTERM.md b/NOCTERM.md
+index f61dab6786ae15b61da67754fedf46bf0e20df61..b642cc79be30baceee8a973bc2cfd73cab6d7909 100644
+GIT binary patch
+delta 399
+zcmX|-p-u!r5JU~?625?hlt98Mf&fL(5Cj6-%oICAZhJP}J<FZCUqE5_3jUDn1+XQm
+z-mA}(uhWmSJyCV)0qRhd;C5<GM-2zJ)uZYF-)Sn=v~@>rsgKlvajssQB8s&>6v)ab
+z`J(A&hk+5aH6E=ECgUhk6K2_T!Z>Xt@z5c8KZ~Zr9yn9+UZ}V$q61e;5DqcI`!pHd
+znb&wK3+69cYF&edcazB>fqr#)eSLrXe1p`~`$%&{kyt62;UODdw23CMu)pr9X;B=z
+z2VSaXMESd<s>ebH(G24oQ=q*#ZDwBm>l=rKtTtWaq5Zz;A;I&5QXuNMOf&;?4LC>9
+PsL7Fv9O=OIH|FCXxKWek
+
+delta 11
+ScmbO&H%)qi%I1}fMZ5qR-2?jo
+
+diff --git a/src/input/base/state.rs b/src/input/base/state.rs
+index b7085414869596bb0cee74c7c22e839ef02c5916..4b8651eafa77b8aa22d73c111768dca226ce362d 100644
+GIT binary patch
+delta 310
+zcmX}ny-EW?7=>ZtPm?PM*c=;C(4+||RuDuiEUZjn=T2t6-5uQhW|^H?f0`f`djS?U
+z-hiD}!rVsi2JG#pltl=f`gu9;tI^N*=;JpmuO3(y*0Avnl##w7b|9r4a$>T=X~T!m
+zEK9F6=cuj8t*9#Dv_vaPPeTBhOeU~YmqJo6j4>~CgMO^2CRRObGAPQ(T2e?axc2UR
+z*%G@XIV%L`l#bWdydcoMZd~7##<L@fJ1go2!XfpuX_8!?UZ=;<uFtS>5Dd=?<5`h{
+zERDSV_iDdD#_M-CmRj9t!~1&;4a@8RM<?*J>FeX$VE5%|weuW97sH^7VWW#-vx{Nt
+JD~9b){sSg^bYK7g
+
+delta 42
+zcmV+_0M-BE)flPM7_jZSlm4UzlhD)!gE72^F}wkXF}wnYF}wqZF}wt~F}ww_ZsIi*
+AL;wH)
+
+# End of generated Nocterm binary patch.
