@@ -140,7 +140,7 @@ The user plugin crates (`nocterm-plugin-model`, `-api`, `-abi`, `-wasm`, `-packa
 A row applies as soon as its package exists, every list is closed, and a new dependency or
 exemption is a reviewed edit of the policy with a reason.
 
-- **I1, dependency closure.** From `cargo metadata` with `--features nocterm/user-plugins`, normal and
+- **I1, dependency closure.** From `cargo metadata` of the application's build, normal and
   build dependencies, the transitive `nocterm-*` closure of a crate must equal its row and the
   external closure must lie in its named list (for gpui crates, that list plus the closure of the
   vendored gpui).
@@ -157,18 +157,14 @@ exemption is a reviewed edit of the policy with a reason.
   `unsafe`, inline or global assembly, symbol attributes (`no_mangle`, `export_name`, `link_name`,
   `link_section`), or serde attribute taking a path string.
 - **I5, providers.** The dependents of the provider port are a closed list.
-- **Compile-out.** With default features the resolved closure of `nocterm` holds no user-plugin
-  crate.
 - **Guest-only crates.** A crate listed under `guest_only` (the plugin SDK, whose `export!` macro
   writes the symbols and manifest section of a guest module) has no row, because I4 would reject
-  that macro. Instead it must be absent from the `nocterm` closure, with and without
-  `user-plugins`; development dependencies do not count. The rule also fails when the application
+  that macro. Instead it must be absent from the `nocterm` closure; development dependencies do not count. The rule also fails when the application
   or a listed crate is not a workspace package
   ([ADR 0092](../adr/0092-plugin-sdk-and-developer-sessions.md)).
 - **Test hooks.** A crate that offers a test-only constructor behind a `test-support` feature lists
   it under `test_features` in the policy (empty today). The feature must not be enabled by any
-  normal or build dependency edge of `nocterm` with `user-plugins` (the default build holds no such
-  crate); development dependencies may enable it.
+  normal or build dependency edge of `nocterm`; development dependencies may enable it.
 - **Banned features.** A package listed under `banned_features` (`wasmi` with `auto-dispatch`,
   which overflowed the stack at the optimization level the workspace builds it with) must resolve
   without the feature in `cargo tree` over every member, every feature and every kind of edge, so
@@ -188,9 +184,6 @@ on an optional key made required or a new required key, and on a lower `api_vers
 change except wording needs a higher `api_version`; entries the base marked deprecated may be
 removed on a higher major version. A base without the file passes with a notice
 ([ADR 0093](../adr/0093-user-plugins-start-off-and-the-api-stays-compatible.md)).
-
-`scripts/test-release-pipeline.cjs` also fails when a package or release workflow step builds
-with `user-plugins`.
 
 ## History and maintained documentation
 

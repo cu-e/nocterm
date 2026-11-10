@@ -38,58 +38,21 @@ pub(crate) fn page(page: &PluginsPage, cx: &mut Context<PluginsPage>) -> impl In
 }
 
 /// The external plugins' head: the switch, install and the plugins folder, the consent.
-#[cfg(feature = "user")]
 fn external_head(page: &PluginsPage, _: &mut Context<PluginsPage>) -> Option<AnyElement> {
     page.user()
         .map(|user| gpui_kit::AnyView::from(user.head().clone()).into_any_element())
 }
 
-/// A build without user plugins says so where the external plugins' head would be, so the user
-/// knows why there is nothing to install.
-#[cfg(not(feature = "user"))]
-fn external_head(_: &PluginsPage, cx: &mut Context<PluginsPage>) -> Option<AnyElement> {
-    Some(
-        v_flex()
-            .id("user-plugins-unavailable")
-            .test_support()
-            .w_full()
-            .gap_2()
-            .child(form::page_header(
-                "External plugins",
-                Some(
-                    "This build of Nocterm was made without user plugins, so plugin files \
-                     cannot be installed. A build with the `user-plugins` feature can install \
-                     them from a file or from its plugins folder."
-                        .into(),
-                ),
-                cx,
-            ))
-            .into_any_element(),
-    )
-}
-
-#[cfg(feature = "user")]
 fn external_rows(page: &PluginsPage, _: &mut Context<PluginsPage>) -> Option<AnyElement> {
     page.user()
         .map(|user| gpui_kit::AnyView::from(user.rows().clone()).into_any_element())
 }
 
-#[cfg(not(feature = "user"))]
-fn external_rows(_: &PluginsPage, _: &mut Context<PluginsPage>) -> Option<AnyElement> {
-    None
-}
-
 /// The selected external plugin, when no built-in one is selected.
-#[cfg(feature = "user")]
 fn external_detail(page: &PluginsPage, cx: &mut Context<PluginsPage>) -> Option<AnyElement> {
     page.user()
         .filter(|user| user.section().read(cx).has_selection())
         .map(|user| gpui_kit::AnyView::from(user.detail().clone()).into_any_element())
-}
-
-#[cfg(not(feature = "user"))]
-fn external_detail(_: &PluginsPage, _: &mut Context<PluginsPage>) -> Option<AnyElement> {
-    None
 }
 
 /// The heading of a group of the list, as the application heads its sections.

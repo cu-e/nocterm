@@ -52,8 +52,8 @@
 gpui = "gpui-pre"
 # Package whose default-feature closure must not contain a user-plugin-only crate.
 app = "nocterm"
-# Crates that build the plugin (guest) side of the code ABI. The application never reaches them,
-# with or without the user-plugins feature; they have no row because their `export!` macro
+# Crates that build the plugin (guest) side of the code ABI. The application never reaches them;
+# they have no row because their `export!` macro
 # writes the symbols and the manifest section of a guest module.
 guest_only = ["nocterm-plugin-sdk"]
 
@@ -259,20 +259,8 @@ allowed = [
     "nocterm-workspace",
 ]
 
-# User-plugin-only crates, absent from the default-feature closure of the app (section 5.13).
-[isolation.compile_out]
-crates = [
-    "nocterm-plugin-abi",
-    "nocterm-plugin-api",
-    "nocterm-plugin-host",
-    "nocterm-plugin-net",
-    "nocterm-plugin-packages",
-    "nocterm-plugin-ports",
-    "nocterm-plugin-view",
-    "nocterm-plugin-wasm",
-]
-# Packages whose resolved features must not hold the named feature in the default build.
-features = { nocterm-plugins-ui = "user" }
+# Features no build of the application may hold.
+[isolation.features]
 # `auto-dispatch` with opt-level 3 overflowed the stack in the X0 spike; the crate selects
 # `portable-dispatch` and no member may bring the default back.
 banned_features = { wasmi = "auto-dispatch" }

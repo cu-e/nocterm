@@ -18,7 +18,7 @@ registration types in `crates/workspace/src/workspace/registration.rs`; catalog 
 - Consumer is the shell, the layout editor or the Plugins page → this skill.
 - Consumer is another built-in feature → `port-design`.
 - Consumer is a user plugin → follow the user-plugin route below. It already
-  exists behind `user-plugins`; a native getter or `pub` field is not a guest API.
+  exists in every build; a native getter or `pub` field is not a guest API.
 - Consumer is an arbitrary user script → identify the supported entrypoint and
   trust boundary. Do not invent native script execution or access to app internals.
   Resolve a genuinely new authority decision under AGENTS.md's workflow policy.

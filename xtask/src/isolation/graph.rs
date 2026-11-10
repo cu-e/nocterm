@@ -1,5 +1,5 @@
 //! Dependency-graph rules on a full `cargo metadata` resolve: the closure allowlist (I1), the
-//! provider dependents (I5) and the compile-out of the user-plugin track.
+//! and provider dependents (I5).
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
@@ -53,8 +53,6 @@ struct Node {
     id: String,
     #[serde(default)]
     deps: Vec<NodeDependency>,
-    #[serde(default)]
-    features: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -174,17 +172,6 @@ impl Graph {
             .collect()
     }
 
-    fn features(&self, name: &str) -> BTreeSet<&str> {
-        self.full
-            .packages
-            .iter()
-            .filter(|package| package.name == name)
-            .filter_map(|package| self.nodes.get(&package.id))
-            .flat_map(|&node| &self.full.resolve.nodes[node].features)
-            .map(String::as_str)
-            .collect()
-    }
-
     fn is_proc_macro(&self, name: &str) -> bool {
         self.named(name).is_some_and(|package| {
             package
@@ -273,27 +260,4 @@ pub(super) fn provider_problems(policy: &Policy, graph: &Graph) -> BTreeSet<Stri
             )
         })
         .collect()
-}
-
-/// Compile-out: with default features no user-only crate is reachable from the app.
-pub(super) fn compile_out_problems(policy: &Policy, graph: &Graph) -> BTreeSet<String> {
-    let mut problems = BTreeSet::new();
-    if let Some(app) = graph.member(&policy.app) {
-        for reached in graph.closure(&app.id) {
-            if policy.compile_out.crates.iter().any(|name| name == reached) {
-                problems.insert(format!(
-                    "compile-out: {} reaches {reached} without the user-plugins feature",
-                    policy.app
-                ));
-            }
-        }
-    }
-    for (package, feature) in &policy.compile_out.features {
-        if graph.features(package).contains(feature.as_str()) {
-            problems.insert(format!(
-                "compile-out: {package} enables feature {feature} in the default build"
-            ));
-        }
-    }
-    problems
 }

@@ -362,7 +362,7 @@ vault, saved workspaces, installed themes, layout sizes, keymap, recordings) sav
 place, `UserShell::install`, which a held run (`--safe-mode`, or `[plugins] user_plugins` not set)
 leaves without a host, runtime, records, data or package store
 ([ADR 0093](../adr/0093-user-plugins-start-off-and-the-api-stays-compatible.md)). A provider lives in the crate
-whose state it reads, behind that crate's `user-plugins` feature, and is passive: it answers from
+whose state it reads and is passive: it answers from
 what the user's own UI already holds (never reading an entity that may be updating) and never
 starts a sampler, watch or connection
 ([ADR 0090](../adr/0090-user-plugin-host-and-passive-providers.md)). The isolation rules for both

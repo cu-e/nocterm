@@ -7,13 +7,10 @@ use anyhow::bail;
 
 use super::policy::Policy;
 
-/// `cargo tree` of the app with `feature`, normal and build edges only, one `package|features`
-/// line per package.
-pub(super) fn tree(root: &Path, feature: &str) -> anyhow::Result<String> {
-    run(
-        root,
-        &["-p", "nocterm", "--features", feature, "-e", "normal,build"],
-    )
+/// `cargo tree` of the app, normal and build edges only, one `package|features` line per
+/// package.
+pub(super) fn tree(root: &Path) -> anyhow::Result<String> {
+    run(root, &["-p", "nocterm", "-e", "normal,build"])
 }
 
 /// `cargo tree` of every member with every feature and every kind of edge, in the same shape:
@@ -43,18 +40,18 @@ fn run(root: &Path, selection: &[&str]) -> anyhow::Result<String> {
 
 /// A package whose test-only feature a normal edge enables.
 pub(super) fn test_feature_problems(policy: &Policy, tree: &str) -> BTreeSet<String> {
-    enabled(&policy.compile_out.test_features, tree)
+    enabled(&policy.features.test_features, tree)
         .map(|(name, feature)| {
-            format!("compile-out: {name} enables test-only feature {feature} in the normal build")
+            format!("features: {name} enables test-only feature {feature} in the normal build")
         })
         .collect()
 }
 
 /// A package that holds a feature the policy bans everywhere.
 pub(super) fn banned_feature_problems(policy: &Policy, tree: &str) -> BTreeSet<String> {
-    enabled(&policy.compile_out.banned_features, tree)
+    enabled(&policy.features.banned_features, tree)
         .map(|(name, feature)| {
-            format!("compile-out: {name} resolves with the banned feature {feature}")
+            format!("features: {name} resolves with the banned feature {feature}")
         })
         .collect()
 }

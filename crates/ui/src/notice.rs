@@ -10,11 +10,9 @@ use std::{collections::HashMap, rc::Rc, time::Duration};
 use gpui_kit::{App, Global, SharedString, Window, WindowId};
 
 mod bar;
-#[cfg(feature = "user-plugins")]
 mod plugin;
 
 pub use bar::NoticeBar;
-#[cfg(feature = "user-plugins")]
 pub use plugin::PluginNotices;
 
 /// How long a notice without an action stays on the footer line.

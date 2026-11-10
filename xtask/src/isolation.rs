@@ -1,6 +1,6 @@
 //! Guardrails that keep the plugin crates closed: the dependency graph, `std` reachability, the
-//! gpui receivers, structural bans, provider crates and the compile-out of the user-plugin
-//! track (docs/architecture/guardrails.md, ADR 0089).
+//! gpui receivers, structural bans, provider crates and the features no build may hold
+//! (docs/architecture/guardrails.md, ADR 0089).
 //!
 //! The rules guard against host-side regressions. They do not cover I/O reached through an
 //! allowlisted dependency's own API, nor a confused deputy; those are design-review items.
@@ -24,38 +24,25 @@ mod tests;
 use graph::Graph;
 use policy::Policy;
 
-/// Cargo feature that builds the user-plugin track; the real build, not `--all-features`.
-const FEATURE: &str = "nocterm/user-plugins";
-
 pub(crate) fn check(
     root: &Path,
     modules: &[ratchet::Module],
     symbols: &ratchet::Symbols,
 ) -> anyhow::Result<()> {
     let policy = Policy::read(&root.join("xtask/architecture-policy.toml"))?;
-    let featured = Graph::read(root, &["--features", FEATURE])?;
     let default = Graph::read(root, &[])?;
     let gpui = if source::needs_gpui(&policy, modules) {
-        gpui::receiver_methods(&featured.package_directory(&policy.gpui)?.join("src"))?
+        gpui::receiver_methods(&default.package_directory(&policy.gpui)?.join("src"))?
     } else {
         BTreeSet::new()
     };
-    let mut problems = graph::closure_problems(&policy, &featured);
-    problems.extend(graph::provider_problems(&policy, &featured));
-    problems.extend(graph::compile_out_problems(&policy, &default));
-    problems.extend(guest_only::problems(
-        &policy,
-        &featured,
-        "with user-plugins",
-    ));
+    let mut problems = graph::closure_problems(&policy, &default);
+    problems.extend(graph::provider_problems(&policy, &default));
     problems.extend(guest_only::problems(&policy, &default, "default"));
-    if !policy.compile_out.test_features.is_empty() {
-        problems.extend(normal::test_feature_problems(
-            &policy,
-            &normal::tree(root, FEATURE)?,
-        ));
+    if !policy.features.test_features.is_empty() {
+        problems.extend(normal::test_feature_problems(&policy, &normal::tree(root)?));
     }
-    if !policy.compile_out.banned_features.is_empty() {
+    if !policy.features.banned_features.is_empty() {
         problems.extend(normal::banned_feature_problems(
             &policy,
             &normal::workspace_tree(root)?,

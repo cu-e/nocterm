@@ -310,8 +310,7 @@ updates every second) and a short date before the time (`Oct 24`); they are the 
 section of `settings.toml` and apply at once in every window.
 
 User plugins (preview) are installed from a file and run inside the window under the capabilities
-you allow. They are in builds made with `cargo build --features user-plugins`; release builds do not
-have them yet. Such a build loads none until you turn on Settings → Plugins → User plugins →
+you allow. Every build has them; it loads none until you turn on Settings → Plugins → User plugins →
 Allow user plugins (the `user_plugins` key of the `[plugins]` section) and restart, and
 `nocterm --safe-mode` starts without any of them, whatever the setting says, to recover from a
 plugin that misbehaves. The [guide](docs/plugins/README.md) is for authors.
