@@ -7,7 +7,8 @@ use std::{rc::Rc, sync::Arc};
 use gpui::{
     AnyElement, AnyView, App, Bounds, Context, Div, DragMoveEvent, Empty, EventEmitter,
     FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
-    Render, Stateful, Styled as _, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    Render, Stateful, Styled as _, Subscription, WeakEntity, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 
 use crate::Placement;
@@ -161,6 +162,9 @@ pub struct TabGroup {
     active: ActiveTracker,
     drop_indicator: Option<DropIndicator>,
     renderer: Rc<dyn TabGroupRenderer>,
+    /// Nocterm: the area draws the group as a cached view, and the tab bar draws
+    /// every panel's title, so any panel's change draws the group again.
+    _panel_changes: Vec<Subscription>,
 }
 
 impl TabGroup {
@@ -181,6 +185,7 @@ impl TabGroup {
             active: ActiveTracker::default(),
             drop_indicator: None,
             renderer: Rc::new(BareTabGroup),
+            _panel_changes: Vec::new(),
         }
     }
 
@@ -349,6 +354,16 @@ impl TabGroup {
         }
 
         self.panels = panels;
+        self._panel_changes = self
+            .panels
+            .iter()
+            .map(|panel| {
+                let group = group.clone();
+                panel.view().observe(cx, move |cx| {
+                    _ = group.update(cx, |_, cx| cx.notify());
+                })
+            })
+            .collect();
         self.active_ix = active_ix.min(self.panels.len().saturating_sub(1));
         self.schedule_active_sync(window, cx);
         cx.notify();
