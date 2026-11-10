@@ -106,7 +106,6 @@ impl StatusBar {
     }
 
     /// Forgets a widget, so its plugin's uninstall or replacement leaves no view behind.
-    #[cfg(feature = "user-plugins")]
     pub(in crate::workspace) fn remove(&mut self, id: &ContributionId, cx: &mut App) {
         if let Some(entry) = self.widgets.iter_mut().find(|entry| entry.id == *id) {
             entry.visibility(false, cx);

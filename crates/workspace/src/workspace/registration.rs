@@ -340,7 +340,6 @@ impl Registrations {
     }
 
     /// Forgets a registration, so the contribution can register again.
-    #[cfg(feature = "user-plugins")]
     pub(super) fn forget(&mut self, id: &ContributionId) {
         self.registered.remove(id);
         self.factories.remove(id);

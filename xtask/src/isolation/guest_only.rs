@@ -1,5 +1,5 @@
 //! Guest-only crates: they build the plugin side of the code ABI and never ship in the
-//! application, with or without the user-plugins feature.
+//! application.
 use std::collections::BTreeSet;
 
 use super::{graph::Graph, policy::Policy};
@@ -56,8 +56,7 @@ guest_only = ["nocterm-plugin-sdk"]
 [isolation.providers]
 allowed = []
 
-[isolation.compile_out]
-crates = []
+[isolation.features]
 "#;
 
     fn policy() -> Policy {
@@ -81,10 +80,10 @@ crates = []
             package("nocterm-ui", &[("nocterm-plugin-sdk", "")]),
             package("nocterm-plugin-sdk", &[]),
         ];
-        let found = problems(&policy(), &graph(packages), "with user-plugins");
+        let found = problems(&policy(), &graph(packages), "default");
         assert_eq!(found.len(), 1);
         let text = found.iter().next().unwrap();
-        assert!(text.contains("nocterm-plugin-sdk") && text.contains("with user-plugins"));
+        assert!(text.contains("nocterm-plugin-sdk") && text.contains("default"));
     }
 
     #[test]

@@ -216,7 +216,6 @@ pub(super) struct LocalWindow {
     pub(super) settings: nocterm_store::SettingsHandle,
     pub(super) workspace: Entity<Workspace>,
     /// The composed application, for the tests that read its user plugin shell.
-    #[cfg(feature = "user-plugins")]
     pub(super) booted: crate::bootstrap::Booted,
 }
 
@@ -270,14 +269,11 @@ pub(super) fn open_local_window_in(
     })
     .unwrap();
     cx.run_until_parked();
-    #[cfg(not(feature = "user-plugins"))]
-    drop(booted);
     LocalWindow {
         handle,
         exec,
         settings,
         workspace,
-        #[cfg(feature = "user-plugins")]
         booted,
     }
 }

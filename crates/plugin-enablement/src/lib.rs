@@ -11,7 +11,7 @@
 //!
 //! User plugins are not listed here: their enabled flag lives in the host's records, so a
 //! `user-` id in this section is dropped when it is read and never written. The section holds
-//! only the one switch that lets a build with the `user-plugins` feature load them at all.
+//! only the one switch that lets the application load them at all.
 //!
 //! Owns: the `[plugins]` section, its sanitizing, the effective disabled set and the
 //! `user_plugins` switch.
@@ -58,10 +58,8 @@ pub struct PluginEnablement {
     /// in any window; its settings stay available. Required plugins cannot be disabled.
     #[schemars(with = "Vec<String>")]
     pub disabled: Vec<PluginId>,
-    /// Whether a build with the `user-plugins` feature loads user plugins at the start. Off by
-    /// default and read only by such builds, once, at the start: a change applies at the next
-    /// start. Release builds are made without the feature, so the switch does nothing there.
-    /// Left out of the file while off.
+    /// Whether the application loads user plugins at the start. Off by default and read
+    /// once, at the start: a change applies at the next start. Left out of the file while off.
     #[serde(skip_serializing_if = "core::ops::Not::not")]
     #[schemars(extend("default" = false))]
     pub user_plugins: bool,

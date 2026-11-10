@@ -51,7 +51,6 @@ pub use registration::{
 mod layout_edit;
 mod layout_switch;
 mod panel_menu;
-#[cfg(feature = "user-plugins")]
 pub(crate) mod plugin_panels;
 mod sessions;
 mod shell_layout;

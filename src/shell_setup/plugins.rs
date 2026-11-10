@@ -45,7 +45,6 @@ impl AppPluginToggles {
 }
 
 /// The stored choice to load user plugins, which applies at the next start.
-#[cfg(feature = "user-plugins")]
 impl nocterm_plugins_ui::UserPluginsSwitch for AppPluginToggles {
     fn allowed(&self, cx: &App) -> bool {
         PluginEnablement::user_plugins_in(self.handle.document(cx))
@@ -194,7 +193,6 @@ mod tests {
         assert!(raw.contains("disabled = [\"monitor\", 3]"), "{raw}");
     }
 
-    #[cfg(feature = "user-plugins")]
     mod user_switch {
         use super::*;
         use nocterm_plugins_ui::UserPluginsSwitch as _;

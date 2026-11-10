@@ -23,13 +23,11 @@ pub struct PluginsPage {
     /// Why the last switch of this plugin was refused.
     refusal: Option<(PluginId, SharedString)>,
     focus: FocusHandle,
-    #[cfg(feature = "user")]
     user: Option<UserParts>,
     _subscriptions: Vec<Subscription>,
 }
 
 /// The User section and the parts of it the page draws in place.
-#[cfg(feature = "user")]
 pub(crate) struct UserParts {
     section: Entity<crate::UserPluginsSection>,
     head: Entity<crate::UserPartView>,
@@ -37,7 +35,6 @@ pub(crate) struct UserParts {
     detail: Entity<crate::UserPartView>,
 }
 
-#[cfg(feature = "user")]
 impl UserParts {
     pub(crate) fn section(&self) -> &Entity<crate::UserPluginsSection> {
         &self.section
@@ -80,7 +77,6 @@ impl PluginsPage {
             form: None,
             refusal: None,
             focus: cx.focus_handle(),
-            #[cfg(feature = "user")]
             user: None,
             _subscriptions: vec![toggled],
         };
@@ -91,7 +87,6 @@ impl PluginsPage {
     }
 
     /// Adds the User section below the system plugins.
-    #[cfg(feature = "user")]
     pub fn with_user_plugins(
         mut self,
         session: crate::UserSession,
@@ -125,7 +120,6 @@ impl PluginsPage {
         self
     }
 
-    #[cfg(feature = "user")]
     pub(crate) fn user(&self) -> Option<&UserParts> {
         self.user.as_ref()
     }
@@ -156,7 +150,6 @@ impl PluginsPage {
     /// Shows `id` in the detail, first sending what was typed into the previous form, and lets go
     /// of a selected external plugin.
     pub(crate) fn select(&mut self, id: &PluginId, window: &mut Window, cx: &mut Context<Self>) {
-        #[cfg(feature = "user")]
         if let Some(user) = &self.user {
             user.section.update(cx, |section, cx| section.deselect(cx));
         }
@@ -206,7 +199,6 @@ impl PluginsPage {
 
     fn flush_form(&self, cx: &mut Context<Self>) {
         self.flush_system_form(cx);
-        #[cfg(feature = "user")]
         if let Some(user) = &self.user {
             user.section.update(cx, |user, cx| user.flush(cx));
         }
@@ -221,7 +213,6 @@ impl PluginsPage {
 
 impl PluginsPage {
     /// Selects the user plugin whose id is `anchor`, if the page has a User section.
-    #[cfg(feature = "user")]
     fn reveal_user(&mut self, anchor: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let id = PluginId::owned(anchor);
         let Some(user) = self
@@ -234,11 +225,6 @@ impl PluginsPage {
         };
         user.update(cx, |user, cx| user.select(&id, window, cx));
         true
-    }
-
-    #[cfg(not(feature = "user"))]
-    fn reveal_user(&mut self, _: &str, _: &mut Window, _: &mut Context<Self>) -> bool {
-        false
     }
 }
 
