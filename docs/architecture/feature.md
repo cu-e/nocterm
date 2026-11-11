@@ -633,7 +633,11 @@ MessageList reuses one ImagePipeline for
 preview cache generations and remeasures rows only for accepted delivery. Its 32-entry,
 64 MiB preview budget retains full immutable source identities and charges image/source
 allocations; one installation shares four physical image jobs across attachments and previews.
-Counts and remaining bytes are admitted before file acquisition or base64/decoder allocation. It keeps
+Counts and remaining bytes are admitted before file acquisition or base64/decoder allocation.
+Literal tool input and output keep their scroll offset in GPUI's keyed element state.
+Their axis masks consume wheel input before the transcript's mask; vertical input
+chains to the transcript at a text boundary or when the text fits, and horizontal
+input stays in the text viewport. MessageList keeps
 each agent message's and expanded reasoning's parsed Markdown per row, so a row
 scrolled back into view keeps its parse and streamed text parses only what was
 appended. PanelLayout keeps the panel's regions as cached views: the transcript, the

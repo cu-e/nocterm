@@ -379,7 +379,6 @@ fn section(
     )
 }
 
-#[expect(clippy::too_many_lines, reason = "predates the limit")]
 pub(super) fn literal_section(
     index: usize,
     part: Option<usize>,
@@ -444,29 +443,18 @@ pub(super) fn literal_section(
                         }),
                 ),
         )
-        .child(
+        .child(super::literal_viewport::LiteralViewport::new(
+            scroll_id,
             div()
-                .id(scroll_id)
+                .id(code_id)
                 .test_support()
-                .w_full()
-                .min_w_0()
-                .max_w_full()
-                .max_h(px(240.))
-                .overflow_scroll()
-                .flex()
-                .items_start()
-                .child(
-                    div()
-                        .id(code_id)
-                        .test_support()
-                        .flex_shrink_0()
-                        .font_family(cx.theme().mono_font_family.clone())
-                        .text_color(cx.theme().foreground)
-                        .text_xs()
-                        .whitespace_nowrap()
-                        .child(StyledText::new(text).with_highlights(highlights)),
-                ),
-        )
+                .flex_shrink_0()
+                .font_family(cx.theme().mono_font_family.clone())
+                .text_color(cx.theme().foreground)
+                .text_xs()
+                .whitespace_nowrap()
+                .child(StyledText::new(text).with_highlights(highlights)),
+        ))
         .when(truncated, |section| {
             section.child("Preview limited to 200 KiB. Copy includes the full text.")
         })

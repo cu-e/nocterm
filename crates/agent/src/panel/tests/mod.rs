@@ -511,6 +511,7 @@ mod registration;
 mod resources;
 mod restoration;
 mod routing;
+mod scroll_geometry;
 mod seat_binding;
 mod servers;
 mod tool_corpus;
