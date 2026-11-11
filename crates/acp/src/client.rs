@@ -13,6 +13,12 @@ mod remote_errors;
 mod startup;
 mod stderr_tail;
 
+#[cfg(all(test, unix))]
+use nocterm_ai::model::{
+    controls::{ConfigKind, ConfigSetting},
+    ids::{ConfigChoiceId, ConfigId, SessionId},
+    session::{PromptRequest, RestoreSession, SessionOpen, SetConfigOption},
+};
 /// Names the behavior tests exercise through `use super::*`.
 #[cfg(test)]
 use {
@@ -23,12 +29,7 @@ use {
     handlers::client_builder,
     nocterm_ai::{
         AgentEvent,
-        model::{
-            auth::PermissionOutcome,
-            controls::{ConfigKind, ConfigSetting},
-            ids::{ConfigChoiceId, ConfigId, SessionId},
-            session::{PromptRequest, RestoreSession, SessionOpen, SessionUpdate, SetConfigOption},
-        },
+        model::{auth::PermissionOutcome, session::SessionUpdate},
     },
     remote_errors::{map_error, map_error_with, restore_error},
     std::{sync::Arc, time::Duration},

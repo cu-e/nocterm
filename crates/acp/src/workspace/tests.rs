@@ -1,9 +1,8 @@
 use super::*;
 use futures::executor::block_on;
-use nocterm_ai::{
-    sandbox::{PathKind, SandboxLaunchError},
-    workspace::IsolationPaths,
-};
+#[cfg(unix)]
+use nocterm_ai::sandbox::{PathKind, SandboxLaunchError};
+use nocterm_ai::workspace::IsolationPaths;
 fn request(path: &std::path::Path, private: bool, isolated: bool) -> WorkdirRequest {
     WorkdirRequest {
         candidate: path.to_owned(),

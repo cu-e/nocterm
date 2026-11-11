@@ -1,8 +1,10 @@
 use super::*;
+#[cfg(unix)]
 use std::io::Read;
 
 /// Reads like `Read::read`, retrying when a signal meant for another
 /// test (a reaped child, say) interrupts the timed socket read.
+#[cfg(unix)]
 fn read_uninterrupted(socket: &mut Socket, buf: &mut [u8]) -> io::Result<usize> {
     loop {
         match socket.read(buf) {
@@ -71,12 +73,20 @@ fn refuses_a_registration_whose_relay_program_is_gone() {
     assert!(error.contains("nocterm (deleted)"), "{error}");
     assert!(error.contains("Restart nocterm"), "{error}");
 }
-fn authenticated(registration: &BridgeRegistration) -> (Socket, BufReader<Socket>) {
-    let mut socket =
-        Socket::connect(endpoint(registration).strip_prefix("unix:").unwrap()).unwrap();
+fn connected(registration: &BridgeRegistration) -> Socket {
+    let endpoint = endpoint(registration);
+    let address = endpoint
+        .strip_prefix("unix:")
+        .or_else(|| endpoint.strip_prefix("tcp:"))
+        .unwrap();
+    let socket = Socket::connect(address).unwrap();
     socket
         .set_read_timeout(Some(Duration::from_secs(2)))
         .unwrap();
+    socket
+}
+fn authenticated(registration: &BridgeRegistration) -> (Socket, BufReader<Socket>) {
+    let mut socket = connected(registration);
     writeln!(
         socket,
         "{}",
@@ -86,7 +96,7 @@ fn authenticated(registration: &BridgeRegistration) -> (Socket, BufReader<Socket
     let reader = BufReader::new(socket.try_clone().unwrap());
     (socket, reader)
 }
-fn initialize(socket: &mut Socket, reader: &mut BufReader<Socket>) {
+fn initialize(socket: &mut impl Write, reader: &mut impl BufRead) {
     writeln!(socket,"{}",serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1"}}})).unwrap();
     let response: Value =
         serde_json::from_str(&bounded_line(reader, 1024 * 1024).unwrap().unwrap()).unwrap();
@@ -95,16 +105,19 @@ fn initialize(socket: &mut Socket, reader: &mut BufReader<Socket>) {
 }
 #[test]
 fn authenticates_routes_and_revokes_pending_calls() {
-    use std::os::unix::fs::PermissionsExt as _;
     let dir = tempfile::tempdir().unwrap();
     let server = bridge(&dir);
     let mut registration = server.register().unwrap();
-    let endpoint = endpoint(&registration);
-    let path = endpoint.strip_prefix("unix:").unwrap();
-    assert_eq!(
-        std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
-        0o600
-    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let endpoint = endpoint(&registration);
+        let path = endpoint.strip_prefix("unix:").unwrap();
+        assert_eq!(
+            std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
     let (mut socket, mut reader) = authenticated(&registration);
     initialize(&mut socket, &mut reader);
     writeln!(socket,"{}",serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_terminals","arguments":{}}})).unwrap();
@@ -138,7 +151,7 @@ fn authenticates_routes_and_revokes_pending_calls() {
     }
     assert!(pending.respond.is_canceled());
 }
-fn listed(socket: &mut Socket, reader: &mut BufReader<Socket>, id: u64) -> Vec<String> {
+fn listed(socket: &mut impl Write, reader: &mut impl BufRead, id: u64) -> Vec<String> {
     writeln!(
         socket,
         "{}",
@@ -147,12 +160,29 @@ fn listed(socket: &mut Socket, reader: &mut BufReader<Socket>, id: u64) -> Vec<S
     .unwrap();
     let response: Value =
         serde_json::from_str(&bounded_line(reader, 1024 * 1024).unwrap().unwrap()).unwrap();
+    assert_eq!(response["id"], id);
     response["result"]["tools"]
         .as_array()
         .unwrap()
         .iter()
         .map(|tool| tool["name"].as_str().unwrap().to_owned())
         .collect()
+}
+#[test]
+fn idle_connections_keep_serving_tools_after_initialize_and_reconnect() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = bridge(&dir);
+    let registration = server.register().unwrap();
+    for _ in 0..2 {
+        let (mut socket, mut reader) = authenticated(&registration);
+        initialize(&mut socket, &mut reader);
+        for id in 2..=3 {
+            // Let the server reach its next read with no request buffered.
+            std::thread::sleep(Duration::from_millis(50));
+            assert!(listed(&mut socket, &mut reader, id).contains(&"list_terminals".to_owned()));
+        }
+        socket.shutdown(std::net::Shutdown::Both).unwrap();
+    }
 }
 #[test]
 fn a_chat_offering_file_tools_tells_its_agent_to_list_them() {
@@ -179,6 +209,7 @@ fn a_chat_offering_file_tools_tells_its_agent_to_list_them() {
     assert!(!listed(&mut socket, &mut reader, 4).contains(&"read_file".to_owned()));
 }
 #[test]
+#[cfg(unix)]
 fn rejects_bad_tokens_and_limits_thread_connections() {
     let dir = tempfile::tempdir().unwrap();
     let server = bridge(&dir);
@@ -206,6 +237,7 @@ fn stop_cleans_listener_and_allows_reenable() {
     let (mut socket, mut reader) = authenticated(&first);
     initialize(&mut socket, &mut reader);
     server.stop();
+    #[cfg(unix)]
     assert!(!std::path::Path::new(endpoint(&first).strip_prefix("unix:").unwrap()).exists());
     assert!(bounded_line(&mut reader, 1024).unwrap_or(None).is_none());
     let second = server.register().unwrap();
@@ -265,6 +297,7 @@ fn actual_stdio_relay_roundtrip() {
     }
 }
 #[test]
+#[cfg(unix)]
 fn bounds_unauthenticated_connections_and_protocol_lines() {
     let dir = tempfile::tempdir().unwrap();
     let server = bridge(&dir);
@@ -336,4 +369,122 @@ fn rejected_requests_reach_the_chat_and_keep_the_json_rpc_error() {
         assert_eq!(response["error"]["code"], -32602);
         assert!(response.get("result").is_none());
     }
+}
+
+/// A real bidirectional pipe for the relay's standard input/output, kept open while it idles.
+fn relayed(
+    registration: &BridgeRegistration,
+) -> (
+    std::net::TcpStream,
+    BufReader<std::net::TcpStream>,
+    std::thread::JoinHandle<io::Result<()>>,
+) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let socket = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    socket
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let (pipe, _) = listener.accept().unwrap();
+    let endpoint = endpoint(registration);
+    let token = token(registration);
+    let relay =
+        std::thread::spawn(move || crate::run_relay(pipe.try_clone()?, pipe, &endpoint, &token));
+    let reader = BufReader::new(socket.try_clone().unwrap());
+    (socket, reader, relay)
+}
+
+fn next_call(server: &BridgeServer) -> BridgeCall {
+    futures::executor::block_on(async {
+        let calls = server.calls();
+        match select(
+            Box::pin(calls.recv()),
+            Box::pin(async_io::Timer::after(Duration::from_secs(2))),
+        )
+        .await
+        {
+            Either::Left((call, _)) => call.expect("bridge routes the tool call"),
+            Either::Right(_) => panic!("bridge did not route the tool call before the deadline"),
+        }
+    })
+}
+
+#[test]
+fn stdio_tools_survive_idle_beyond_authentication_timeout_and_refresh() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = bridge(&dir);
+    let registration = server.register().unwrap();
+    for _ in 0..2 {
+        let (mut socket, mut reader, relay) = relayed(&registration);
+        initialize(&mut socket, &mut reader);
+        assert!(listed(&mut socket, &mut reader, 2).contains(&"list_terminals".to_owned()));
+        // Authentication's five-second deadline must not limit an established session.
+        std::thread::sleep(Duration::from_secs(6));
+        writeln!(
+            socket,
+            "{}",
+            serde_json::json!({"jsonrpc":"2.0","id":3,"method":"ping"})
+        )
+        .unwrap();
+        let ping: Value = serde_json::from_str(
+            &bounded_line(&mut reader, 1024)
+                .unwrap()
+                .expect("idle relay stays connected"),
+        )
+        .unwrap();
+        assert_eq!(ping["id"], 3);
+        assert_eq!(ping["result"], serde_json::json!({}));
+        assert!(listed(&mut socket, &mut reader, 4).contains(&"list_terminals".to_owned()));
+        writeln!(socket, "{}", serde_json::json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"list_terminals","arguments":{}}})).unwrap();
+        let call = next_call(&server);
+        assert_eq!(call.registration_id, registration.id);
+        assert!(matches!(call.call, nocterm_ai::TerminalCall::ListTerminals));
+        call.respond
+            .send(Ok(serde_json::json!([{"id":"t1"}])))
+            .unwrap();
+        let reply: Value =
+            serde_json::from_str(&bounded_line(&mut reader, 4096).unwrap().unwrap()).unwrap();
+        assert_eq!(reply["id"], 5);
+        assert!(
+            reply["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("t1")
+        );
+        socket.shutdown(std::net::Shutdown::Write).unwrap();
+        assert!(bounded_line(&mut reader, 4096).unwrap().is_none());
+        relay.join().unwrap().unwrap();
+    }
+}
+
+#[test]
+fn pipelined_authentication_keeps_the_buffered_initialize_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = bridge(&dir);
+    let registration = server.register().unwrap();
+    let mut socket = connected(&registration);
+    let input = format!(
+        "{}\n{}\n",
+        serde_json::json!({"token":token(&registration)}),
+        serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize"})
+    );
+    socket.write_all(input.as_bytes()).unwrap();
+    let mut reader = BufReader::new(socket.try_clone().unwrap());
+    let reply: Value =
+        serde_json::from_str(&bounded_line(&mut reader, 4096).unwrap().unwrap()).unwrap();
+    assert_eq!(reply["id"], 1);
+    assert_eq!(reply["result"]["serverInfo"]["name"], "nocterm");
+    assert!(listed(&mut socket, &mut reader, 2).contains(&"list_terminals".to_owned()));
+}
+
+#[test]
+fn unauthenticated_connections_still_expire() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = bridge(&dir);
+    let registration = server.register().unwrap();
+    let socket = connected(&registration);
+    socket
+        .set_read_timeout(Some(Duration::from_secs(8)))
+        .unwrap();
+    let mut reader = BufReader::new(socket);
+    assert!(bounded_line(&mut reader, 4096).unwrap().is_none());
 }

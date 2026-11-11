@@ -169,6 +169,11 @@ impl ToolBridge for BridgeServer {
     fn stop(&self) {
         self.inner.generation.fetch_add(1, Ordering::AcqRel);
         let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        tracing::debug!(
+            registrations = state.registrations.len(),
+            connections = state.sockets.len(),
+            "Stopping MCP bridge"
+        );
         for (_, registration) in std::mem::take(&mut state.registrations) {
             close_registration(registration);
         }
@@ -263,7 +268,18 @@ fn start_listening(inner: &Arc<Inner>, state: &mut State) -> Result<String, List
                                 .name("nocterm-bridge-client".into())
                                 .spawn(move || {
                                     let _count = count;
-                                    let _ = serve(socket, inner, epoch, connection_id);
+                                    match serve(socket, inner, epoch, connection_id) {
+                                        Ok(()) => tracing::debug!(
+                                            connection_id,
+                                            "MCP bridge connection closed"
+                                        ),
+                                        Err(error) => tracing::warn!(
+                                            connection_id,
+                                            kind = ?error.kind(),
+                                            os_code = error.raw_os_error(),
+                                            "MCP bridge connection failed"
+                                        ),
+                                    }
                                 });
                         }
                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
@@ -372,6 +388,11 @@ fn revoke(inner: &Inner, id: u64) {
         .registrations
         .remove(&id);
     if let Some(registration) = registration {
+        tracing::debug!(
+            registration_id = id,
+            connections = registration.sockets.len(),
+            "Revoking MCP bridge registration"
+        );
         close_registration(registration);
     }
 }
@@ -419,6 +440,9 @@ pub(crate) fn bounded_line<R: BufRead>(reader: &mut R, limit: usize) -> io::Resu
 }
 
 fn serve(socket: Socket, inner: Arc<Inner>, epoch: u64, connection_id: u64) -> io::Result<()> {
+    // Windows accepted sockets inherit the listener's nonblocking mode. This
+    // worker uses blocking reads, including while an authenticated client idles.
+    socket.set_nonblocking(false)?;
     socket.set_read_timeout(Some(Duration::from_secs(5)))?;
     socket.set_write_timeout(Some(Duration::from_secs(5)))?;
     let mut reader = BufReader::new(socket.try_clone()?);
@@ -473,7 +497,15 @@ fn serve(socket: Socket, inner: Arc<Inner>, epoch: u64, connection_id: u64) -> i
         registration.writers.insert(connection_id, writer.clone());
         (*id, registration.cancelled.clone(), writer)
     };
-    let result = socket
+    tracing::debug!(
+        connection_id,
+        registration_id = id,
+        "MCP bridge authenticated"
+    );
+    // The authentication deadline belongs to the handle doing the reads.
+    // Clear it there, without discarding any pipelined bytes in this buffer.
+    let result = reader
+        .get_ref()
         .set_read_timeout(None)
         .and_then(|()| serve_authenticated(&writer, &mut reader, &inner, id, cancel));
     let mut state = inner.state.lock().unwrap_or_else(|e| e.into_inner());
@@ -562,5 +594,5 @@ fn serve_authenticated(
     Ok(())
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests;
