@@ -22,7 +22,7 @@ acceptance; a later record supersedes an earlier one.
 | [0014](0014-vendor-source-replay.md) | Vendored sources replay from authenticated archives and ordered patches |
 | [0015](0015-private-file-publication.md) | Private file publication shares one staged, atomic mechanism |
 | [0016](0016-vault-storage-boundary.md) | Vault format and rules are independent of storage and lifecycle |
-| [0017](0017-local-filesystem-capabilities.md) | Native filesystem capabilities are injected through pure session ports |
+| [0017](0017-local-filesystem-capabilities.md) | Native filesystem capabilities are injected through pure session ports (Windows support extended by 0162) |
 | [0018](0018-transfer-runtime-capabilities.md) | Transfer execution is an adapter over held filesystem and retryable publication ports |
 | [0022](0022-agent-storage-owners.md) | Agent storage adapters and private lifecycle owners share persistence execution |
 | [0025](0025-native-program-opener.md) | External local programs have an explicit bounded native owner |
@@ -157,3 +157,4 @@ acceptance; a later record supersedes an earlier one.
 | [0159](0159-plugin-charts-toolbar-axis-and-toolbar-moves.md) | Plugin views draw charts of recent values (`chart`, ABI stays 1), a toolbar's calls name its axis in the zone (`cx.is_column()`), toolbars use the status bar's small text, and moving a toolbar is a layout edit |
 | [0160](0160-ci-compiles-each-kind-once-and-tests-the-plugin-feature-where-it-changes-code.md) | CI compiles each kind of build once (lint checks, build and tests), tests `user-plugins` only in the packages that declare it, saves caches from `dev` and `master`, and builds installers only for releases |
 | [0161](0161-user-plugins-ship-in-every-build.md) | User plugins ship in every build: the `user-plugins` cargo feature and the compile-out rule are gone, the `[plugins] user_plugins` switch and `--safe-mode` still decide whether a run loads them (supersedes the compile-out part of 0093) |
+| [0162](0162-windows-held-directory-capabilities.md) | Windows holds directory ancestry and guards atomic publication against reparse conversion |

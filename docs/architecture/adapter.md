@@ -195,10 +195,27 @@ blocking calls on the background executor. Native names remain `OsString`/`PathB
 through operations; lossy strings are presentation only.
 
 Read-only browsing may follow directory links and accepts linked parent navigation.
-Strict traversal, source streams and mutations reject linked ancestors and pin each
-Unix directory. Walks and removals have entry/depth limits; cancellation can leave
-an explicitly reported partial removal. Portable targets check reparse/link state
-but do not claim Unix held-handle race guarantees. Staged publication distinguishes
+Strict traversal, source streams and mutations reject linked ancestors. Unix uses
+directory-relative operations. Windows retains up to 256 native ancestor handles
+without delete sharing, opens descendants relative to their parent handles and
+enumerates through independent native handles. During atomic publication, a locked
+guard file keeps the leaf nonempty and prevents reparse conversion. It is removed
+after candidate cleanup or committed publication. Windows identities preserve full
+128-bit file IDs, with a distinct native fallback identity for shorter file IDs.
+See [ADR 0162](../adr/0162-windows-held-directory-capabilities.md).
+Directory pins and cursors reopen the captured object through native relative
+`NtCreateFile`; they avoid Win32 `ReOpenFile`, which can reject directory handles
+on Windows despite backup semantics. A shared acquisition module keeps native
+access masks and no-follow flags consistent across traversal, metadata, cursors
+and sources. Retained pins request traversal and attributes; enumeration alone
+requests listing. Attribute-only handles cannot enforce a sharing pin. Sources
+request data and attributes without unrelated ACL or extended-attribute access.
+Entry metadata opens the reparse point itself. Windows I/O diagnostics record the operation,
+requested/normalized paths, component, access/sharing/options and native error code
+before classifying it; they never record message contents or bridge credentials.
+Walks and removals have entry/depth limits; cancellation can leave
+an explicitly reported partial removal. Other portable targets check link state
+but retain their active-ancestor race limitation. Staged publication distinguishes
 failure before commit from a durability warning after successful publication.
 Successful publication relinquishes its temporary name before returning; Drop
 cannot remove a later owner of that name. Explicit cancellation confirms removal
@@ -270,8 +287,9 @@ The app supplies `LocalFs`; generated descendants, reads, private staging,
 publication and removal use retained `LocalDirectory` capabilities. The configured
 private storage root has trusted ancestry and alone may be canonicalized. Project
 buckets require supplied held identity, with typed refusal on a portable path
-implementation. General retains that adapter's documented active-ancestor race
-limitation. Generated links and final source links are refused. An archived-draft
+implementation. Windows and Unix provide held capabilities for v3 namespaces;
+portable identities support only older General history. Generated links and final
+source links are refused. An archived-draft
 update merges only its draft and timestamp into the original scoped transcript
 under the service's shared serial gate.
 

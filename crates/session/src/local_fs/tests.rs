@@ -1,4 +1,16 @@
 use super::*;
+
+#[test]
+fn native_identity_keeps_full_width_and_fallback_spaces_distinct() {
+    let wide = DirectoryIdentity::native_wide(1, (1u128 << 96) | 7);
+    assert!(wide.is_held());
+    assert_ne!(wide, DirectoryIdentity::native_wide(1, 7));
+    assert_ne!(
+        DirectoryIdentity::native_wide(1, 7),
+        DirectoryIdentity::native(1, 7)
+    );
+    assert!(!DirectoryIdentity::portable("directory".into()).is_held());
+}
 use crate::{EntryKind, FileMetadata};
 use std::ffi::OsStr;
 fn metadata(kind: EntryKind, size: Option<u64>, is_symlink: bool) -> FileMetadata {

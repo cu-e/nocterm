@@ -349,6 +349,18 @@ jobs:
         run: cargo clippy --locked -p nocterm-vault -p nocterm-vault-store -p nocterm-device-unlock --all-targets -- -D warnings
       - name: Test portable envelope and native metadata without authentication prompts
         run: cargo test --locked -p nocterm-vault -p nocterm-vault-store -p nocterm-device-unlock
+      - name: Test held filesystem capabilities on Windows
+        if: runner.os == 'Windows'
+        run: cargo test --locked -p nocterm-localfs
+      - name: Test bounded native file reads on Windows
+        if: runner.os == 'Windows'
+        run: cargo test --locked -p nocterm-core --lib fs::tests::bounded_read
+      - name: Test SSH native file reads on Windows
+        if: runner.os == 'Windows'
+        run: cargo test --locked -p nocterm-ssh --lib file::tests
+      - name: Test native chat history on Windows
+        if: runner.os == 'Windows'
+        run: cargo test --locked -p nocterm --test native_history
       - name: Check the application builds for Windows
         if: runner.os == 'Windows'
         run: cargo check --locked -p nocterm

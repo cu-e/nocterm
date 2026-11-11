@@ -701,9 +701,7 @@ impl AgentThread {
         error: crate::runtime::AgentPersistenceError,
         cx: &mut Context<Self>,
     ) {
-        let message = format!(
-            "Could not save chat: {error}. Queued messages are retained; check disk space before continuing."
-        );
+        let message = super::notice::persistence_failure(&error);
         if !self.state.failed(revision, error) {
             return;
         }

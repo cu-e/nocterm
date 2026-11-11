@@ -323,7 +323,7 @@ fn bounded_read_refuses_directories() {
     let directory = tempfile::tempdir().unwrap();
     assert!(matches!(
         read_regular_bounded(directory.path(), 16).unwrap_err(),
-        BoundedReadError::NotRegular { .. } | BoundedReadError::Io { .. }
+        BoundedReadError::NotRegular { .. }
     ));
 }
 

@@ -21,7 +21,14 @@ nix = { version = "0.28", features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
 atomicwrites = "0.4.4"
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Wdk_Storage_FileSystem"] }
+fs_at = "0.2.1"
+winx = "0.36.4"
+ouroboros = "0.18.5"
+# Pin the safe opened-handle identity wrapper; its API is not yet stable.
+prikk-ffi = "=0.56.0"
+cap-primitives = "4.0.3"
+tracing.workspace = true
 
 [lints]
 workspace = true

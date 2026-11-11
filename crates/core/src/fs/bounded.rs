@@ -106,9 +106,11 @@ fn open_without_following(path: &Path) -> io::Result<File> {
     use std::os::windows::fs::OpenOptionsExt as _;
     /// `FILE_FLAG_OPEN_REPARSE_POINT`: open the link itself, not its target.
     const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    /// Inspect directories before refusing their kind, rather than reporting access denied.
+    const BACKUP_SEMANTICS: u32 = 0x0200_0000;
     OpenOptions::new()
         .read(true)
-        .custom_flags(OPEN_REPARSE_POINT)
+        .custom_flags(OPEN_REPARSE_POINT | BACKUP_SEMANTICS)
         .open(path)
 }
 

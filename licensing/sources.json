@@ -723,5 +723,30 @@
     "path": "upstream/bytecodealliance-wasm-tools-license-mit-23f18e03dc49.txt",
     "url": "https://raw.githubusercontent.com/bytecodealliance/wasm-tools/e66235859a6ec0502bf6f9dcc358953eda4cafcc/LICENSE-MIT",
     "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+  },
+  {
+    "packages": [
+      "fs_at@0.2.1"
+    ],
+    "path": "upstream/fs_at-0.2.1-declaration.txt",
+    "url": "https://docs.rs/crate/fs_at/0.2.1/source/Cargo.toml.orig",
+    "sha256": "ac8e7cd307f3a86d824a854070c51b11c65c1faba37eff53dc6729ea58328f0a",
+    "kind": "declaration"
+  },
+  {
+    "packages": [
+      "prikk-ffi@0.56.0"
+    ],
+    "path": "upstream/prikk-ffi-0.56.0-LICENSE",
+    "url": "https://raw.githubusercontent.com/prikk-vcs/prikk/808126bd207edb37142a1a59131656cf555cc30e/LICENSE",
+    "sha256": "f651689716d7e61870c050334baf1bfc0e44a2fb8f39c68b2a1412de140f97fe"
+  },
+  {
+    "packages": [
+      "prikk-ffi@0.56.0"
+    ],
+    "path": "upstream/prikk-ffi-0.56.0-NOTICE",
+    "url": "https://raw.githubusercontent.com/prikk-vcs/prikk/808126bd207edb37142a1a59131656cf555cc30e/NOTICE",
+    "sha256": "1310aaa99e29f68100ee5354ab37918505e254c135b54b21c9273fd5c2725337"
   }
 ]
