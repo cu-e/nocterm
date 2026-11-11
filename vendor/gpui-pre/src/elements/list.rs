@@ -1,3 +1,4 @@
+// Nocterm modifications, licensed under the upstream Apache-2.0 license.
 //! A list element that can be used to render a large number of differently sized elements
 //! efficiently. Clients of this API need to ensure that elements outside of the scrolled
 //! area do not change their height for this element to function correctly. If your elements
@@ -10,8 +11,8 @@
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
     FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
-    Overflow, Pixels, Point, ScrollDelta, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
-    Window, point, px, size,
+    Overflow, Pixels, Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled, Window, point,
+    px, size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -19,6 +20,8 @@ use std::{cell::RefCell, ops::Range, rc::Rc};
 use sum_tree::{Bias, Dimensions, SumTree};
 
 type RenderItemFn = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
+
+mod wheel;
 
 /// Construct a new list element
 pub fn list(
@@ -72,6 +75,8 @@ struct StateInner {
     scrollbar_drag_start_height: Option<Pixels>,
     measuring_behavior: ListMeasuringBehavior,
     pending_scroll: Option<PendingScroll>,
+    pending_wheel: Pixels,
+    uniform_height_hint: bool,
     follow_state: FollowState,
 }
 
@@ -324,6 +329,8 @@ impl ListState {
             scrollbar_drag_start_height: None,
             measuring_behavior: ListMeasuringBehavior::default(),
             pending_scroll: None,
+            pending_wheel: px(0.),
+            uniform_height_hint: false,
             follow_state: FollowState::default(),
         })));
         this.splice(0..0, item_count);
@@ -359,6 +366,8 @@ impl ListState {
             state.measuring_behavior.reset();
             state.logical_scroll_top = None;
             state.pending_scroll = None;
+            state.pending_wheel = px(0.);
+            state.uniform_height_hint = false;
             state.scrollbar_drag_start_height = None;
             state.items.summary().count
         };
@@ -380,6 +389,7 @@ impl ListState {
             height,
         };
         let mut state = self.0.borrow_mut();
+        state.uniform_height_hint = true;
         let new_items = state
             .items
             .iter()
@@ -484,6 +494,9 @@ impl ListState {
     pub fn is_scrolled_to_end(&self) -> Option<bool> {
         let state = self.0.borrow();
         let bounds = state.last_layout_bounds?;
+        if state.pending_wheel != px(0.) {
+            return Some(false);
+        }
         let summary = state.items.summary();
         if summary.has_unknown_height {
             return None;
@@ -540,6 +553,7 @@ impl ListState {
         }) = state.logical_scroll_top.as_mut()
         {
             if old_range.contains(item_ix) {
+                state.pending_wheel = px(0.);
                 *item_ix = old_range.start;
                 *offset_in_item = px(0.);
             } else if old_range.end <= *item_ix {
@@ -569,6 +583,7 @@ impl ListState {
 
         let current_offset = self.logical_scroll_top();
         let state = &mut *self.0.borrow_mut();
+        state.pending_wheel = px(0.);
 
         if distance < px(0.) {
             state.follow_state.stop_following();
@@ -602,6 +617,7 @@ impl ListState {
     /// growing (e.g. during streaming).
     pub fn scroll_to_end(&self) {
         let state = &mut *self.0.borrow_mut();
+        state.pending_wheel = px(0.);
         let item_count = state.items.summary().count;
         state.pending_scroll = None;
         state.logical_scroll_top = Some(ListOffset {
@@ -616,6 +632,7 @@ impl ListState {
     /// following occurs.
     pub fn set_follow_mode(&self, mode: FollowMode) {
         let state = &mut *self.0.borrow_mut();
+        state.pending_wheel = px(0.);
 
         match mode {
             FollowMode::Normal => {
@@ -659,6 +676,7 @@ impl ListState {
     /// Scroll the list to the given offset
     pub fn scroll_to(&self, mut scroll_top: ListOffset) {
         let state = &mut *self.0.borrow_mut();
+        state.pending_wheel = px(0.);
         let item_count = state.items.summary().count;
         if scroll_top.item_ix >= item_count {
             scroll_top.item_ix = item_count;
@@ -676,6 +694,7 @@ impl ListState {
     /// Scroll the list to the given item, such that the item is fully visible.
     pub fn scroll_to_reveal_item(&self, ix: usize) {
         let state = &mut *self.0.borrow_mut();
+        state.pending_wheel = px(0.);
 
         let mut scroll_top = state.logical_scroll_top();
         let height = state
@@ -742,6 +761,7 @@ impl ListState {
     /// as items in the overdraw get measured, and help offset scroll position changes accordingly.
     pub fn scrollbar_drag_started(&self) {
         let mut state = self.0.borrow_mut();
+        state.pending_wheel = px(0.);
         state.scrollbar_drag_start_height = Some(state.items.summary().height);
     }
 
@@ -765,6 +785,12 @@ impl ListState {
     /// Set the offset from the scrollbar
     pub fn set_offset_from_scrollbar(&self, point: Point<Pixels>) {
         self.0.borrow_mut().set_offset_from_scrollbar(point);
+    }
+
+    /// Scroll by a wheel delta (positive moves toward older rows).
+    /// Missing row measurements are resolved during layout, with bounded work.
+    pub fn scroll_wheel_pixels(&self, delta: Pixels) -> bool {
+        self.0.borrow_mut().scroll_wheel(-delta)
     }
 
     /// Returns the maximum scroll offset according to the items we have measured.
@@ -842,6 +868,108 @@ impl ListState {
 }
 
 impl StateInner {
+    fn scroll_wheel(&mut self, distance: Pixels) -> bool {
+        if self.reset || distance == px(0.) {
+            return false;
+        }
+        let before = self.logical_scroll_top();
+        let mut distance = self.pending_wheel + distance;
+        let padding = self.last_padding.unwrap_or_default();
+        let height = self.last_layout_bounds.unwrap_or_default().size.height;
+        let maximum =
+            (self.items.summary().height + padding.top + padding.bottom - height).max(px(0.));
+        let end_sentinel = before.item_ix == self.items.summary().count;
+        if end_sentinel && self.pending_wheel == px(0.) && distance < px(0.) {
+            // End requests point after the final row. Start the gesture at
+            // the viewport's top, measuring unknown trailing rows as needed.
+            distance -= (height - padding.top - padding.bottom).max(px(0.));
+        }
+        if distance > px(0.)
+            && wheel::at_end(&self.items, before, height - padding.top - padding.bottom)
+        {
+            let cancelled = self.pending_wheel != px(0.);
+            self.pending_wheel = px(0.);
+            return cancelled;
+        }
+        let (mut anchor, remaining) = if self.pending_scroll.is_some()
+            && let Some(anchor) = wheel::within_invalidated_row(&self.items, before, distance)
+        {
+            (anchor, px(0.))
+        } else if self.uniform_height_hint {
+            // Explicit uniform hints opt into approximate, logarithmic jumps.
+            // Variable-height histories do not use this measuring policy.
+            (
+                wheel::estimated(&self.items, before, distance, maximum),
+                px(0.),
+            )
+        } else {
+            wheel::advance(&mut self.items, before, distance, |_| None)
+        };
+        // Fully known lists can clamp immediately, including their padding.
+        if remaining == px(0.) && self.items.summary().unrendered_count == 0 {
+            let position = self.scroll_top(&anchor).min(maximum);
+            let (start, ..) =
+                self.items
+                    .find::<ListItemSummary, _>((), &Height(position), Bias::Right);
+            anchor = ListOffset {
+                item_ix: start.count,
+                offset_in_item: position - start.height,
+            };
+        }
+        let bottom = self.alignment == ListAlignment::Bottom
+            && remaining == px(0.)
+            && self.items.summary().unrendered_count == 0
+            && self.scroll_top(&anchor) >= maximum;
+        let origin = self.scroll_top(&before);
+        let origin = if end_sentinel {
+            origin.min(maximum)
+        } else {
+            origin
+        };
+        let changed = self.scroll_top(&anchor) != origin || self.pending_wheel != remaining;
+        if !changed {
+            // Preserve an end request through an inert gesture on fitting content.
+            return false;
+        }
+        self.pending_wheel = remaining;
+        self.rebase_pending_scroll(anchor);
+        self.logical_scroll_top = if bottom { None } else { Some(anchor) };
+        if changed && distance < px(0.) {
+            self.follow_state.stop_following();
+        }
+        changed
+    }
+
+    fn resolve_wheel(
+        &mut self,
+        width: Pixels,
+        render_item: &mut RenderItemFn,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if self.pending_wheel == px(0.) {
+            return;
+        }
+        let mut budget = 128usize;
+        let before = self.logical_scroll_top();
+        let (anchor, remaining) =
+            wheel::advance(&mut self.items, before, self.pending_wheel, |index| {
+                budget = budget.checked_sub(1)?;
+                let mut element = render_item(index, window, cx);
+                Some(element.layout_as_root(
+                    size(width.into(), AvailableSpace::MinContent),
+                    window,
+                    cx,
+                ))
+            });
+        self.logical_scroll_top = Some(anchor);
+        self.rebase_pending_scroll(anchor);
+        self.pending_wheel = remaining;
+        // Refresh controls derived from the committed anchor, and continue a
+        // large gesture on another frame when its measurement budget ran out.
+        window.request_animation_frame();
+    }
+
     /// Re-anchor a pending scroll adjustment from a remeasure onto a newly set
     /// scroll position, so it clamps to the remeasured item's new height on
     /// the next layout instead of reverting the scroll.
@@ -897,7 +1025,6 @@ impl StateInner {
 
     fn scroll(
         &mut self,
-        scroll_top: &ListOffset,
         height: Pixels,
         delta: Point<Pixels>,
         current_view: EntityId,
@@ -910,37 +1037,13 @@ impl StateInner {
             return;
         }
 
-        let padding = self.last_padding.unwrap_or_default();
-        let scroll_max =
-            (self.items.summary().height + padding.top + padding.bottom - height).max(px(0.));
-        let new_scroll_top = (self.scroll_top(scroll_top) - delta.y)
-            .max(px(0.))
-            .min(scroll_max);
-
-        if self.alignment == ListAlignment::Bottom && new_scroll_top == scroll_max {
-            self.pending_scroll = None;
-            self.logical_scroll_top = None;
-        } else {
-            let (start, ..) =
-                self.items
-                    .find::<ListItemSummary, _>((), &Height(new_scroll_top), Bias::Right);
-            let scroll_top = ListOffset {
-                item_ix: start.count,
-                offset_in_item: new_scroll_top - start.height,
-            };
-            // The user's scroll supersedes the position stashed by a
-            // remeasure; re-anchor the pending adjustment so it doesn't revert
-            // this scroll on the next layout.
-            self.rebase_pending_scroll(scroll_top);
-            self.logical_scroll_top = Some(scroll_top);
+        if !self.scroll_wheel(-delta.y) {
+            return;
         }
-
-        if delta.y > px(0.) {
-            self.follow_state.stop_following();
-        }
+        let scroll_top = self.logical_scroll_top();
 
         if let Some(handler) = self.scroll_handler.as_mut() {
-            let visible_range = Self::visible_range(&self.items, height, scroll_top);
+            let visible_range = Self::visible_range(&self.items, height, &scroll_top);
             handler(
                 &ListScrollEvent {
                     visible_range,
@@ -1205,10 +1308,21 @@ impl StateInner {
         new_items.append(cursor.suffix(), ());
         self.items = new_items;
 
+        if self.alignment == ListAlignment::Bottom
+            && self.pending_wheel == px(0.)
+            && wheel::at_end(
+                &self.items,
+                scroll_top,
+                available_height - padding.top - padding.bottom,
+            )
+        {
+            self.logical_scroll_top = None;
+        }
+
         // If follow_tail mode is on but the user scrolled away
         // (is_following is false), check whether the current scroll
         // position has returned to the bottom.
-        if self.follow_state.has_stopped_following() {
+        if self.follow_state.has_stopped_following() && self.pending_wheel == px(0.) {
             let padding = self.last_padding.unwrap_or_default();
             let total_height = self.items.summary().height + padding.top + padding.bottom;
             let scroll_offset = self.scroll_top(&scroll_top);
@@ -1369,6 +1483,7 @@ impl StateInner {
     // Scrollbar support
 
     fn set_offset_from_scrollbar(&mut self, point: Point<Pixels>) {
+        self.pending_wheel = px(0.);
         let Some(bounds) = self.last_layout_bounds else {
             return;
         };
@@ -1562,6 +1677,7 @@ impl Element for List {
         let padding = style
             .padding
             .to_pixels(bounds.size.into(), window.rem_size());
+        state.resolve_wheel(bounds.size.width, &mut self.render_item, window, cx);
         let layout =
             match state.prepaint_items(bounds, padding, true, &mut self.render_item, window, cx) {
                 Ok(layout) => layout,
@@ -1597,21 +1713,14 @@ impl Element for List {
         // div-based scroll containers.
         let list_state = self.state.clone();
         let height = bounds.size.height;
-        let scroll_top = prepaint.layout.scroll_top;
         let hitbox_id = prepaint.hitbox.id;
-        let mut accumulated_scroll_delta = ScrollDelta::default();
         window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
             if phase == DispatchPhase::Bubble && hitbox_id.should_handle_scroll(window) {
-                accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
-                let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
-                list_state.0.borrow_mut().scroll(
-                    &scroll_top,
-                    height,
-                    pixel_delta,
-                    current_view,
-                    window,
-                    cx,
-                )
+                let pixel_delta = event.delta.pixel_delta(px(20.));
+                list_state
+                    .0
+                    .borrow_mut()
+                    .scroll(height, pixel_delta, current_view, window, cx)
             }
         });
 

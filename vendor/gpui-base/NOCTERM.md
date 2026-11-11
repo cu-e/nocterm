@@ -69,3 +69,11 @@ such as its active panel's output, draws neither the other groups nor their tab 
 The area's own change draws all its groups again. `dock/tab_group.rs` observes the
 views of the panels it holds through Nocterm's `AnyView::observe` in the vendored
 `gpui-pre`, because its tab bar draws every panel's title, including inactive ones.
+
+`ScrollbarHandle::scroll_wheel` separates relative vertical wheel input from
+absolute thumb positioning. Its default retains the existing clamped native
+handle behavior. The ListState implementation uses GPUI's measured relative
+geometry, so ScrollableMask does not map wheel deltas through stale absolute
+content-height estimates. Horizontal routing and axis locks keep their existing
+behavior. Remove this patch when upstream provides equivalent relative wheel
+routing for variable-height lists.

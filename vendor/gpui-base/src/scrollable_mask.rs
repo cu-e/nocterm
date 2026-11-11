@@ -1,3 +1,4 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -254,25 +255,11 @@ impl<H: ScrollbarHandle + Clone> Element for ScrollableMask<H> {
                     }
 
                     if !is_horizontal {
-                        // The current offset must be clamped too: after a
-                        // bubbled event, the scrolled element's own listener
-                        // pushes the shared offset beyond the edge unclamped
-                        // (the div only clamps on prepaint), and that
-                        // transient overscroll would read as "room to scroll".
-                        // `ScrollbarHandle` has no `max_offset`; recover it from
-                        // the definition `content_size = viewport + max_offset`.
-                        let axis_max = (scroll_handle.content_size().height
-                            - scroll_handle.viewport_bounds().size.height)
-                            .max(px(0.));
-                        let current = offset.y.clamp(-axis_max, px(0.));
-                        let new_offset = (current + delta.y).clamp(-axis_max, px(0.));
-                        if new_offset == current {
+                        if !scroll_handle.scroll_wheel(delta.y) {
                             // At the edge or no overflow: bubble to the parent.
                             return;
                         }
 
-                        offset.y = new_offset;
-                        scroll_handle.set_offset(offset);
                         cx.notify(view_id);
                         cx.stop_propagation();
                         return;

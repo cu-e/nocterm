@@ -220,7 +220,8 @@
         "vendor/patches/gpui-base/0002-input-document-revision.patch",
         "vendor/patches/gpui-base/0003-cached-root-content.patch",
         "vendor/patches/gpui-base/0004-cached-tab-groups.patch",
-        "vendor/patches/gpui-base/0005-uncached-root-content.patch"
+        "vendor/patches/gpui-base/0005-uncached-root-content.patch",
+        "vendor/patches/gpui-base/0006-relative-wheel-geometry.patch"
       ],
       "omitted": []
     },
@@ -257,7 +258,8 @@
         "vendor/patches/gpui-pre/0001-nocterm.patch",
         "vendor/patches/gpui-pre/0002-nested-view-cache.patch",
         "vendor/patches/gpui-pre/0003-content-sized-cache.patch",
-        "vendor/patches/gpui-pre/0004-list-width-estimates.patch"
+        "vendor/patches/gpui-pre/0004-list-width-estimates.patch",
+        "vendor/patches/gpui-pre/0005-relative-wheel-geometry.patch"
       ],
       "omitted": []
     },

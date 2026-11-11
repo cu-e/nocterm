@@ -177,3 +177,22 @@ for scroll extent, matching explicit `remeasure_items` behavior. Initial uniform
 hints now survive the first prepaint, and native wheel jumps can reach unseen rows
 without eagerly constructing the whole list. The public integration regression
 `nocterm_list_estimates` covers first paint, a width change and bounded row rendering.
+
+## Relative wheel geometry
+
+`src/elements/list/wheel.rs` resolves relative wheel movement through actual row
+measurements. Measured spans still use logarithmic sum-tree seeks. Missing or
+invalidated heights are measured during prepaint, with at most 128 additional
+crossed-row measurements per pass; a scalar remainder schedules the next frame.
+The normal visible/overdraw layout has its existing independent work, including
+its existing handling of zero-height rows. A wheel step into a row that grew
+outside the viewport enters from the approached edge, rather than jumping over
+new content using a stale height hint. Explicit uniform-height hints retain their
+existing approximate jump policy. Absolute scrollbar positioning remains separate.
+Reset, explicit navigation, a thumb grab and removal of the anchored row discard
+the pending wheel remainder. Tail following waits for the remainder to finish;
+Bottom alignment retains its pinned-end semantics. Native events and the
+`scroll_wheel_pixels` API used by toolkit masks share this geometry.
+Application-level GUI regressions in `nocterm-agent` exercise cold history,
+offscreen growth, width changes, direction reversals, nested tool sections,
+continuation/idle frames and positioning cancellation through the public API.

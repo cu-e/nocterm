@@ -1,0 +1,52 @@
+diff --git a/NOCTERM.md b/NOCTERM.md
+index bc4c02e240f59b6b6d2adc469c603461cc107ceb..5cbde24cd150370a53faabad8c843c8bb4f4bb34 100644
+GIT binary patch
+delta 483
+zcmYMwL2lGQ5CzaBl2>qpFR{o5<^VYWBoatSfi)@Hf83?%?lN6v6WGilxCk3|Tp+hX
+zHW}EKN>%^;$Ctmaem=f9clUQgvz&WrH&VyU>ucW!pT8zD-@`delc1w9OXy0hY@vf>
+z>?_bZFM(sT(n;@@mmnf7rN?Zpp;om{2i%5Z<WZI!XbjQnh;t(NpdMN$3|Y#|5p{pl
+zr9BUNCRx?m0Us0bPCf2Ig3vN&7S@pM1s12{?T1gdSB^sQrE&ZhxtnN((Z0Qc8~%!=
+z&wPItKVdXFss)P7Po|MM#1X04G9`FOCN8>euo|rKI#H(-pof;Nq62QM>36Fk8O@em
+zC3S>6s3Y5Oa-7H+k*IBhKi}ouf8&o|&+uk$w(3X+zbv{+X5A`#YJV@iyIen7!zxWT
+M%_UD(4?lE&0OsYjYybcN
+
+delta 7
+Ocmdm^eo}eENkIS(K?7O<
+
+diff --git a/src/scrollable_mask.rs b/src/scrollable_mask.rs
+index 1acf1dcc56347b3a230f53484d3c07a1f66715d0..08c7d5717cc8a0aacee6a409900b012d991e7329 100644
+GIT binary patch
+delta 146
+zcmZ25g=umxQ-Hp{f^U9GW?E)yib7JQf?s}eNorB9LUMjyNl|7}X-R%jv9&^RYN~>t
+zzjKIdkgr~Dik^Z`W^!s?acYV}X<kZdk%D7EVsb{Ru92RB9@mC_YHFEj3W~+aMfo{7
+t@fnGEDLJWnP+oaPYHE%~N@`9?qF&|XiK;S_Cn&H_uGZ?@oU6S#4gj!8G+Y1x
+
+delta 677
+zcmZ{i!D<vi5QZ@*5s4bn1k57-8)0|WWT%6KAci@q;4xqh;=$dXof@aZO!v^;vpbWc
+zXFW*!0KS5F@#G^2zKOYeke=O@_29MZ|Lgm!s@;dR&!5)5oP6&+VhpDlVNz*L(n6)F
+zA&a6i7BOLx^P;2#R;ef8sU;2WK0dp9i!sDi9OsmPrX=mY`*mgOX5T=~BywRaNzz_<
+zhcT3u$;iNF1e0-1iTl=ceKBMVfqzcK6iVjJ9B7~<N=+pf(hl~)WdfUV>n%r&!D=pz
+zXyZ;vn~7F=j+v_R1e$mPZm_GBDqt1n)m?X~yX`g~tRIbEw(^+k7hEPejgfH!sW2{h
+zJ(`a{K8B`=?+sy*YE^jhV^8*3DHT#!p(Mr=B`rxiGUA*NVJc`=Ds8ccm2NG&>|ABM
+z7G_lN8WDndu2I&82v_?AgD@lUHuK}&8x9u}ER{>dC{~qBOfU#Nd+GT3^!~Mi*Fjka
+z2jRe7^gF$r?BDA~i~EL6*j_dmE+e^%cemZ|{^p^VOPVb<;gc@E#vT&NEf1T)|IAw=
+z{l^=%V5iQv-9c}|o%Y{58LZ!E5Ut2uH`sAMUSD@-CmZhh!`hXd%U_R!S8x6RhA#4L
+
+diff --git a/src/scrollbar.rs b/src/scrollbar.rs
+index 456addb4dfdeae55bf5cf5e97adf432e1bbdee06..89eee2d51329c5c1ba13a5ac43f5e7ad54f0634d 100644
+GIT binary patch
+delta 661
+zcma))PiqrV6vZh>w6P>Ex+q%k2%<CCylGuF1Ps!htwr32mzg`62k+1D-kq9QN)h)i
+zoP|qWxfT@tH17Qpg3Kh5?)2^+@1Ea1_i(>`>U{s)IZYBAyG-SZGE5gZaVe8GNS$S`
+zrWHFMh6qGBdH(d}(TihYGJ$6*B^xM1Wi#>^mohDA@L24N?w3yYa$J^r0f{s6tWv4*
+zsvy$HNV9Cjfdh<OAfuc-j0!>7*`OdbD;S1ks5}|6+y#InNuX?Ck{MhMWtn{GiIttf
+zla{Q`2+EcfLk36-`D7ZLu9(0@Wu_=yP^_F4EiShRsdrjWT2s-3Ksw)BdOO6anv)Lo
+z_{R2!hZh^YBaG1e3zz4CIEsfYqbW@cBj?Ig1|vjmR}&gpo&@!pqFAgJ8q|lkcCW8q
+z_4wVL%e3;IEMtTvS1d%Tr75Gqinxbz9_@?x%Di=FGi<GYw6q=nTdnddfcqn?3Fm+J
+zY048<-XfPeP>uK7^~bxN`e%Q$?r-&aO#}OiTE)fJ-<!X#-TSX3>vP(=-G)6W+jyh)
+W5aK1MTOZsUzTN5n*y(TVzWD=Kv)3#D
+
+delta 28
+kcmdnCjBU#Twv7R7T$`8j+-I45gV(rON@%;35Ti^Z0Hdu5@Bjb+
+
+# End of generated Nocterm binary patch.
