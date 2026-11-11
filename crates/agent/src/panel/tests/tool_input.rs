@@ -1,4 +1,5 @@
 use super::*;
+mod scrolling;
 use gpui_kit::px;
 use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
 use nocterm_ai::model::tools::{ToolChanges, ToolPatch, ToolRecord, ToolStatus};
@@ -306,51 +307,6 @@ fn click_reveals_literal_source_copy_and_collapse_without_changing_result(cx: &m
     cx.update_window(f.handle, |_, window, _| {
         assert!(window.try_find(("tool-input", 0usize)).is_none());
         assert!(window.try_find(("tool-output", 0usize)).is_none());
-    })
-    .unwrap();
-}
-
-#[gpui_kit::test]
-fn large_input_is_bounded_scrollable_and_copied_in_full(cx: &mut TestAppContext) {
-    let script = format!(
-        "{}\n{}\nfinal line\n",
-        "long_line_".repeat(100),
-        "\tprint('unchanged')\n".repeat(13000)
-    );
-    assert!(script.len() > 200 * 1024);
-    let f = tool_fixture(cx, "Large input", Some(json!(script)));
-    cx.update_window(f.handle, |_, window, cx| {
-        window.click(("tool-call", 0usize), cx)
-    })
-    .unwrap();
-    settle(&f, cx);
-    cx.update_window(f.handle, |_, window, cx| {
-        let scroll = window.find(("tool-input-scroll", 0usize)).bounds();
-        let code = window.find(("tool-input-code", 0usize)).bounds();
-        let entry = window.find(("agent-entry", 0usize)).bounds();
-        assert!(scroll.size.height <= px(240.));
-        assert!(scroll.right() <= entry.right() + px(1.));
-        assert!(code.size.height > scroll.size.height * 2.);
-        assert!(
-            code.size.width > scroll.size.width,
-            "long code lines should scroll horizontally: {code:?}, {scroll:?}"
-        );
-        window.scroll(
-            ("tool-input-scroll", 0usize),
-            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(-80.), px(0.))),
-            cx,
-        );
-        window.scroll(
-            ("tool-input-scroll", 0usize),
-            gpui_kit::ScrollDelta::Pixels(gpui_kit::point(px(0.), px(-80.))),
-            cx,
-        );
-        window.render_frame(cx);
-        let moved = window.find(("tool-input-code", 0usize)).bounds();
-        assert!(moved.origin.x < code.origin.x && moved.origin.y < code.origin.y);
-        assert_eq!(window.find(("tool-input-scroll", 0usize)).bounds(), scroll);
-        window.click(("copy-tool-input", 0usize), cx);
-        assert_eq!(cx.read_from_clipboard().unwrap().text().unwrap(), script);
     })
     .unwrap();
 }

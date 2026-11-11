@@ -26,6 +26,7 @@ pub(super) enum PreviewError {
     #[error("{0}")]
     Codec(#[from] nocterm_ai::images::ImageCodecError),
 }
+mod literal_viewport;
 pub(super) mod tool_input;
 pub(super) mod tool_output;
 

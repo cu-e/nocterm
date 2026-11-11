@@ -1,6 +1,6 @@
 //! Chat controls use the existing virtual scroller instead of a second viewport.
 use super::*;
-use gpui_kit::{ListOffset, point, px};
+use gpui_kit::{InputEvent as _, ListOffset, point, px};
 use nocterm_ai::model::session::{SessionNotice, SessionUpdate};
 use nocterm_ai::model::tools::ToolRecord;
 use nocterm_ai::thread::Entry;
@@ -540,6 +540,40 @@ fn streaming_keeps_reader_scroll_until_jump_to_latest(cx: &mut TestAppContext) {
     })
     .unwrap();
     complete_active(&f, cx);
+}
+
+#[gpui_kit::test]
+fn upward_wheel_bursts_move_a_tall_reply_by_the_requested_pixels(cx: &mut TestAppContext) {
+    let f = fixture(cx);
+    transcript(&f, cx);
+    scroll_to(&f, 7, cx);
+    cx.update_window(f.handle, |_, window, cx| {
+        window.scroll(
+            "agent-transcript-area",
+            gpui_kit::ScrollDelta::Pixels(point(px(0.), px(-160.))),
+            cx,
+        );
+        window.hover("agent-transcript-area", cx);
+        let before = window.find(("agent-entry", 7usize)).bounds();
+        let position = window.find("agent-transcript-area").bounds().center();
+        for _ in 0..3 {
+            window.dispatch_event(
+                gpui_kit::ScrollWheelEvent {
+                    position,
+                    delta: gpui_kit::ScrollDelta::Pixels(point(px(0.), px(20.))),
+                    ..Default::default()
+                }
+                .to_platform_input(),
+                cx,
+            );
+        }
+        window.render_frame(cx);
+        assert_eq!(
+            window.find(("agent-entry", 7usize)).bounds().top(),
+            before.top() + px(60.)
+        );
+    })
+    .unwrap();
 }
 
 #[gpui_kit::test]
