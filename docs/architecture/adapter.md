@@ -300,6 +300,14 @@ See [ADR0022](../adr/0022-agent-storage-owners.md).
 
 ## Agent usage boundary
 
+The authenticated MCP relay belongs to `nocterm-acp`. Accepted sockets use blocking
+reads. Its five-second authentication deadline is cleared on the retained buffered
+reader itself; pipelined MCP bytes survive authentication and established sessions
+may idle until their registration is revoked. Connection failures log only opaque
+connection IDs, I/O error kinds and native codes. Debug lifecycle events correlate
+authentication, EOF, registration revocation and bridge shutdown without recording
+tokens or protocol contents.
+
 The ACP adapter maps the connected agent's context usage, token totals and usage
 metadata into AI's neutral records. No adapter in Nocterm reads provider sign-in
 tokens or session logs, or requests private provider account endpoints. The agent

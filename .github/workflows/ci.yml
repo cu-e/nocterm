@@ -361,6 +361,9 @@ jobs:
       - name: Test native chat history on Windows
         if: runner.os == 'Windows'
         run: cargo test --locked -p nocterm --test native_history
+      - name: Test authenticated MCP bridge after idle and refresh on Windows
+        if: runner.os == 'Windows'
+        run: cargo test --locked -p nocterm-acp --lib bridge::tests
       - name: Check the application builds for Windows
         if: runner.os == 'Windows'
         run: cargo check --locked -p nocterm
