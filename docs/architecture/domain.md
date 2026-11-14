@@ -375,6 +375,11 @@ a later launch. Native filesystem/home/PATH resolution belongs to the ACP adapte
 
 ## Agent transcript and configuration rules
 
+`nocterm-ai::thread::export::conversation_text` formats neutral entries for plain-text
+clipboard export. It preserves complete text, reasoning, tool inputs/outputs and
+diffs, representing binary content as references. It performs no I/O and does not
+select chats, load history or include unsubmitted drafts and queued prompts.
+
 `nocterm-ai::thread::ThreadState` reduces conversation entries, timestamps, plan,
 usage, token counts and title. Per-chat options, modes, command revisions and
 reconciliation belong to the feature's private `ChatConfig`. Existing

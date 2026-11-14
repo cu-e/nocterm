@@ -96,6 +96,7 @@ impl ShellRenderer {
     pub(super) fn header(
         agent: Option<gpui_kit::component::Icon>,
         title: SharedString,
+        actions: Option<gpui_kit::AnyElement>,
         history: bool,
         maximized: bool,
         menus: &MenuView,
@@ -121,7 +122,14 @@ impl ShellRenderer {
                         .text_color(cx.theme().muted_foreground),
                 }
             })
-            .child(Self::title(title, cx))
+            .child(
+                h_flex()
+                    .min_w_0()
+                    .gap_1()
+                    .child(Self::title(title, cx))
+                    .children(actions),
+            )
+            .child(div().flex_1())
             .child(
                 Button::new("agent-history")
                     .ghost()
@@ -168,7 +176,6 @@ impl ShellRenderer {
         div()
             .id("agent-chat-title")
             .test_support()
-            .flex_1()
             .min_w_0()
             .truncate()
             .tooltip({

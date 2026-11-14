@@ -17,6 +17,7 @@ mod attach_files;
 mod attachments;
 mod bindings;
 mod chat;
+mod chat_actions;
 mod chat_servers;
 pub(crate) mod commands;
 mod composer;
@@ -577,6 +578,9 @@ impl Render for AgentPanel {
         let header = shell::ShellRenderer::header(
             agent,
             self.title(cx),
+            current
+                .clone()
+                .map(|thread| chat_actions::ChatActions::button(thread, cx)),
             self.layout.history(),
             self.layout.maximized(),
             &self.menus,
