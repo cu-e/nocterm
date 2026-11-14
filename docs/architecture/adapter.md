@@ -316,6 +316,13 @@ owns its authentication, requests and state files
 
 ## Agent workspace and sandbox
 
+On Windows the launcher uses case-insensitive environment names, preserves the
+system search path and starts agents and `taskkill` without a console window.
+Bare commands missing from `PATH` are also searched in the usual Node.js install
+locations; a matching directory is prepended for child scripts. Resolved Windows
+paths use the ordinary drive form accepted by `cmd.exe`
+([ADR0163](../adr/0163-windows-agents-start-hidden-with-the-systems-search-path.md)).
+
 `nocterm-acp::NativeWorkdirResolver` creates the explicit private default workspace
 through the shared foundation helper and canonicalizes user-selected roots. One
 private path resolver supplies facts to AI's pure policy and revalidates them before

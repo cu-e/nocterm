@@ -158,3 +158,4 @@ acceptance; a later record supersedes an earlier one.
 | [0160](0160-ci-compiles-each-kind-once-and-tests-the-plugin-feature-where-it-changes-code.md) | CI compiles each kind of build once (lint checks, build and tests), tests `user-plugins` only in the packages that declare it, saves caches from `dev` and `master`, and builds installers only for releases |
 | [0161](0161-user-plugins-ship-in-every-build.md) | User plugins ship in every build: the `user-plugins` cargo feature and the compile-out rule are gone, the `[plugins] user_plugins` switch and `--safe-mode` still decide whether a run loads them (supersedes the compile-out part of 0093) |
 | [0162](0162-windows-held-directory-capabilities.md) | Windows holds directory ancestry and guards atomic publication against reparse conversion |
+| [0163](0163-windows-agents-start-hidden-with-the-systems-search-path.md) | Windows agents start hidden and use the system search path and usual Node.js locations |

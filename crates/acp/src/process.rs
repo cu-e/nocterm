@@ -8,6 +8,7 @@ use std::{
 use nocterm_ai::{AgentError, ConnectRequest};
 
 mod lifecycle;
+mod locations;
 pub(crate) use lifecycle::{CleanupError, ProcessGroup};
 #[cfg(target_os = "linux")]
 mod host;
@@ -26,20 +27,29 @@ pub(crate) fn spawn(
     request: &ConnectRequest,
     helper: Option<&Path>,
 ) -> Result<Spawned, AgentError> {
-    let env = nocterm_ai::env::sanitized_environment(
+    let mut env = nocterm_ai::env::sanitized_environment(
         &request.launch,
         std::env::vars_os()
             .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?))),
     );
     let secrets = secret_values(request, &env);
-    let executable = resolve(&request.launch.command, &env, &request.working_directory)
-        .ok_or_else(|| {
-            AgentError::Io(nocterm_ai::redact::redact(&format!(
-                "Cannot find agent command '{}'. Configure an absolute executable path; inherited PATH is {}",
-                request.launch.command,
-                env.get("PATH").map_or("<unset>", String::as_str)
-            )))
-        })?;
+    let executable = match resolve(&request.launch.command, &env, &request.working_directory) {
+        Some(executable) => executable,
+        None => {
+            let (executable, directory) = resolve_fallback(&request.launch.command, &env)
+                .ok_or_else(|| {
+                    AgentError::Io(nocterm_ai::redact::redact(&format!(
+                        "Cannot find agent command '{}' in PATH or the usual Node.js locations. \
+                         Install it or configure an absolute executable path; inherited PATH is {}",
+                        request.launch.command,
+                        env.get("PATH").map_or("<unset>", String::as_str)
+                    )))
+                })?;
+            // Scripts such as npx.cmd start `node` from the same search path.
+            prepend_path(&mut env, directory);
+            executable
+        }
+    };
     let (executable, process_args) = match &request.sandbox {
         None => (executable, request.launch.args.clone()),
         Some(policy) => crate::sandbox::SandboxLauncher::prepare(
@@ -100,6 +110,14 @@ fn spawn_child(
         use std::os::unix::process::CommandExt as _;
         command.process_group(0);
     }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        // The application has no console of its own. Without this flag Windows opens
+        // a console window for every console agent (npx.cmd, node) it starts. The
+        // hidden console is inherited, so the agent's own tools open none either.
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
     async_process::Command::from(command)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -129,6 +147,62 @@ fn secret_values(request: &ConnectRequest, env: &BTreeMap<String, String>) -> Ar
     Arc::new(values)
 }
 
+/// `CREATE_NO_WINDOW` from the Windows process creation flags.
+#[cfg(windows)]
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Look for a bare command in the usual install locations once `PATH` failed.
+fn resolve_fallback(command: &str, env: &BTreeMap<String, String>) -> Option<(PathBuf, PathBuf)> {
+    if Path::new(command).components().count() != 1 || Path::new(command).is_absolute() {
+        return None;
+    }
+    locations::fallback(env)
+        .into_iter()
+        .find_map(|directory| Some((find_in(&directory, command, env)?, directory)))
+}
+fn prepend_path(env: &mut BTreeMap<String, String>, directory: PathBuf) {
+    let inherited = env.get("PATH").cloned().unwrap_or_default();
+    let paths = std::iter::once(directory).chain(std::env::split_paths(&inherited));
+    if let Ok(path) = std::env::join_paths(paths) {
+        env.insert("PATH".into(), path.to_string_lossy().into_owned());
+    }
+}
+fn find_in(directory: &Path, command: &str, env: &BTreeMap<String, String>) -> Option<PathBuf> {
+    let candidate = directory.join(command);
+    if executable(&candidate) {
+        return canonical(&candidate);
+    }
+    #[cfg(windows)]
+    for suffix in env
+        .get("PATHEXT")
+        .map_or(".EXE;.CMD;.BAT", String::as_str)
+        .split(';')
+        .filter(|suffix| !suffix.is_empty())
+    {
+        let candidate = directory.join(format!("{command}{suffix}"));
+        if executable(&candidate) {
+            return canonical(&candidate);
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = env;
+    None
+}
+
+/// The resolved program path. On Windows it keeps the ordinary `C:\` form where
+/// possible: `cmd.exe`, which runs `.cmd` scripts such as npx.cmd, does not accept
+/// verbatim `\\?\` paths.
+fn canonical(path: &Path) -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        dunce::canonicalize(path).ok()
+    }
+    #[cfg(not(windows))]
+    {
+        path.canonicalize().ok()
+    }
+}
+
 fn resolve(
     command: &str,
     env: &BTreeMap<String, String>,
@@ -141,9 +215,7 @@ fn resolve(
         } else {
             working_directory.join(path)
         };
-        return executable(&path)
-            .then(|| path.canonicalize().ok())
-            .flatten();
+        return executable(&path).then(|| canonical(&path)).flatten();
     }
     let paths = env.get("PATH")?;
     for directory in std::env::split_paths(paths) {
@@ -156,20 +228,8 @@ fn resolve(
         } else {
             working_directory.join(directory)
         };
-        let candidate = directory.join(command);
-        if executable(&candidate) {
-            return candidate.canonicalize().ok();
-        }
-        #[cfg(windows)]
-        for suffix in env
-            .get("PATHEXT")
-            .map_or(".EXE;.CMD;.BAT", String::as_str)
-            .split(';')
-        {
-            let candidate = directory.join(format!("{command}{suffix}"));
-            if executable(&candidate) {
-                return candidate.canonicalize().ok();
-            }
+        if let Some(found) = find_in(&directory, command, env) {
+            return Some(found);
         }
     }
     None

@@ -45,8 +45,11 @@ configured defaults, not proof that all agents have been authenticated or
 successfully tested on your machine.
 
 Desktop applications may receive a different PATH from an interactive shell,
-particularly with nvm. Set an absolute executable path in AI Settings when the
-program cannot be found. Arguments are a JSON array of individual strings;
+particularly with nvm. When a bare command such as `npx` is not on PATH, Nocterm
+also looks in the usual Node.js locations: nvm-windows, Volta, `Program Files\nodejs`,
+the per-user Node.js install, npm's global directory, Scoop and Chocolatey on Windows,
+and Homebrew and Volta on macOS. Set an absolute executable path in AI Settings when the
+program still cannot be found. On Windows agents start without a console window. Arguments are a JSON array of individual strings;
 Nocterm does not run them through a shell. A blank override keeps the built-in
 value; an empty arguments array removes the built-in arguments. Custom agent ids
 use letters, numbers, underscore or dash and need an executable.
