@@ -102,9 +102,13 @@ Saved history starts as a catalogue of at most 200 metadata rows, with transcrip
 files as the source of truth. Obsolete metadata sidecars are ignored. Opening or
 editing a row loads its document in the background. A shared loading permit
 bounds hydration and archive search, including payloads awaiting GUI delivery;
-inactive, clean documents can be evicted under a conservative 64 MiB resident
+inactive, clean documents can be evicted under a conservative 1 GiB installation
 budget. Collection limits and a structural preflight also bound allocation from
-small JSON elements, independently of the 32 MiB file limit.
+small JSON elements: a document is limited to 256 MiB of structural cost and
+128 MiB encoded, with up to 20,000 saved rows. The installation budget is shared
+across windows and accounts, rather than copied from the single-document cap
+([ADR0164](../adr/0164-chat-history-capacity.md)). These are admission ceilings,
+not eager memory allocations or an aggregate disk quota.
 
 Workspace chat scope selects document ownership, history and the original tool
 seat. All scopes use the existing local ACP connector, workdir preparation,
@@ -143,6 +147,10 @@ the original primary StoreError in its standard source chain; the secondary
 diagnostic stays separately inspectable, and both messages remain displayed. Normal detach leaves a
 client registered when admission fails so its desired candidate can still be retried.
 An older revision from the same current owner cannot replace a newer admitted intent.
+`PersistenceFailure` classifies the original typed cause chain, including failures
+wrapped by the writer. Memory pressure, busy history, a conversation's own limit,
+unsupported storage, full disks and denied access remain distinct. The chat status
+offers recovery guidance; capacity counts remain in typed errors and diagnostic logs.
 Successful detach admission acknowledges its original client outside the Runtime
 borrow even after unregistering it; candidate revision validation remains feature-owned.
 AI disable finalizes session transitions before taking that durable capture.
@@ -152,10 +160,10 @@ executor and gate. Ready capacity is 32 key tokens, with one newest retained
 intent per dirty document; a full ready queue never drops accepted work. This is
 not a 32-document limit or a constant total payload budget: client history/queue
 validation owns per-document admission, and repository codecs retain the existing
-32 MiB encoded/64 MiB structural bounds. The service retains one newest payload
+128 MiB encoded/256 MiB structural bounds. The service retains one newest payload
 per dirty key plus its immutable active operation; failed closed documents remain
-until retry or capture. The UI's 64 MiB resident archive policy bounds hydrated
-archive display, independently of dirty persistence admission. Exact
+until retry or capture. The installation's 1 GiB history admission accounts for
+hydrated display and retained immutable writer payloads. Exact
 physical key/owner/revision stamps are recorded before foreground acknowledgement.
 Clean closed keys release their payloads; failed dirty keys remain through retry
 or final capture. The existing snapshot receipt distinction is preserved: an

@@ -163,7 +163,7 @@ mod tests {
             assert!(resident_bytes(&state).unwrap() <= bytes);
             accepted += 1;
         }
-        assert!(accepted > 1 && accepted < 64);
+        assert!(accepted > 1 && accepted < MAX_RESIDENT_BYTES / (1024 * 1024));
         assert!(matches!(
             admit_update(&state, bytes, &update),
             Err(HistoryCodecError::StructuralLimit)

@@ -188,7 +188,7 @@ fn all_account_context_views_consume_one_installation_catalog_budget(cx: &mut Te
 
 #[gpui::test]
 fn resident_history_budget_is_shared_across_accounts_and_windows(cx: &mut TestAppContext) {
-    const MIB: usize = 1024 * 1024;
+    let share = crate::history_admission::MAX_NORMAL_HISTORY_BYTES / 3;
     let (base, _directory, _, _, _) = contexts::scoped_fixture(cx);
     let a_factory = ScriptedLocalAccountFactory::default();
     let b_factory = ScriptedLocalAccountFactory::default();
@@ -200,7 +200,7 @@ fn resident_history_budget_is_shared_across_accounts_and_windows(cx: &mut TestAp
     let requester = ProbeClient::new(cx, chat(&b, "B"));
     first
         .history
-        .set(Some(crate::HistoryUsage::new(48 * MIB, 1, true)));
+        .set(Some(crate::HistoryUsage::new(share * 2, 1, true)));
     first.allow_history_eviction.set(true);
     requester
         .history
@@ -209,13 +209,13 @@ fn resident_history_budget_is_shared_across_accounts_and_windows(cx: &mut TestAp
         ownership::register_bound(&a, first.clone(), cx).unwrap();
         ownership::register_bound(&b, requester.clone(), cx).unwrap();
         assert!(matches!(
-            b.admit_history(requester.id(), 24 * MIB, cx),
+            b.admit_history(requester.id(), share * 2, cx),
             Err(AgentStorageError::ResidentCapacity { .. })
         ));
         first
             .history
-            .set(Some(crate::HistoryUsage::new(48 * MIB, 1, false)));
-        b.admit_history(requester.id(), 24 * MIB, cx).unwrap();
+            .set(Some(crate::HistoryUsage::new(share * 2, 1, false)));
+        b.admit_history(requester.id(), share * 2, cx).unwrap();
         assert!(first.history.get().is_none());
     });
 }

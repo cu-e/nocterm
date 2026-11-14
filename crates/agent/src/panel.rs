@@ -207,6 +207,7 @@ impl AgentPanel {
     /// account notice, any other the error line.
     fn load_history(&mut self, cx: &mut Context<Self>) {
         if let Err(error) = self.chats.host().runtime().ensure_history(cx) {
+            tracing::warn!(error = %nocterm_ai::redact::redact(&format!("{error:?}")), "could not load chat history");
             match AccountNotice::from_catalog(&error) {
                 Some(notice) => self.notices.set_account(Some(notice)),
                 None => self.notices.set_error(Some(error.to_string())),

@@ -702,9 +702,11 @@ impl AgentThread {
         cx: &mut Context<Self>,
     ) {
         let message = super::notice::persistence_failure(&error);
+        let diagnostic = nocterm_ai::redact::redact(&format!("{error:?}"));
         if !self.state.failed(revision, error) {
             return;
         }
+        tracing::warn!(error = %diagnostic, "could not save chat");
         self.notice.present(message);
         self.composer.pause();
         self.notice.mark_error();

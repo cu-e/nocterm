@@ -1,6 +1,7 @@
 use super::*;
 use nocterm_ai::{history::ContextId, local_environment::LocalEnvironment};
-use std::{path::PathBuf, sync::Arc};
+use nocterm_session::local_fs::LocalFsError;
+use std::{error::Error, io, path::PathBuf, sync::Arc};
 
 fn snapshot_failure(error: impl Error + Send + Sync + 'static) -> AgentPersistenceError {
     nocterm_store::StoreError::backend(error).into()
@@ -61,4 +62,38 @@ fn denied_storage_reports_access_and_other_write_failures_keep_the_cause() {
         "{message}"
     );
     assert!(!message.contains("disk space"), "{message}");
+}
+
+#[test]
+fn history_pressure_gives_recovery_without_internal_byte_counts() {
+    let cases = [
+        (
+            AgentStorageError::ResidentCapacity {
+                retained: 65_410_245,
+                incoming: 14_188_544,
+                limit: 66_060_288,
+            },
+            "history needs more memory. Close an unused chat and try again.",
+        ),
+        (
+            AgentStorageError::PayloadCapacity,
+            "history is busy. Close an unused chat or try again shortly.",
+        ),
+        (
+            nocterm_ai::history::HistoryCodecError::StructuralLimit.into(),
+            "this conversation is too large. Start a new chat to continue.",
+        ),
+    ];
+    for (error, guidance) in cases {
+        assert_eq!(
+            load_failure(&error),
+            format!("Could not open saved chat: {guidance}")
+        );
+        for failure in [error.clone().into(), snapshot_failure(error)] {
+            assert_eq!(
+                persistence_failure(&failure),
+                format!("Could not save chat: {guidance} Queued messages are retained.")
+            );
+        }
+    }
 }

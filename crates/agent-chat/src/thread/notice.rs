@@ -1,8 +1,6 @@
 //! Status text and its error emphasis have one presentation owner.
-use crate::runtime::AgentPersistenceError;
+use crate::runtime::{AgentPersistenceError, PersistenceFailure};
 use nocterm_ai::storage::AgentStorageError;
-use nocterm_session::local_fs::LocalFsError;
-use std::{error::Error, io};
 
 pub(super) struct ThreadNotice {
     text: String,
@@ -39,48 +37,42 @@ impl ThreadNotice {
 }
 
 pub(super) fn persistence_failure(error: &AgentPersistenceError) -> String {
-    // The persistence wrapper is transparent: start at its concrete inner error
-    // so a leaf storage failure remains available to the recovery instruction.
-    let cause: &(dyn Error + 'static) = match error {
-        AgentPersistenceError::Storage(error) => error,
-        AgentPersistenceError::Worker(error) => error,
+    let failure = PersistenceFailure::of(error);
+    if let Some(guidance) = history_guidance(failure) {
+        return format!("Could not save chat: {guidance} Queued messages are retained.");
+    }
+    let recovery = match failure {
+        PersistenceFailure::Unsupported => {
+            "this build lacks the native storage support needed for this chat. Update Nocterm before retrying."
+        }
+        PersistenceFailure::StorageFull => "free disk space before retrying.",
+        PersistenceFailure::AccessDenied => {
+            "allow access to the chat storage directory before retrying."
+        }
+        _ => "resolve the storage error before retrying.",
     };
-    let recovery = persistence_recovery(cause);
     format!("Could not save chat: {error}. Queued messages are retained; {recovery}")
 }
 
-fn persistence_recovery(mut cause: &(dyn Error + 'static)) -> &'static str {
-    loop {
-        if matches!(
-            cause.downcast_ref::<AgentStorageError>(),
-            Some(
-                AgentStorageError::EnvironmentUnsupported(_)
-                    | AgentStorageError::ScopeUnsupported(_)
-            )
-        ) {
-            return "this build lacks the native storage support needed for this chat. Update Nocterm before retrying.";
+pub(super) fn load_failure(error: &AgentStorageError) -> String {
+    if let Some(guidance) = history_guidance(PersistenceFailure::of_storage(error)) {
+        return format!("Could not open saved chat: {guidance}");
+    }
+    format!("Could not open saved chat: {error}")
+}
+
+fn history_guidance(failure: PersistenceFailure) -> Option<&'static str> {
+    match failure {
+        PersistenceFailure::HistoryMemory => {
+            Some("history needs more memory. Close an unused chat and try again.")
         }
-        if let Some(error) = cause.downcast_ref::<io::Error>() {
-            match error.kind() {
-                io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded => {
-                    return "free disk space before retrying.";
-                }
-                io::ErrorKind::PermissionDenied => {
-                    return "allow access to the chat storage directory before retrying.";
-                }
-                _ => {}
-            }
+        PersistenceFailure::HistoryBusy => {
+            Some("history is busy. Close an unused chat or try again shortly.")
         }
-        if matches!(
-            cause.downcast_ref::<LocalFsError>(),
-            Some(LocalFsError::PermissionDenied(_))
-        ) {
-            return "allow access to the chat storage directory before retrying.";
+        PersistenceFailure::ChatLimit => {
+            Some("this conversation is too large. Start a new chat to continue.")
         }
-        let Some(source) = cause.source() else {
-            return "resolve the storage error before retrying.";
-        };
-        cause = source;
+        _ => None,
     }
 }
 

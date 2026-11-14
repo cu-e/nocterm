@@ -1,6 +1,30 @@
 //! Catalog generations, shared slots and retained metadata allocation.
 use super::*;
-use crate::history_admission::HistoryAdmissionError;
+use crate::history_admission::{HistoryAdmissionError, MAX_NORMAL_HISTORY_BYTES};
+
+#[gpui::test]
+fn catalogs_and_saved_chats_remain_available_with_a_busy_installation(cx: &mut TestAppContext) {
+    let (general, _directory, _, _, _) = scoped_fixture(cx);
+    cx.run_until_parked();
+    let before = cx.update(|cx| general.catalog_snapshot(cx).unwrap());
+    let admission = cx.update(|cx| general.history_admission(cx));
+    // The reported failure had 57,307,727 bytes retained before a 14 MiB scan.
+    let retained = cx.update(|cx| admission.reserve_unowned_bytes(57_307_727, cx).unwrap());
+    cx.update(|cx| general.try_reload_history(cx).unwrap());
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let after = general.catalog_snapshot(cx).unwrap();
+        assert!(after.generation() > before.generation());
+        assert_eq!(after.rows().len(), before.rows().len());
+        let selected_chat = admission.reserve_unowned_bytes(22_192_522, cx).unwrap();
+        // Other open windows still have generous headroom, without allocating a buffer.
+        let other_windows = admission
+            .reserve_unowned_bytes(500 * 1024 * 1024, cx)
+            .unwrap();
+        assert_eq!(retained.bytes(), 57_307_727);
+        drop((selected_chat, other_windows));
+    });
+}
 
 #[gpui::test]
 fn retained_catalog_generations_consume_the_installation_limit_until_dropped(
@@ -42,6 +66,15 @@ fn retained_catalog_generations_consume_the_installation_limit_until_dropped(
 #[gpui::test]
 fn pending_catalog_requests_share_the_same_installation_byte_capacity(cx: &mut TestAppContext) {
     let (general, _directory, repository, _, _) = scoped_fixture(cx);
+    let admission = cx.update(|cx| general.history_admission(cx));
+    let _other_work = cx.update(|cx| {
+        admission
+            .reserve_unowned_bytes(
+                MAX_NORMAL_HISTORY_BYTES - 4 * crate::catalog::CATALOG_WORK_BYTES,
+                cx,
+            )
+            .unwrap()
+    });
     // General's initial scan already owns its worst-case metadata allocation,
     // including before the background work's first poll.
     let mut admitted = 1;
@@ -162,7 +195,10 @@ fn replacing_a_loading_generation_keeps_its_native_read_budget_until_actual_comp
     let generation = latest.generation();
     cx.update(|cx| {
         assert!(matches!(
-            admission.reserve_unowned_bytes(56 * 1024 * 1024, cx),
+            admission.reserve_unowned_bytes(
+                MAX_NORMAL_HISTORY_BYTES - crate::catalog::CATALOG_WORK_BYTES / 2,
+                cx
+            ),
             Err(HistoryAdmissionError::ResidentCapacity { .. })
         ))
     });
@@ -175,7 +211,10 @@ fn replacing_a_loading_generation_keeps_its_native_read_budget_until_actual_comp
     cx.update(|cx| {
         drop(
             admission
-                .reserve_unowned_bytes(56 * 1024 * 1024, cx)
+                .reserve_unowned_bytes(
+                    MAX_NORMAL_HISTORY_BYTES - crate::catalog::CATALOG_WORK_BYTES / 2,
+                    cx,
+                )
                 .unwrap(),
         )
     });
@@ -190,7 +229,10 @@ fn catalog_work_observes_the_same_retained_remote_bytes_before_native_start(
     let admission = cx.update(|cx| general.history_admission(cx));
     let pending = cx.update(|cx| {
         admission
-            .reserve_unowned_bytes(56 * 1024 * 1024, cx)
+            .reserve_unowned_bytes(
+                MAX_NORMAL_HISTORY_BYTES - crate::catalog::CATALOG_WORK_BYTES / 2,
+                cx,
+            )
             .unwrap()
     });
     let attempts = repository.operations().len();
@@ -288,4 +330,36 @@ fn byte_pressure_reclaims_every_cold_scope_offered_by_one_catalog_owner(cx: &mut
     assert!(cx.update(|cx| general.catalog_snapshot(cx)).is_none());
     assert!(cx.update(|cx| project.catalog_snapshot(cx)).is_none());
     drop(incoming);
+}
+#[test]
+fn memory_pressure_explains_recovery_and_preserves_technical_details() {
+    let errors: Vec<Box<dyn std::error::Error>> = vec![
+        Box::new(crate::CatalogLoadError::ResidentCapacity {
+            retained: 65_410_245,
+            incoming: 14_188_544,
+            limit: 66_060_288,
+        }),
+        Box::new(
+            crate::history_admission::HistoryAdmissionError::ResidentCapacity {
+                retained: 65_410_245,
+                incoming: 14_188_544,
+                limit: 66_060_288,
+            },
+        ),
+        Box::new(nocterm_ai::storage::AgentStorageError::ResidentCapacity {
+            retained: 65_410_245,
+            incoming: 14_188_544,
+            limit: 66_060_288,
+        }),
+    ];
+    for error in errors {
+        assert_eq!(
+            error.to_string(),
+            "Chat history needs more memory. Close an unused chat and try again."
+        );
+        let diagnostic = format!("{error:?}");
+        for count in ["65410245", "14188544", "66060288"] {
+            assert!(diagnostic.contains(count), "{diagnostic}");
+        }
+    }
 }

@@ -21,11 +21,9 @@ use prepared::PreparedRecords;
 pub enum CatalogLoadError {
     #[error("The original account source is unavailable: {0}")]
     AccountSource(#[from] nocterm_hubs_model::source_identity::LocalAccountSourceError),
-    #[error("All normal installation history payload slots are retained or loading.")]
+    #[error("Chat history is busy. Close an unused chat or try again shortly.")]
     Capacity,
-    #[error(
-        "Catalog metadata needs {incoming} bytes with {retained} retained; installation limit is {limit}."
-    )]
+    #[error("Chat history needs more memory. Close an unused chat and try again.")]
     ResidentCapacity {
         retained: usize,
         incoming: usize,
@@ -493,10 +491,21 @@ mod tests {
     }
     #[test]
     fn prepared_records_reject_aggregate_structural_memory_without_trimming() {
-        let chats = (1..=33)
+        let entries = vec![
+            nocterm_ai::thread::Entry::Agent(String::new());
+            nocterm_ai::history::MAX_SAVED_ENTRIES
+        ];
+        let mut first = chat(1);
+        first.entries = entries.clone();
+        let resident = nocterm_ai::history::prepare_owned(first)
+            .unwrap()
+            .resident_bytes();
+        let count = crate::history_admission::MAX_NORMAL_HISTORY_BYTES / resident + 1;
+        assert!(count <= nocterm_ai::history::MAX_RESTORED);
+        let chats = (1..=count)
             .map(|index| {
                 let mut chat = chat(index);
-                chat.draft = Some("x".repeat(1024 * 1024));
+                chat.entries = entries.clone();
                 chat
             })
             .collect();
@@ -511,7 +520,7 @@ mod tests {
     #[test]
     fn prepared_records_reject_unbounded_rows_without_serialization_trimming() {
         let mut oversized = chat(1);
-        oversized.entries = (0..2001)
+        oversized.entries = (0..nocterm_ai::history::MAX_SAVED_ENTRIES + 1)
             .map(|_| nocterm_ai::thread::Entry::Agent("row".into()))
             .collect();
         assert!(matches!(
@@ -519,7 +528,7 @@ mod tests {
             Err(AgentStorageError::Codec(HistoryCodecError::CollectionLimit))
         ));
         let mut oversized = chat(2);
-        oversized.times = vec![1; 2001];
+        oversized.times = vec![1; nocterm_ai::history::MAX_SAVED_ENTRIES + 1];
         assert!(matches!(
             PreparedHistory::new(vec![oversized]),
             Err(AgentStorageError::Codec(HistoryCodecError::CollectionLimit))
