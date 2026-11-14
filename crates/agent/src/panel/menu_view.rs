@@ -1,4 +1,4 @@
-//! Disposable configuration-search and usage-card presentation lifetimes.
+//! Configuration/search controls, usage-card lifetimes and one cancellable clipboard export.
 use super::{AgentPanel, MenuKind};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, FocusHandle, SharedString, Subscription, Window,
@@ -13,6 +13,7 @@ pub(super) struct MenuView {
     usage_focus: FocusHandle,
     search: Entity<InputState>,
     _bindings: Vec<Subscription>,
+    copy: Option<gpui_kit::Task<()>>,
 }
 impl MenuView {
     pub(super) fn new(
@@ -40,10 +41,20 @@ impl MenuView {
             usage_focus,
             search,
             _bindings: bindings,
+            copy: None,
         }
     }
     pub(super) fn current(&self) -> Option<&MenuKind> {
         self.menu.as_ref()
+    }
+    pub(super) fn copying(&self) -> bool {
+        self.copy.is_some()
+    }
+    pub(super) fn retain_copy(&mut self, task: gpui_kit::Task<()>) {
+        self.copy = Some(task);
+    }
+    pub(super) fn finish_copy(&mut self) {
+        self.copy = None;
     }
     pub(super) fn is_open(&self, kind: &MenuKind) -> bool {
         self.menu.as_ref() == Some(kind)

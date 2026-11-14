@@ -499,7 +499,9 @@ checks availability again rather than trusting the displayed result.
 The agent attachment picker presents a permanent local-shell choice followed by
 ad-hoc sessions and unique saved profiles. Profile identity, rather than display
 name or tab count, determines uniqueness. Original surface receipts still govern
-local creation and background-session presentation.
+local creation and background-session presentation. The title menu captures its
+original chat; MenuView retains at most one cancellable clipboard operation and
+formats an admitted immutable snapshot through the pure AI conversation exporter.
 
 A chat's input — the draft, the attachments and images for the next prompt
 and the queue of prompts waiting to be sent — is its `Composer`, kept apart
