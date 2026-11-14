@@ -5,6 +5,7 @@ use nocterm_ai::model::session::{PromptOutcome, SessionNotice, SessionUpdate, St
 use nocterm_ai::model::usage::{ContextUsage, TokenTotals};
 
 mod context_usage;
+mod menu_stability;
 
 #[gpui_kit::test]
 fn attach_menu_lists_servers_under_their_folders(cx: &mut TestAppContext) {
@@ -199,8 +200,7 @@ fn composer_popups_select_config_modes_and_context(cx: &mut TestAppContext) {
         window.render_frame(cx);
         assert_eq!(window.find("mode-picker").label(), Some("Code"));
         window.click("agent-attach-context", cx);
-        let attachment = gpui_kit::SharedString::from(format!("attach-{:?}", f.terminal));
-        window.click(attachment, cx);
+        window.click("attach-local-terminal", cx);
         assert!(
             f.panel
                 .read(cx)

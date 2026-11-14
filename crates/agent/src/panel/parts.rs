@@ -1,11 +1,11 @@
 //! The panel's regions as views, so a change redraws only the regions it touches.
 //!
-//! Every region is cached: the panel's own redraws reuse them unless they are
-//! notified. Any notify of the panel invalidates all of them, so state the panel
-//! changes stays correct by default; thread changes, typing and queue disclosure can
-//! target a single region.
+//! Cached regions are reused unless they are notified. Any notify of the panel
+//! invalidates all of them, so state the panel changes stays correct by default;
+//! thread changes, typing and queue disclosure can target a single region.
 //! The footer (approvals, status, queue, commands and composer) is cached to its
-//! content: reused, it keeps the height its content last took.
+//! content while its pickers are closed. Open pickers keep their interaction state
+//! live instead of reusing a content-sized cache's deferred popup.
 use super::AgentPanel;
 use gpui_kit::{
     App, AppContext as _, Context, Entity, IntoElement, Render, StyleRefinement, Styled,
@@ -75,11 +75,16 @@ impl PanelParts {
                 .min_w_0(),
         )
     }
-    /// The footer spans the chat column below the transcript, as tall as its content.
-    pub(super) fn footer(&self) -> impl IntoElement + use<> {
-        self.footer
-            .clone()
-            .cached_to_content(StyleRefinement::default().w_full())
+    /// Open pickers must retain their keyed popup, hover and scroll state across frames.
+    pub(super) fn footer(&self, picker_open: bool) -> impl IntoElement + use<> {
+        if picker_open {
+            self.footer.clone().into_any_element()
+        } else {
+            self.footer
+                .clone()
+                .cached_to_content(StyleRefinement::default().w_full())
+                .into_any_element()
+        }
     }
     /// Redraws the cached regions: the panel's state changed in a way only it knows.
     pub(super) fn invalidate(&self, cx: &mut App) {

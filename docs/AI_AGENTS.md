@@ -96,6 +96,12 @@ terminal text. Images over 512 KiB are replaced by a note, only the last 20,000
 entries of a chat are kept, and at most 200 chats are restored, pinned ones
 first.
 
+The attachment picker always starts with Local terminal. In the General chat context,
+choosing it opens a shell when none is running. Other contexts use an existing shell
+from their original workspace. Each saved server appears once, regardless of how
+many tabs use it; attaching it covers all its sessions. A background session can still
+be shown in a tab from that server's row. Folder attachments remain available.
+
 After a restart, saved chats appear in the history without starting their
 agent. Browsing the history does not start an agent or MCP. A chat connects as
 soon as it is shown, whether new, saved or loaded from the history, unless
