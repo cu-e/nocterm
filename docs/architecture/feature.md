@@ -496,6 +496,11 @@ the `SettingsHandle`, the installation's `AgentsHandle` and the `SandboxProbe`; 
 edits the `ai` section only through AI's validation rules. It reports availability while keeping the isolation controls visible; launch
 checks availability again rather than trusting the displayed result.
 
+The agent attachment picker presents a permanent local-shell choice followed by
+ad-hoc sessions and unique saved profiles. Profile identity, rather than display
+name or tab count, determines uniqueness. Original surface receipts still govern
+local creation and background-session presentation.
+
 A chat's input — the draft, the attachments and images for the next prompt
 and the queue of prompts waiting to be sent — is its `Composer`, kept apart
 from the conversation and the session ([ADR 0009](../adr/0009-thread-composer.md)).

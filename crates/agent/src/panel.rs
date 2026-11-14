@@ -31,6 +31,7 @@ mod image_preparation;
 mod images;
 mod layout;
 mod lifecycle;
+mod local_attachment;
 mod menu;
 mod menu_view;
 mod message_actions;
@@ -590,7 +591,7 @@ impl Render for AgentPanel {
                 .min_w_0()
                 .min_h_0()
                 .child(self.layout.parts().transcript())
-                .child(self.layout.parts().footer())
+                .child(self.layout.parts().footer(self.menus.current().is_some()))
                 .into_any_element();
             if self.layout.history() {
                 body.child(self.render_split(chat, window, cx))

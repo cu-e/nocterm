@@ -295,6 +295,20 @@ impl Item for FakeTerminal {
     }
 }
 
+impl nocterm_workspace::LocalTerminal for FakeTerminal {
+    fn cwd(&self, _: &App) -> Option<std::path::PathBuf> {
+        None
+    }
+    fn change_directory(
+        &mut self,
+        _: std::path::PathBuf,
+        _: &mut Window,
+        _: &mut Context<Self>,
+    ) -> Result<(), nocterm_workspace::LocalDirectoryError> {
+        Err(nocterm_workspace::LocalDirectoryError::Unavailable)
+    }
+}
+
 impl Access {
     pub(super) fn executor(
         &self,
