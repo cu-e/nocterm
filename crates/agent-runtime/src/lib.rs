@@ -1,7 +1,8 @@
 //! Agent lifecycle and durable chat orchestration.
 //!
 //! Owns: pure admission policy, connection/lease owners, document identity, bounded
-//! keyed write admission, lazy history hydration and usage projections.
+//! keyed write admission, typed persistence-failure classification, lazy history
+//! hydration and usage projections.
 //! Does not own: settings storage, history/favorites files, ACP subprocesses or views.
 //! Ports used: AgentConnector, ToolBridge, AgentStateRepository, ChatRepository,
 //! WorkdirResolver, CommandJobsFactory, explicit SettingsHandle and host-supplied ShutdownCoordinator

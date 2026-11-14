@@ -121,12 +121,13 @@ fn empty_matching_chunks_identical_tool_patches_and_view_updates_are_clean() {
 }
 
 #[test]
-fn a_new_empty_row_is_durable_but_a_patch_outside_the_saved_window_is_not() {
+fn a_patch_beyond_the_old_saved_window_and_a_new_empty_row_are_durable() {
     let mut entries = vec![Entry::Tool(ToolRecord::new("old", "Old"))];
     entries.extend((0..2000).map(|_| Entry::Agent("saved".into())));
     let mut document = imported(entries);
     document.apply_transcript(update(json!({"sessionUpdate":"tool_call_update","toolCallId":"old","title":"Changed old row"})),80).unwrap();
-    assert_eq!(document.desired_revision(), 0);
+    assert_eq!(document.desired_revision(), 1);
+    assert_eq!(document.updated(), 80);
     document
         .apply_transcript(
             update(
@@ -135,7 +136,7 @@ fn a_new_empty_row_is_durable_but_a_patch_outside_the_saved_window_is_not() {
             81,
         )
         .unwrap();
-    assert_eq!(document.desired_revision(), 1);
+    assert_eq!(document.desired_revision(), 2);
     assert_eq!(document.updated(), 81);
 }
 

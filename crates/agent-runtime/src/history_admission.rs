@@ -5,9 +5,7 @@
 //! borrow is held while a participant is observed or asked to evict.
 use crate::HistoryUsage;
 use gpui::{App, EntityId};
-use nocterm_ai::{
-    execution_origin::ChatKey, history::MAX_RESIDENT_BYTES, storage::AgentStorageError,
-};
+use nocterm_ai::{execution_origin::ChatKey, storage::AgentStorageError};
 use std::{
     cell::{Cell, RefCell},
     collections::HashSet,
@@ -24,12 +22,13 @@ use eviction::EvictionCandidate;
 pub mod testing;
 
 pub const MAX_HISTORY_PAYLOADS: usize = 32;
+/// Aggregate history capacity across windows/accounts, independent of a document's cap.
+pub const MAX_HISTORY_BYTES: usize = 1024 * 1024 * 1024;
 /// The final two payloads and 1MiB remain available to original urgent controls.
 pub const MAX_NORMAL_HISTORY_PAYLOADS: usize = MAX_HISTORY_PAYLOADS - 2;
 // Guarded fresh-head receipts and upload buffers share this reserved lane.
-// This repartitions the same installation total; normal capacity decreases.
 pub const URGENT_HISTORY_BYTES: usize = 1024 * 1024;
-pub const MAX_NORMAL_HISTORY_BYTES: usize = MAX_RESIDENT_BYTES - URGENT_HISTORY_BYTES;
+pub const MAX_NORMAL_HISTORY_BYTES: usize = MAX_HISTORY_BYTES - URGENT_HISTORY_BYTES;
 
 #[derive(Debug, thiserror::Error)]
 pub enum HistoryAdmissionError {
@@ -43,11 +42,9 @@ pub enum HistoryAdmissionError {
     ForeignAllocation,
     #[error("A retained history allocation cannot grow from {reserved} to {requested} bytes.")]
     AllocationGrowth { reserved: usize, requested: usize },
-    #[error("All normal installation history payload slots are retained or loading.")]
+    #[error("Chat history is busy. Close an unused chat or try again shortly.")]
     PayloadCapacity,
-    #[error(
-        "History needs {incoming} bytes with {retained} retained; the installation limit is {limit}."
-    )]
+    #[error("Chat history needs more memory. Close an unused chat and try again.")]
     ResidentCapacity {
         retained: usize,
         incoming: usize,
@@ -592,7 +589,7 @@ impl HistoryAdmissionHandle {
         self.decide_to(
             Requester::Registration(Rc::as_ptr(&requester.0)),
             bytes,
-            MAX_RESIDENT_BYTES,
+            MAX_HISTORY_BYTES,
             cx,
         )?;
         let proof = self.charge(bytes)?;

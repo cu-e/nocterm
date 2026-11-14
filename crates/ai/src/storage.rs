@@ -10,13 +10,11 @@ pub use prepared::{PreparedChatBytes, PreparedChatLoad};
 
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum AgentStorageError {
-    #[error("All normal installation history payload slots are retained or loading")]
+    #[error("Chat history is busy. Close an unused chat or try again shortly.")]
     PayloadCapacity,
     #[error("The history repository cannot prepare a charged decoded load")]
     AllocationUnsupported,
-    #[error(
-        "Saved history needs {incoming} bytes with {retained} retained; installation limit is {limit} bytes"
-    )]
+    #[error("Chat history needs more memory. Close an unused chat and try again.")]
     ResidentCapacity {
         retained: usize,
         incoming: usize,

@@ -92,7 +92,7 @@ own configuration (mode, model, effort and the agent's other options), unsent
 text, and the transcript: your messages, the agent's replies and reasoning, and tool
 calls with the input and output the agent reported for them. The terminal descriptors
 sent with each prompt are not saved, but a tool call's output can contain
-terminal text. Images over 512 KiB are replaced by a note, only the last 2000
+terminal text. Images over 512 KiB are replaced by a note, only the last 20,000
 entries of a chat are kept, and at most 200 chats are restored, pinned ones
 first.
 

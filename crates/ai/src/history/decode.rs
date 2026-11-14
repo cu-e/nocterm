@@ -9,7 +9,7 @@ use std::marker::PhantomData;
 pub(super) fn entries<'de, D: serde::Deserializer<'de>>(
     d: D,
 ) -> Result<Vec<crate::thread::Entry>, D::Error> {
-    bounded::<_, _, 2000>(d)
+    bounded::<_, _, { super::MAX_SAVED_ENTRIES }>(d)
 }
 pub(super) fn prompts<'de, D: serde::Deserializer<'de>>(
     d: D,
@@ -25,7 +25,7 @@ pub(super) fn images<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Conte
     bounded::<_, _, 128>(d)
 }
 pub(super) fn times<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<u64>, D::Error> {
-    bounded::<_, _, 2000>(d)
+    bounded::<_, _, { super::MAX_SAVED_ENTRIES }>(d)
 }
 fn bounded<'de, D, T, const LIMIT: usize>(d: D) -> Result<Vec<T>, D::Error>
 where
