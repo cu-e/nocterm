@@ -4,18 +4,22 @@ use std::{
     path::{Component, Path, PathBuf},
     sync::Arc,
 };
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 mod portable;
 #[cfg(unix)]
 mod unix;
+#[cfg(windows)]
+mod windows;
 
 /// The single private acquisition/publication capability. Browse handles cannot
 /// escape to the public strict-capability contract.
 #[derive(Clone)]
 pub(crate) struct DirectoryCapability {
     path: PathBuf,
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     handle: Arc<std::fs::File>,
+    #[cfg(windows)]
+    _ancestor: Option<Arc<DirectoryCapability>>,
     identity: DirectoryIdentity,
 }
 impl DirectoryCapability {
@@ -25,7 +29,11 @@ impl DirectoryCapability {
         {
             unix::strict(path)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            windows::strict(path)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             portable::strict(path)
         }
@@ -35,13 +43,21 @@ impl DirectoryCapability {
         {
             unix::browse(path)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            windows::browse(path)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             portable::browse(path)
         }
     }
     pub(crate) fn path(&self) -> &Path {
         &self.path
+    }
+    #[cfg(windows)]
+    pub(crate) fn validate_publication_ancestry(&self) -> LocalResult<()> {
+        windows::validate_publication_ancestry(self)
     }
     pub(crate) fn cursor(&self) -> LocalResult<Box<dyn LocalCursor>> {
         crate::cursor::open(self)
@@ -52,7 +68,11 @@ impl DirectoryCapability {
         {
             unix::metadata(self, name)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            windows::metadata(self, name)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             portable::metadata(self, name)
         }
@@ -63,7 +83,11 @@ impl DirectoryCapability {
         {
             unix::child(self, name, create)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            windows::child(self, name, create)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             portable::child(self, name, create)
         }
@@ -73,12 +97,16 @@ impl DirectoryCapability {
         {
             unix::target_is_directory(self, name)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            windows::target_is_directory(self, name)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             portable::target_is_directory(self, name)
         }
     }
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     pub(crate) fn file(&self) -> &std::fs::File {
         self.handle.as_ref()
     }
@@ -111,7 +139,11 @@ impl LocalDirectory for DirectoryCapability {
         {
             unix::remove_file(self, name)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
+        {
+            windows::remove_file(self, name)
+        }
+        #[cfg(not(any(unix, windows)))]
         {
             portable::remove_file(self, name)
         }
@@ -186,4 +218,16 @@ pub(crate) fn metadata_native(metadata: &std::fs::Metadata) -> FileMetadata {
 }
 
 #[cfg(not(unix))]
-pub(crate) use portable::is_link;
+pub(crate) fn is_link(metadata: &std::fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        metadata.file_attributes()
+            & windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT
+            != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.is_symlink()
+    }
+}

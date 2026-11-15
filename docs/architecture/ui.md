@@ -120,6 +120,13 @@ on the tested Radeon/Vulkan system, so it is not enabled by default.
 The shared GPUI Div scroll handler uses the same snapped and rounded bounds as
 prepaint to clamp a wheel offset before comparing and notifying. Events keep
 bubbling; fitting containers and scroll boundaries avoid transient invalidation.
+Variable-height virtual lists route wheel input separately from absolute scrollbar
+positioning. They traverse measured spans using sum-tree seeks and measure missing
+crossed rows during layout. At most 128 extra crossed-row measurements run in one
+pass; a coalesced distance and an explicit next-frame request continue larger
+movements. Ordinary visible/overdraw layout retains its own work. Explicit
+uniform-height hints retain their approximate jump policy. Navigation, reset,
+thumb dragging and removal of the anchored row cancel deferred wheel movement.
 
 ## Workspace
 

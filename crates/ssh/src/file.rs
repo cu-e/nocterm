@@ -14,7 +14,18 @@ pub(crate) fn read(path: &Path, limit: usize) -> io::Result<Zeroizing<Vec<u8>>> 
         rustix::fs::Mode::empty(),
     )?
     .into();
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    let file = {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        // FILE_FLAG_BACKUP_SEMANTICS permits inspecting a directory's kind;
+        // refusing it below must not become a misleading access-denied error.
+        const BACKUP_SEMANTICS: u32 = 0x0200_0000;
+        File::options()
+            .read(true)
+            .custom_flags(BACKUP_SEMANTICS)
+            .open(path)?
+    };
+    #[cfg(not(any(unix, windows)))]
     let file = File::open(path)?;
     let metadata = file.metadata()?;
     if !metadata.is_file() {

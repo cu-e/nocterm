@@ -5,9 +5,11 @@
 //! Does not own: views, transfer scheduling or remote filesystem protocols.
 //! Ports used: none. Ports provided: `LocalFs`, `LocalMutations`.
 //! Settings sections: none. Globals: none.
-//! Invariants: strict operations pin every Unix ancestor; read-only browsing alone
-//! may follow links. Portable traversal rechecks paths and retains its active-ancestor
-//! race limitation. Publication errors precede commit; durability warnings follow it.
+//! Invariants: strict traversal rejects linked ancestors. Windows retains a bounded
+//! chain of native handles and guards publication against reparse conversion;
+//! Unix uses directory-relative operations. Read-only browsing alone may follow links.
+//! Other portable targets retain their active-ancestor race limitation.
+//! Publication errors precede commit; durability warnings follow it.
 //! A committed stage relinquishes its temporary name before it can be reused.
 mod cursor;
 mod directory;
@@ -15,7 +17,13 @@ mod listing;
 mod mutations;
 mod scan;
 mod source;
+#[cfg(not(windows))]
 mod stage;
+#[cfg(windows)]
+#[path = "stage/windows.rs"]
+mod stage;
+#[cfg(windows)]
+mod windows;
 use nocterm_session::{FileMetadata, FsCapabilities, local_fs::*};
 use std::{
     ffi::OsStr,

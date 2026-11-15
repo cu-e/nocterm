@@ -321,7 +321,8 @@ fn sending_a_large_draft_counts_its_text_once_and_rejection_keeps_it(cx: &mut Te
     let f = fixture(cx);
     new_chat(&f, cx);
     let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
-    let text = "x".repeat(17 * 1024 * 1024);
+    let length = nocterm_ai::history::MAX_FILE_BYTES as usize / 2 + 1024 * 1024;
+    let text = "x".repeat(length);
     thread.update(cx, |thread, cx| thread.send("active prompt".into(), cx));
     cx.run_until_parked();
     thread.update(cx, |thread, cx| {
@@ -331,7 +332,7 @@ fn sending_a_large_draft_counts_its_text_once_and_rejection_keeps_it(cx: &mut Te
         assert_eq!(thread.composer().queue().len(), 1);
         // The accepted queued payload already uses over half of the budget.
         // A second payload must fail without removing its composer draft.
-        let next = "y".repeat(17 * 1024 * 1024);
+        let next = "y".repeat(length);
         thread.set_draft(next.clone(), cx);
         thread.begin_composer_edit(
             Vec::new(),

@@ -496,6 +496,13 @@ the `SettingsHandle`, the installation's `AgentsHandle` and the `SandboxProbe`; 
 edits the `ai` section only through AI's validation rules. It reports availability while keeping the isolation controls visible; launch
 checks availability again rather than trusting the displayed result.
 
+The agent attachment picker presents a permanent local-shell choice followed by
+ad-hoc sessions and unique saved profiles. Profile identity, rather than display
+name or tab count, determines uniqueness. Original surface receipts still govern
+local creation and background-session presentation. The title menu captures its
+original chat; MenuView retains at most one cancellable clipboard operation and
+formats an admitted immutable snapshot through the pure AI conversation exporter.
+
 A chat's input — the draft, the attachments and images for the next prompt
 and the queue of prompts waiting to be sent — is its `Composer`, kept apart
 from the conversation and the session ([ADR 0009](../adr/0009-thread-composer.md)).
@@ -633,7 +640,11 @@ MessageList reuses one ImagePipeline for
 preview cache generations and remeasures rows only for accepted delivery. Its 32-entry,
 64 MiB preview budget retains full immutable source identities and charges image/source
 allocations; one installation shares four physical image jobs across attachments and previews.
-Counts and remaining bytes are admitted before file acquisition or base64/decoder allocation. It keeps
+Counts and remaining bytes are admitted before file acquisition or base64/decoder allocation.
+Literal tool input and output keep their scroll offset in GPUI's keyed element state.
+Their axis masks consume wheel input before the transcript's mask; vertical input
+chains to the transcript at a text boundary or when the text fits, and horizontal
+input stays in the text viewport. MessageList keeps
 each agent message's and expanded reasoning's parsed Markdown per row, so a row
 scrolled back into view keeps its parse and streamed text parses only what was
 appended. PanelLayout keeps the panel's regions as cached views: the transcript, the

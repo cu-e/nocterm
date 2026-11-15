@@ -46,12 +46,12 @@ const MAX_SAVED_IMAGE_BYTES: usize = 512 * 1024;
 const OMITTED_IMAGE_TEXT: &str = "[Image not kept in history]";
 /// Only the most recent entries of a very long chat are kept.
 /// Maximum persisted transcript rows, shared by pre-copy admission.
-pub const MAX_SAVED_ENTRIES: usize = 2_000;
+pub const MAX_SAVED_ENTRIES: usize = 20_000;
 /// Larger files are not read back.
-pub const MAX_FILE_BYTES: u64 = 32 * 1024 * 1024;
+pub const MAX_FILE_BYTES: u64 = 128 * 1024 * 1024;
 /// At most this many chats are restored, newest first.
 pub const MAX_RESTORED: usize = 200;
-/// Maximum resident structural payload for a restored document or prepared catalog.
+/// Maximum structural payload of one saved or live document, not an installation quota.
 pub const MAX_RESIDENT_BYTES: usize = preflight::LIMIT;
 
 /// Context references that survive application restarts. Local terminal ids do not.

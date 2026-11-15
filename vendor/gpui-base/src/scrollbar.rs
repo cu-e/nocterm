@@ -1,3 +1,4 @@
+// Modified by Nocterm contributors; see NOCTERM.md. Licensed under Apache-2.0.
 use std::{cell::Cell, ops::Deref, panic::Location, rc::Rc};
 
 use instant::{Duration, Instant};
@@ -73,6 +74,19 @@ pub trait ScrollbarHandle: 'static {
     fn offset(&self) -> Point<Pixels>;
     /// Set the offset of the scroll handle.
     fn set_offset(&self, offset: Point<Pixels>);
+    /// Apply a vertical wheel delta. Lists may defer missing-height measurement
+    /// instead of interpreting relative input as an absolute thumb position.
+    fn scroll_wheel(&self, delta: Pixels) -> bool {
+        let mut offset = self.offset();
+        let maximum = (self.content_size().height - self.viewport_bounds().size.height).max(px(0.));
+        let current = offset.y.clamp(-maximum, px(0.));
+        offset.y = (current + delta).clamp(-maximum, px(0.));
+        if offset.y == current {
+            return false;
+        }
+        self.set_offset(offset);
+        true
+    }
     /// The full size of the content, including padding.
     fn content_size(&self) -> Size<Pixels>;
     /// Called when start dragging the scrollbar thumb.
@@ -119,6 +133,10 @@ impl ScrollbarHandle for UniformListScrollHandle {
 }
 
 impl ScrollbarHandle for ListState {
+    fn scroll_wheel(&self, delta: Pixels) -> bool {
+        self.scroll_wheel_pixels(delta)
+    }
+
     fn viewport_bounds(&self) -> Bounds<Pixels> {
         ListState::viewport_bounds(self)
     }

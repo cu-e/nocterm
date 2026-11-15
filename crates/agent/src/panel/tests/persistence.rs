@@ -215,6 +215,45 @@ fn shutdown_prefers_the_latest_queued_snapshot_over_the_extracted_older_snapshot
 pub(super) fn save_count(f: &Fixture, id: &str) -> usize {
     f.repository.operations().iter().filter(|operation|matches!(operation,nocterm_ai::testing::StorageOperation::Save(saved) if saved==id)).count()
 }
+
+#[gpui_kit::test]
+fn a_failed_chat_save_shows_readable_memory_guidance_and_keeps_the_queued_message(
+    cx: &mut TestAppContext,
+) {
+    let f = fixture(cx);
+    new_chat(&f, cx);
+    let thread = cx.update(|cx| f.panel.read(cx).current().unwrap());
+    thread.update(cx, |thread, cx| thread.send("active request".into(), cx));
+    cx.run_until_parked();
+    let id = cx.update(|cx| thread.read(cx).chat_id().to_owned());
+    let release = f
+        .repository
+        .block_next(nocterm_ai::testing::StorageOperation::Save(id));
+    thread.update(cx, |thread, cx| {
+        thread.send("keep this queued request".into(), cx)
+    });
+    cx.run_until_parked();
+    release
+        .send(Err(
+            nocterm_ai::storage::AgentStorageError::ResidentCapacity {
+                retained: 65_410_245,
+                incoming: 14_188_544,
+                limit: 66_060_288,
+            },
+        ))
+        .unwrap();
+    cx.run_until_parked();
+    cx.update(|cx| {
+        let thread = thread.read(cx);
+        assert_eq!(
+            thread.status(),
+            "Could not save chat: history needs more memory. Close an unused chat and try again. Queued messages are retained."
+        );
+        assert!(thread.composer().paused());
+        assert_eq!(thread.composer().queue().len(), 1);
+        assert_eq!(thread.composer().queue()[0].saved().text, "keep this queued request");
+    });
+}
 #[gpui_kit::test]
 fn loaded_browse_noop_actions_detach_and_quit_preserve_the_original_v1_bytes(
     cx: &mut TestAppContext,

@@ -30,8 +30,9 @@ pub(crate) fn rename(path: &Path, name: &OsStr) -> LocalResult<()> {
     #[cfg(windows)]
     {
         let _ = old;
-        return atomicwrites::move_atomic(path, &directory.path().join(name))
-            .map_err(|error| LocalFsError::from_io(path, error));
+        let _guard = crate::windows::PublicationGuard::new(&directory)?;
+        atomicwrites::move_atomic(path, &directory.path().join(name))
+            .map_err(|error| LocalFsError::from_io(path, error))
     }
     #[cfg(not(any(
         target_os = "linux",
@@ -126,7 +127,39 @@ impl Removal {
         self.removed = self.removed.saturating_add(1);
         Ok(())
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    fn entry(
+        &mut self,
+        directory: &crate::directory::DirectoryCapability,
+        name: &OsStr,
+        depth: usize,
+    ) -> LocalResult<()> {
+        self.enter(depth)?;
+        let path = directory.path().join(name);
+        let metadata = directory
+            .inspect(name)?
+            .ok_or_else(|| LocalFsError::NotFound(path.clone()))?;
+        let is_directory =
+            metadata.kind == nocterm_session::EntryKind::Directory && !metadata.is_symlink;
+        if is_directory {
+            let child = directory.descend(name, false)?;
+            let mut cursor = child.cursor()?;
+            while let Some(name) = cursor.next()? {
+                self.entry(&child, &name, depth + 1)?;
+            }
+        }
+        self.cancel.check()?;
+        let options = fs_at::OpenOptions::default();
+        let result = if is_directory {
+            options.rmdir_at(directory.file(), name)
+        } else {
+            options.unlink_at(directory.file(), name)
+        };
+        result.map_err(|error| LocalFsError::from_io(path, error))?;
+        self.removed = self.removed.saturating_add(1);
+        Ok(())
+    }
+    #[cfg(not(any(unix, windows)))]
     fn entry(
         &mut self,
         directory: &crate::directory::DirectoryCapability,
@@ -152,14 +185,7 @@ impl Removal {
         if is_directory && (!current.is_dir() || crate::directory::is_link(&current)) {
             return Err(LocalFsError::LinkRefused(path));
         }
-        #[cfg(windows)]
-        let remove_dir = {
-            use std::os::windows::fs::MetadataExt;
-            current.file_attributes() & 0x10 != 0
-        };
-        #[cfg(not(windows))]
-        let remove_dir = is_directory;
-        let result = if remove_dir {
+        let result = if is_directory {
             std::fs::remove_dir(&path)
         } else {
             std::fs::remove_file(&path)

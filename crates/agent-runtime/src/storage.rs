@@ -5,7 +5,9 @@ use nocterm_ai::{
 };
 use std::sync::Arc;
 mod admitted;
+mod failure;
 pub use admitted::LoadedHistory;
+pub use failure::PersistenceFailure;
 
 pub struct AgentStorage {
     state: Arc<dyn AgentStateRepository>,

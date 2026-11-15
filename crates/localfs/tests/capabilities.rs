@@ -1,6 +1,8 @@
 use nocterm_localfs::LocalFilesystem;
 use nocterm_session::local_fs::{CancelFlag, ListingLimits, LocalFs, LocalFsError};
-use std::{ffi::OsStr, path::Path};
+#[cfg(unix)]
+use std::ffi::OsStr;
+use std::path::Path;
 #[cfg(unix)]
 use std::{io::Write, time::Duration};
 

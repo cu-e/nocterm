@@ -336,6 +336,10 @@ agent and `catalog()`, which the application injects.
 
 `nocterm-ai` owns pure transcript codecs, structural/collection validation,
 catalog summary rules and the `ChatRepository`/`AgentStateRepository` contracts.
+Saved transcripts retain up to 20,000 rows and aligned timestamps, with a 128 MiB
+encoded ceiling and a separate 256 MiB structural ceiling shared with live
+transcript admission. The service's aggregate installation quota is independent
+of these per-document limits ([ADR0164](../adr/0164-chat-history-capacity.md)).
 Versions one and two belong only to ThisComputer. Version one remains byte-stable
 and belongs to General. Version two requires an
 explicit `ContextId` and a canonical envelope whose authoritative catalog header
@@ -370,6 +374,11 @@ facts and produces ordered semantic mounts without native lookup or argv.
 a later launch. Native filesystem/home/PATH resolution belongs to the ACP adapter.
 
 ## Agent transcript and configuration rules
+
+`nocterm-ai::thread::export::conversation_text` formats neutral entries for plain-text
+clipboard export. It preserves complete text, reasoning, tool inputs/outputs and
+diffs, representing binary content as references. It performs no I/O and does not
+select chats, load history or include unsubmitted drafts and queued prompts.
 
 `nocterm-ai::thread::ThreadState` reduces conversation entries, timestamps, plan,
 usage, token counts and title. Per-chat options, modes, command revisions and

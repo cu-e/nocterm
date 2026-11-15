@@ -17,6 +17,7 @@ mod attach_files;
 mod attachments;
 mod bindings;
 mod chat;
+mod chat_actions;
 mod chat_servers;
 pub(crate) mod commands;
 mod composer;
@@ -31,6 +32,7 @@ mod image_preparation;
 mod images;
 mod layout;
 mod lifecycle;
+mod local_attachment;
 mod menu;
 mod menu_view;
 mod message_actions;
@@ -207,6 +209,7 @@ impl AgentPanel {
     /// account notice, any other the error line.
     fn load_history(&mut self, cx: &mut Context<Self>) {
         if let Err(error) = self.chats.host().runtime().ensure_history(cx) {
+            tracing::warn!(error = %nocterm_ai::redact::redact(&format!("{error:?}")), "could not load chat history");
             match AccountNotice::from_catalog(&error) {
                 Some(notice) => self.notices.set_account(Some(notice)),
                 None => self.notices.set_error(Some(error.to_string())),
@@ -575,6 +578,9 @@ impl Render for AgentPanel {
         let header = shell::ShellRenderer::header(
             agent,
             self.title(cx),
+            current
+                .clone()
+                .map(|thread| chat_actions::ChatActions::button(thread, cx)),
             self.layout.history(),
             self.layout.maximized(),
             &self.menus,
@@ -589,7 +595,7 @@ impl Render for AgentPanel {
                 .min_w_0()
                 .min_h_0()
                 .child(self.layout.parts().transcript())
-                .child(self.layout.parts().footer())
+                .child(self.layout.parts().footer(self.menus.current().is_some()))
                 .into_any_element();
             if self.layout.history() {
                 body.child(self.render_split(chat, window, cx))

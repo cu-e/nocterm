@@ -1,15 +1,4 @@
 use super::*;
-pub(crate) fn is_link(metadata: &std::fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        metadata.file_attributes() & 0x400 != 0
-    }
-    #[cfg(not(windows))]
-    {
-        metadata.is_symlink()
-    }
-}
 pub(super) fn strict(path: &Path) -> LocalResult<DirectoryCapability> {
     let mut current = PathBuf::new();
     for component in path.components() {

@@ -45,8 +45,11 @@ configured defaults, not proof that all agents have been authenticated or
 successfully tested on your machine.
 
 Desktop applications may receive a different PATH from an interactive shell,
-particularly with nvm. Set an absolute executable path in AI Settings when the
-program cannot be found. Arguments are a JSON array of individual strings;
+particularly with nvm. When a bare command such as `npx` is not on PATH, Nocterm
+also looks in the usual Node.js locations: nvm-windows, Volta, `Program Files\nodejs`,
+the per-user Node.js install, npm's global directory, Scoop and Chocolatey on Windows,
+and Homebrew and Volta on macOS. Set an absolute executable path in AI Settings when the
+program still cannot be found. On Windows agents start without a console window. Arguments are a JSON array of individual strings;
 Nocterm does not run them through a shell. A blank override keeps the built-in
 value; an empty arguments array removes the built-in arguments. Custom agent ids
 use letters, numbers, underscore or dash and need an executable.
@@ -89,9 +92,20 @@ own configuration (mode, model, effort and the agent's other options), unsent
 text, and the transcript: your messages, the agent's replies and reasoning, and tool
 calls with the input and output the agent reported for them. The terminal descriptors
 sent with each prompt are not saved, but a tool call's output can contain
-terminal text. Images over 512 KiB are replaced by a note, only the last 2000
+terminal text. Images over 512 KiB are replaced by a note, only the last 20,000
 entries of a chat are kept, and at most 200 chats are restored, pinned ones
 first.
+
+The title's ellipsis menu copies the history ID or the complete loaded conversation
+as readable text, including reasoning and tool inputs/results. Binary attachments
+appear as references. Copying uses a bounded snapshot and formats it in the background;
+unsubmitted drafts and queued messages are not part of the conversation.
+
+The attachment picker always starts with Local terminal. In the General chat context,
+choosing it opens a shell when none is running. Other contexts use an existing shell
+from their original workspace. Each saved server appears once, regardless of how
+many tabs use it; attaching it covers all its sessions. A background session can still
+be shown in a tab from that server's row. Folder attachments remain available.
 
 After a restart, saved chats appear in the history without starting their
 agent. Browsing the history does not start an agent or MCP. A chat connects as

@@ -22,15 +22,15 @@ acceptance; a later record supersedes an earlier one.
 | [0014](0014-vendor-source-replay.md) | Vendored sources replay from authenticated archives and ordered patches |
 | [0015](0015-private-file-publication.md) | Private file publication shares one staged, atomic mechanism |
 | [0016](0016-vault-storage-boundary.md) | Vault format and rules are independent of storage and lifecycle |
-| [0017](0017-local-filesystem-capabilities.md) | Native filesystem capabilities are injected through pure session ports |
+| [0017](0017-local-filesystem-capabilities.md) | Native filesystem capabilities are injected through pure session ports (Windows support extended by 0162) |
 | [0018](0018-transfer-runtime-capabilities.md) | Transfer execution is an adapter over held filesystem and retryable publication ports |
-| [0022](0022-agent-storage-owners.md) | Agent storage adapters and private lifecycle owners share persistence execution |
+| [0022](0022-agent-storage-owners.md) | Agent storage adapters and private lifecycle owners share persistence execution (numeric history ceilings superseded by 0164) |
 | [0025](0025-native-program-opener.md) | External local programs have an explicit bounded native owner |
 | [0026](0026-workspace-state-owners.md) | Workspace transitions belong to private state owners with explicit shared layout (Sidebar and RightPanelSlot superseded in part by 0081) |
 | [0027](0027-connection-observation-ports.md) | Pure connection observation contracts and network I/O adapter |
 | [0028](0028-theme-library-boundary.md) | Pure theme domain model, adapter registry and theme service |
 | [0029](0029-output-recording-shared-driver.md) | Bounded append persistence and output recording |
-| [0031](0031-archive-hydration-owner.md) | Hydrated archive and history permit state belong to a single owner |
+| [0031](0031-archive-hydration-owner.md) | Hydrated archive and history permit state belong to a single owner (numeric resident ceiling superseded by 0164) |
 | [0032](0032-narrow-terminal-ports.md) | Separate terminal ports bind approvals and secret answers to original Item/session/prompt epochs |
 | [0033](0033-native-agent-sandbox-capabilities.md) | Inject native workspace preparation and fail-closed sandbox launch capabilities |
 | [0034](0034-chat-config-composer-owners.md) | Per-chat configuration and composer transitions have private feature owners |
@@ -137,7 +137,7 @@ acceptance; a later record supersedes an earlier one.
 | [0139](0139-cooperative-authorized-keys-edits.md) | SFTP authorized-keys editors coordinate with a fixed no-clobber remote lock |
 | [0140](0140-offer-confirmation-publication.md) | Displayed key confirmations await bounded native publication |
 | [0141](0141-versioned-plugin-publication.md) | Plugin records select immutable package versions and await actual completion |
-| [0142](0142-live-transcript-and-image-admission.md) | Live transcript and image preparation admit aggregate growth before expensive work |
+| [0142](0142-live-transcript-and-image-admission.md) | Live transcript and image preparation admit aggregate growth before expensive work (numeric transcript byte ceiling superseded by 0164) |
 | [0143](0143-the-runner-publishes-chat-summaries-journal-v7.md) | The runner publishes signed chat summaries to its directory; journal v7 (superseded by 0148; earlier: journal version rule superseded by 0145) |
 | [0144](0144-the-device-side-runs-on-the-contract-device-core.md) | The device side of Cloud chats runs on the contract's device core; hub-io is a thin adapter (superseded by 0148; earlier: request signer, outbox and first-freshness rule superseded by 0146) |
 | [0145](0145-per-server-ca-principals-and-runner-certificate-sessions.md) | Per-server CA principals, chat SSH bindings and runner certificate sessions; journal v8, boot v3 (superseded by 0148; earlier: SSH row class, boot host-key rule and journal version superseded by 0147) |
@@ -157,3 +157,6 @@ acceptance; a later record supersedes an earlier one.
 | [0159](0159-plugin-charts-toolbar-axis-and-toolbar-moves.md) | Plugin views draw charts of recent values (`chart`, ABI stays 1), a toolbar's calls name its axis in the zone (`cx.is_column()`), toolbars use the status bar's small text, and moving a toolbar is a layout edit |
 | [0160](0160-ci-compiles-each-kind-once-and-tests-the-plugin-feature-where-it-changes-code.md) | CI compiles each kind of build once (lint checks, build and tests), tests `user-plugins` only in the packages that declare it, saves caches from `dev` and `master`, and builds installers only for releases |
 | [0161](0161-user-plugins-ship-in-every-build.md) | User plugins ship in every build: the `user-plugins` cargo feature and the compile-out rule are gone, the `[plugins] user_plugins` switch and `--safe-mode` still decide whether a run loads them (supersedes the compile-out part of 0093) |
+| [0162](0162-windows-held-directory-capabilities.md) | Windows holds directory ancestry and guards atomic publication against reparse conversion |
+| [0163](0163-windows-agents-start-hidden-with-the-systems-search-path.md) | Windows agents start hidden and use the system search path and usual Node.js locations |
+| [0164](0164-chat-history-capacity.md) | Installation history capacity is separate from a single document; larger byte and row ceilings supersede numeric limits in 0022, 0031 and 0142 |

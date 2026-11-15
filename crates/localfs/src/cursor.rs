@@ -1,17 +1,25 @@
 use crate::directory::DirectoryCapability;
 use nocterm_session::local_fs::*;
+#[cfg(not(windows))]
 use std::{ffi::OsString, path::PathBuf};
+#[cfg(windows)]
+mod windows;
 #[cfg(unix)]
 struct Cursor {
     entries: rustix::fs::Dir,
     path: PathBuf,
 }
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 struct Cursor {
     entries: std::fs::ReadDir,
     path: PathBuf,
 }
 
+#[cfg(windows)]
+pub(crate) fn open(directory: &DirectoryCapability) -> LocalResult<Box<dyn LocalCursor>> {
+    windows::open(directory)
+}
+#[cfg(not(windows))]
 pub(crate) fn open(directory: &DirectoryCapability) -> LocalResult<Box<dyn LocalCursor>> {
     #[cfg(unix)]
     let entries = rustix::fs::Dir::read_from(directory.file())
@@ -24,6 +32,7 @@ pub(crate) fn open(directory: &DirectoryCapability) -> LocalResult<Box<dyn Local
         path: directory.path().to_owned(),
     }))
 }
+#[cfg(not(windows))]
 impl LocalCursor for Cursor {
     fn next(&mut self) -> LocalResult<Option<OsString>> {
         loop {
