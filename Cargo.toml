@@ -325,7 +325,7 @@ regex = "1"
 # Zed's reqwest fork, already in the tree through GPUI.
 reqwest = { package = "gpui-pre-reqwest", version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 regex-syntax = "0.8"
-russh = { version = "0.63", default-features = false, features = ["ring", "flate2", "rsa"] }
+russh = { version = "0.65.1", default-features = false, features = ["ring", "flate2", "rsa"] }
 russh-sftp = "3"
 # Pinned to the version `russh` resolves, so key text round-trips between the two (ADR 0102).
 ssh-key = { version = "=0.7.0-rc.11", default-features = false, features = ["ed25519", "p256", "p384", "p521", "rsa", "encryption"] }
