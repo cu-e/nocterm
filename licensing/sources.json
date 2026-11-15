@@ -472,10 +472,10 @@
   },
   {
     "packages": [
-      "russh@0.63.3"
+      "russh@0.65.1"
     ],
     "path": "upstream/brendanzab-gl-rs-license-cfc7749b96f6.txt",
-    "url": "https://raw.githubusercontent.com/warp-tech/russh/f33baf439be8c59c49cb6cb2ae5976c579495bdf/LICENSE.txt",
+    "url": "https://raw.githubusercontent.com/warp-tech/russh/b33092aad1e51c66258a12e8b83fc473a68d9d34/LICENSE.txt",
     "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
   },
   {
