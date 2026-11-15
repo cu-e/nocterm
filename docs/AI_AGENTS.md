@@ -92,9 +92,20 @@ own configuration (mode, model, effort and the agent's other options), unsent
 text, and the transcript: your messages, the agent's replies and reasoning, and tool
 calls with the input and output the agent reported for them. The terminal descriptors
 sent with each prompt are not saved, but a tool call's output can contain
-terminal text. Images over 512 KiB are replaced by a note, only the last 2000
+terminal text. Images over 512 KiB are replaced by a note, only the last 20,000
 entries of a chat are kept, and at most 200 chats are restored, pinned ones
 first.
+
+The title's ellipsis menu copies the history ID or the complete loaded conversation
+as readable text, including reasoning and tool inputs/results. Binary attachments
+appear as references. Copying uses a bounded snapshot and formats it in the background;
+unsubmitted drafts and queued messages are not part of the conversation.
+
+The attachment picker always starts with Local terminal. In the General chat context,
+choosing it opens a shell when none is running. Other contexts use an existing shell
+from their original workspace. Each saved server appears once, regardless of how
+many tabs use it; attaching it covers all its sessions. A background session can still
+be shown in a tab from that server's row. Folder attachments remain available.
 
 After a restart, saved chats appear in the history without starting their
 agent. Browsing the history does not start an agent or MCP. A chat connects as

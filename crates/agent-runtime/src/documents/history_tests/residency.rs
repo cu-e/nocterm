@@ -1,13 +1,17 @@
 //! One installation admits hydration across original contexts and windows.
 use super::{contexts::scoped_fixture, *};
 use nocterm_ai::{
-    history::{ContextId, MAX_RESIDENT_BYTES, SavedChat},
+    history::{ContextId, SavedChat},
     storage::AgentStorageError,
 };
 const MIB: usize = 1024 * 1024;
+// Logical charges exercise the quota without allocating enormous test buffers.
+const SMALL_BYTES: usize = MAX_NORMAL_HISTORY_BYTES * 3 / 8;
+const HALF_BYTES: usize = MAX_NORMAL_HISTORY_BYTES / 2;
+const LARGE_BYTES: usize = MAX_NORMAL_HISTORY_BYTES * 5 / 8;
 use crate::{
     HistoryUsage,
-    history_admission::{HistoryAdmissionError, testing::HistoryProbe},
+    history_admission::{HistoryAdmissionError, MAX_NORMAL_HISTORY_BYTES, testing::HistoryProbe},
 };
 
 fn client_in(scope: ContextId, cx: &mut TestAppContext) -> Rc<ProbeClient> {
@@ -26,10 +30,16 @@ fn client_in(scope: ContextId, cx: &mut TestAppContext) -> Rc<ProbeClient> {
 #[gpui::test]
 fn transferring_a_unique_buffer_releases_only_its_unused_reservation(cx: &mut TestAppContext) {
     let admission = HistoryProbe::installation();
-    let reserved = cx.update(|cx| admission.reserve_unowned_bytes(32 * MIB, cx).unwrap());
+    let reserved = cx.update(|cx| admission.reserve_unowned_bytes(HALF_BYTES, cx).unwrap());
     let retained = HistoryProbe::transfer_buffer(&admission, reserved, MIB).unwrap();
     assert_eq!(retained.bytes(), MIB);
-    cx.update(|cx| drop(admission.reserve_unowned_bytes(60 * MIB, cx).unwrap()));
+    cx.update(|cx| {
+        drop(
+            admission
+                .reserve_unowned_bytes(MAX_NORMAL_HISTORY_BYTES - 3 * MIB, cx)
+                .unwrap(),
+        )
+    });
 }
 
 #[gpui::test]
@@ -37,20 +47,20 @@ fn a_shared_buffer_keeps_its_original_charge_until_shared_owners_release_it(
     cx: &mut TestAppContext,
 ) {
     let admission = HistoryProbe::installation();
-    let reserved = cx.update(|cx| admission.reserve_unowned_bytes(32 * MIB, cx).unwrap());
+    let reserved = cx.update(|cx| admission.reserve_unowned_bytes(HALF_BYTES, cx).unwrap());
     let original = reserved.clone();
     let retained = HistoryProbe::transfer_buffer(&admission, reserved, MIB).unwrap();
-    assert_eq!(retained.bytes(), 32 * MIB);
+    assert_eq!(retained.bytes(), HALF_BYTES);
     cx.update(|cx| {
         assert!(matches!(
-            admission.reserve_unowned_bytes(40 * MIB, cx),
+            admission.reserve_unowned_bytes(LARGE_BYTES, cx),
             Err(HistoryAdmissionError::ResidentCapacity { .. })
         ))
     });
     drop(original);
     let retained = HistoryProbe::transfer_buffer(&admission, retained, MIB).unwrap();
     assert_eq!(retained.bytes(), MIB);
-    cx.update(|cx| drop(admission.reserve_unowned_bytes(40 * MIB, cx).unwrap()));
+    cx.update(|cx| drop(admission.reserve_unowned_bytes(LARGE_BYTES, cx).unwrap()));
 }
 
 #[gpui::test]
@@ -101,11 +111,11 @@ fn hydration_capacity_is_shared_by_contexts_and_shown_chats_in_other_windows_are
     let requester = client_in(c.scope(), cx);
     first
         .history
-        .set(Some(crate::HistoryUsage::new(24 * MIB, 1, true)));
+        .set(Some(crate::HistoryUsage::new(SMALL_BYTES, 1, true)));
     first.allow_history_eviction.set(true);
     second
         .history
-        .set(Some(crate::HistoryUsage::new(24 * MIB, 2, false)));
+        .set(Some(crate::HistoryUsage::new(SMALL_BYTES, 2, false)));
     requester
         .history
         .set(Some(crate::HistoryUsage::new(0, 3, false)));
@@ -114,7 +124,7 @@ fn hydration_capacity_is_shared_by_contexts_and_shown_chats_in_other_windows_are
         ownership::register_bound(&b, second.clone(), cx).unwrap();
         ownership::register_bound(&c, requester.clone(), cx).unwrap();
         assert!(matches!(
-            c.admit_history(requester.id(), 24 * MIB, cx),
+            c.admit_history(requester.id(), SMALL_BYTES, cx),
             Err(AgentStorageError::ResidentCapacity { .. })
         ));
         assert_eq!(
@@ -125,7 +135,7 @@ fn hydration_capacity_is_shared_by_contexts_and_shown_chats_in_other_windows_are
         assert!(first.history.get().is_some());
         assert!(second.history.get().is_some());
         second.allow_history_eviction.set(true);
-        c.admit_history(requester.id(), 24 * MIB, cx).unwrap();
+        c.admit_history(requester.id(), SMALL_BYTES, cx).unwrap();
         assert!(first.history.get().is_some());
         assert!(second.history.get().is_none());
         assert!(matches!(
@@ -156,7 +166,7 @@ fn remaining_prepared_payloads_count_until_their_claimed_handoff(cx: &mut TestAp
     );
     cx.update(|cx| {
         ownership::register_bound(&general, client.clone(), cx).unwrap();
-        let incoming = MAX_RESIDENT_BYTES - retained + 64 * 1024;
+        let incoming = MAX_NORMAL_HISTORY_BYTES - retained + 64 * 1024;
         assert!(matches!(
             general.admit_history(client.id(), incoming, cx),
             Err(AgentStorageError::ResidentCapacity { .. })
@@ -216,7 +226,7 @@ fn detached_active_and_latest_writer_payloads_remain_in_hydration_admission(
         assert!(matches!(
             project.admit_history(
                 requester.id(),
-                MAX_RESIDENT_BYTES - retained + 64 * 1024,
+                MAX_NORMAL_HISTORY_BYTES - retained + 64 * 1024,
                 cx
             ),
             Err(AgentStorageError::ResidentCapacity { .. })
@@ -230,7 +240,7 @@ fn detached_active_and_latest_writer_payloads_remain_in_hydration_admission(
         project
             .admit_history(
                 requester.id(),
-                MAX_RESIDENT_BYTES - retained + 64 * 1024,
+                MAX_NORMAL_HISTORY_BYTES - retained + 64 * 1024,
                 cx,
             )
             .unwrap()
@@ -248,10 +258,10 @@ fn remote_admission_evicts_hidden_local_history_and_local_admission_evicts_remot
     let hidden = client_in(hidden_scope.scope(), cx);
     protected
         .history
-        .set(Some(HistoryUsage::new(24 * MIB, 1, true)));
+        .set(Some(HistoryUsage::new(SMALL_BYTES, 1, true)));
     hidden
         .history
-        .set(Some(HistoryUsage::new(24 * MIB, 2, false)));
+        .set(Some(HistoryUsage::new(SMALL_BYTES, 2, false)));
     hidden.allow_history_eviction.set(true);
     let remote = HistoryProbe::default();
     cx.update(|cx| {
@@ -260,14 +270,14 @@ fn remote_admission_evicts_hidden_local_history_and_local_admission_evicts_remot
         let admission = general.history_admission(cx);
         let registration = admission.register(remote.participant()).unwrap();
         let buffer = admission
-            .reserve_bytes(&registration, 24 * MIB, cx)
+            .reserve_bytes(&registration, SMALL_BYTES, cx)
             .unwrap();
         assert!(hidden.history.get().is_none());
         assert!(protected.history.get().is_some());
-        remote.set_history(HistoryUsage::new(24 * MIB, 3, false), true);
+        remote.set_history(HistoryUsage::new(SMALL_BYTES, 3, false), true);
         drop(buffer);
         hidden_scope
-            .admit_history(hidden.id(), 24 * MIB, cx)
+            .admit_history(hidden.id(), SMALL_BYTES, cx)
             .unwrap();
         assert!(remote.history().is_none());
         assert_eq!(remote.evictions(), 1);
@@ -282,15 +292,15 @@ fn pending_remote_buffer_clones_stay_charged_until_the_last_owner_drops(cx: &mut
     cx.update(|cx| {
         ownership::register_bound(&general, client.clone(), cx).unwrap();
         let admission = general.history_admission(cx);
-        let buffer = admission.reserve_unowned_bytes(40 * MIB, cx).unwrap();
+        let buffer = admission.reserve_unowned_bytes(LARGE_BYTES, cx).unwrap();
         let pending = buffer.clone();
         drop(buffer);
         assert!(matches!(
-            general.admit_history(client.id(), 32 * MIB, cx),
+            general.admit_history(client.id(), HALF_BYTES, cx),
             Err(AgentStorageError::ResidentCapacity { .. })
         ));
         drop(pending);
-        general.admit_history(client.id(), 32 * MIB, cx).unwrap();
+        general.admit_history(client.id(), HALF_BYTES, cx).unwrap();
     });
 }
 
@@ -335,7 +345,7 @@ fn history_eviction_callbacks_run_without_a_budget_borrow_and_nested_admission_r
 ) {
     let (general, _directory, _, _, _) = scoped_fixture(cx);
     let remote = HistoryProbe::default();
-    remote.set_history(HistoryUsage::new(40 * MIB, 1, false), true);
+    remote.set_history(HistoryUsage::new(LARGE_BYTES, 1, false), true);
     cx.update(|cx| {
         let admission = general.history_admission(cx);
         let _registration = admission.register(remote.participant()).unwrap();
@@ -353,7 +363,7 @@ fn history_eviction_callbacks_run_without_a_budget_borrow_and_nested_admission_r
             ));
             observed.set(true);
         }));
-        let _buffer = admission.reserve_unowned_bytes(40 * MIB, cx).unwrap();
+        let _buffer = admission.reserve_unowned_bytes(LARGE_BYTES, cx).unwrap();
         assert!(called.get());
     });
 }
@@ -362,7 +372,6 @@ fn history_eviction_callbacks_run_without_a_budget_borrow_and_nested_admission_r
 fn unchanged_payload_offers_stop_reclamation_even_when_the_callback_reports_success(
     cx: &mut TestAppContext,
 ) {
-    use crate::history_admission::{HistoryAdmissionError, testing::HistoryProbe};
     let admission = HistoryProbe::installation();
     let neighbor = HistoryProbe::default();
     neighbor.set_history(crate::HistoryUsage::new(0, 0, false), true);

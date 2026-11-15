@@ -1,7 +1,7 @@
 //! Structural accounting before serde allocates protocol objects and their vectors.
 use super::HistoryCodecError;
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
-pub(super) const LIMIT: usize = 64 * 1024 * 1024;
+pub(super) const LIMIT: usize = 256 * 1024 * 1024;
 struct Budget {
     bytes: usize,
     exceeded: bool,

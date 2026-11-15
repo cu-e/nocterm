@@ -1,11 +1,10 @@
 use super::*;
 use nocterm_ai::model::content::Content;
 use nocterm_ai::{
-    history::{MAX_FILE_BYTES, SavedAttachment, SavedPrompt},
+    history::{MAX_FILE_BYTES, MAX_SAVED_ENTRIES, SavedAttachment, SavedPrompt},
     thread::Entry,
 };
 const MAX_SAVED_IMAGE_BYTES: usize = 512 * 1024;
-const MAX_SAVED_ENTRIES: usize = 2000;
 
 fn chat() -> SavedChat {
     let mut chat = SavedChat::for_identity("codex".into(), uuid::Uuid::new_v4().to_string(), 1);

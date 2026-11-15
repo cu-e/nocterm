@@ -2,7 +2,8 @@
 //!
 //! Owns: neutral `model` records (the only agent vocabulary other crates see), agent
 //! profiles, catalog and settings resolution (`agents`), configuration rules, transcript reduction, session/tool rules, pure sandbox policy,
-//! bounded history codecs, immutable scoped execution origins and capability/storage ports.
+//! bounded history codecs, readable conversation export, immutable scoped execution origins
+//! and capability/storage ports.
 //! The terminal tool catalog includes file transfers and shared agent-facing terminal,
 //! command, observation and transfer reports; display data never grants execution authority.
 //! File tools for terminals that run no programs are pure rules over a captured `RemoteFs`;

@@ -56,6 +56,7 @@ mod process_commands;
 mod scripted_agent;
 use scripted_agent::{Bridge, Commands, Connector};
 
+mod chat_actions;
 mod terminal_fixture;
 use terminal_fixture::{Access, FakeTerminal, SignIn};
 
@@ -511,6 +512,7 @@ mod registration;
 mod resources;
 mod restoration;
 mod routing;
+mod scroll_geometry;
 mod seat_binding;
 mod servers;
 mod tool_corpus;

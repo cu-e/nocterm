@@ -1,6 +1,6 @@
 //! Why a chat save failed, read from its typed cause chain for user guidance.
 use super::AgentPersistenceError;
-use nocterm_ai::storage::AgentStorageError;
+use nocterm_ai::{history::HistoryCodecError, storage::AgentStorageError};
 use nocterm_session::local_fs::LocalFsError;
 use std::error::Error;
 
@@ -9,6 +9,12 @@ use std::error::Error;
 /// retrying at all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PersistenceFailure {
+    /// Retained histories and work have filled the installation's memory allowance.
+    HistoryMemory,
+    /// Retained or loading histories have filled the shared payload allowance.
+    HistoryBusy,
+    /// The conversation exceeds its own encoded, structural or row allowance.
+    ChatLimit,
     /// The history storage cannot provide the guarantees this chat's location needs.
     Unsupported,
     /// The volume holding the history is out of space or quota.
@@ -25,12 +31,39 @@ impl PersistenceFailure {
             AgentPersistenceError::Worker(error) => classify(error),
         }
     }
+    pub fn of_storage(error: &AgentStorageError) -> Self {
+        classify(error)
+    }
 }
 
 fn classify(error: &(dyn Error + 'static)) -> PersistenceFailure {
     let mut frame = Some(error);
     let mut denied = false;
     while let Some(current) = frame {
+        if let Some(storage) = current.downcast_ref::<AgentStorageError>() {
+            match storage {
+                AgentStorageError::ResidentCapacity { .. } => {
+                    return PersistenceFailure::HistoryMemory;
+                }
+                AgentStorageError::PayloadCapacity => return PersistenceFailure::HistoryBusy,
+                AgentStorageError::Codec(
+                    HistoryCodecError::EncodedLimit
+                    | HistoryCodecError::StructuralLimit
+                    | HistoryCodecError::CollectionLimit,
+                ) => return PersistenceFailure::ChatLimit,
+                _ => {}
+            }
+        }
+        if matches!(
+            current.downcast_ref::<HistoryCodecError>(),
+            Some(
+                HistoryCodecError::EncodedLimit
+                    | HistoryCodecError::StructuralLimit
+                    | HistoryCodecError::CollectionLimit
+            )
+        ) {
+            return PersistenceFailure::ChatLimit;
+        }
         if let Some(
             AgentStorageError::EnvironmentUnsupported(_) | AgentStorageError::ScopeUnsupported(_),
         ) = current.downcast_ref::<AgentStorageError>()
@@ -69,6 +102,42 @@ mod tests {
     }
     fn worker(error: AgentStorageError) -> AgentPersistenceError {
         nocterm_store::StoreError::Backend(SharedCause::new(error)).into()
+    }
+
+    #[test]
+    fn history_limits_remain_distinct_through_the_writer_cause_chain() {
+        use nocterm_ai::history::HistoryCodecError;
+        let cases = [
+            (
+                AgentStorageError::ResidentCapacity {
+                    retained: 65_410_245,
+                    incoming: 14_188_544,
+                    limit: 66_060_288,
+                },
+                PersistenceFailure::HistoryMemory,
+            ),
+            (
+                AgentStorageError::PayloadCapacity,
+                PersistenceFailure::HistoryBusy,
+            ),
+            (
+                HistoryCodecError::EncodedLimit.into(),
+                PersistenceFailure::ChatLimit,
+            ),
+            (
+                HistoryCodecError::StructuralLimit.into(),
+                PersistenceFailure::ChatLimit,
+            ),
+            (
+                HistoryCodecError::CollectionLimit.into(),
+                PersistenceFailure::ChatLimit,
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(PersistenceFailure::of_storage(&error), expected);
+            assert_eq!(PersistenceFailure::of(&error.clone().into()), expected);
+            assert_eq!(PersistenceFailure::of(&worker(error)), expected);
+        }
     }
 
     #[test]

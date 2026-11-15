@@ -2,6 +2,7 @@ use super::*;
 use agent_client_protocol::{Channel, schema::ProtocolVersion};
 use serde_json::json;
 
+#[cfg(unix)]
 fn setting(session: SessionId, config: ConfigId, value: &str) -> SetConfigOption {
     SetConfigOption {
         session,

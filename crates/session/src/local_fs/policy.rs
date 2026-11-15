@@ -31,16 +31,22 @@ pub struct DirectoryIdentity(Identity);
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 enum Identity {
     Native(u64, u64),
+    NativeWide(u64, u128),
     Portable(PathBuf),
 }
 impl DirectoryIdentity {
     /// Whether this supplied identity denotes retained native-directory semantics.
     /// Portable location identities do not prove held-ancestor safety.
     pub fn is_held(&self) -> bool {
-        matches!(self.0, Identity::Native(..))
+        matches!(self.0, Identity::Native(..) | Identity::NativeWide(..))
     }
     pub fn native(device: u64, inode: u64) -> Self {
         Self(Identity::Native(device, inode))
+    }
+    /// A held native object with a full 128-bit identifier. Its identity space
+    /// remains distinct from a filesystem's shorter fallback identifiers.
+    pub fn native_wide(device: u64, object: u128) -> Self {
+        Self(Identity::NativeWide(device, object))
     }
     /// Portable fallbacks provide weaker location identity, not Unix handle safety.
     pub fn portable(location: PathBuf) -> Self {

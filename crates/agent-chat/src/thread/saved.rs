@@ -440,8 +440,8 @@ impl AgentThread {
             match self.archive.accept(load_id, current, result, permit) {
                 archive::LoadOutcome::Stale => return,
                 archive::LoadOutcome::Failed(error) => {
-                    self.notice
-                        .present(format!("Could not load saved chat: {error}"));
+                    tracing::warn!(error = %nocterm_ai::redact::redact(&format!("{error:?}")), "could not load saved chat");
+                    self.notice.present(super::save_failure::load_failure(&error));
                     self.notice.mark_error();
                 }
                 archive::LoadOutcome::Hydrate {

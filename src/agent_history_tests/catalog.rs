@@ -110,13 +110,16 @@ fn queued_images_drafts_and_metadata_survive_lazy_loading() {
 fn malformed_collection_and_nested_amplification_are_rejected_without_erasing_files() {
     let dir = tempfile::tempdir().unwrap();
     let mut chat = chat();
-    chat.entries = (0..2001).map(|_| Entry::Agent(String::new())).collect();
+    chat.entries = (0..=nocterm_ai::history::MAX_SAVED_ENTRIES)
+        .map(|_| Entry::Agent(String::new()))
+        .collect();
     let path = file(dir.path(), &chat.header.id).unwrap();
     fs::write(&path, serde_json::to_string(&chat).unwrap()).unwrap();
     assert!(load(dir.path(), &chat.header.id).is_err());
     chat.entries = vec![Entry::Tool(
-        ToolRecord::new("tool", "amplification")
-            .raw_input(serde_json::json!({"tiny":vec![0; 140_000]})),
+        ToolRecord::new("tool", "amplification").raw_input(
+            serde_json::json!({"tiny":vec![0; nocterm_ai::history::MAX_RESIDENT_BYTES / 512 + 1]}),
+        ),
     )];
     fs::write(&path, serde_json::to_string(&chat).unwrap()).unwrap();
     assert!(load(dir.path(), &chat.header.id).is_err());

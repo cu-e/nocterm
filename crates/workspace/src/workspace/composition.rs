@@ -192,7 +192,8 @@ impl Workspace {
     ) -> Option<EntityId> {
         self.factory().open_background(self, spec, window, cx)
     }
-    pub(crate) fn new_local_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens a local shell through the installed provider's checked General destination.
+    pub fn new_local_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.factory()
             .open_local(self, LocalTerminalTarget::Bottom, window, cx);
     }

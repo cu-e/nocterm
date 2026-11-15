@@ -1,13 +1,14 @@
 //! Saved servers: opening them from the attach menu, and agents connecting
 //! to attached servers in the background.
 use super::*;
+mod menu;
 use nocterm_workspace::ConnectionDirectory as _;
 use std::{
     cell::{Cell, RefCell},
     time::Duration,
 };
 
-fn summary(id: &str, group: Option<&str>) -> nocterm_workspace::ConnectionSummary {
+pub(super) fn summary(id: &str, group: Option<&str>) -> nocterm_workspace::ConnectionSummary {
     nocterm_workspace::ConnectionSummary {
         id: id.to_owned().into(),
         name: id.to_owned().into(),
@@ -135,7 +136,7 @@ fn open_in_the_attach_menu_opens_a_tab(cx: &mut TestAppContext) {
         window.render_frame(cx);
         window.click("agent-attach-context", cx);
         window.render_frame(cx);
-        assert!(window.try_find("Active sessions").is_some());
+        assert!(window.try_find("attach-local-terminal").is_some());
         assert!(window.try_find("Saved servers").is_some());
         // A server inside a folder is indented, yet its button stays in the menu.
         let menu = window.try_find("agent-picker").unwrap().bounds();
@@ -425,7 +426,6 @@ fn rows_attached_through_a_folder_do_not_toggle_on_their_own(cx: &mut TestAppCon
             assert!(thread.composer().attachments().is_empty());
         })
     });
-    let terminal = format!("attach-{:?}", f.terminal);
     cx.update_window(f.handle, |_, window, cx| {
         window.render_frame(cx);
         window.click("agent-attach-context", cx);
@@ -436,7 +436,7 @@ fn rows_attached_through_a_folder_do_not_toggle_on_their_own(cx: &mut TestAppCon
         assert_eq!(attachments(cx), prod);
         // Its servers and their sessions show as attached, and a click
         // cannot leave a duplicate behind once the folder is detached.
-        for row in ["attach-connection-db", terminal.as_str()] {
+        for row in ["attach-connection-db", "attach-connection-web"] {
             window.click(row.to_owned(), cx);
             window.render_frame(cx);
             assert_eq!(attachments(cx), prod, "{row}");

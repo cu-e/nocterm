@@ -158,7 +158,7 @@ mod tests {
             SavedAttachment::LocalTerminal("local".into()),
             SavedAttachment::Connection("remote".into()),
         ];
-        chat.entries = (0..2010)
+        chat.entries = (0..MAX_SAVED_ENTRIES + 10)
             .map(|index| Entry::Agent(format!("entry {index}")))
             .collect();
         let blocks = vec![
@@ -198,7 +198,10 @@ mod tests {
         materialized.entries = SavedChat::bounded_entries(&chat.entries);
         materialized.times = SavedChat::bounded_times(chat.entries.len(), &chat.times);
         assert_eq!(serde_json::to_vec(&materialized).unwrap(), expected);
-        assert_eq!(materialized.times[0], (chat.entries.len() - 2000) as u64);
+        assert_eq!(
+            materialized.times[0],
+            (chat.entries.len() - MAX_SAVED_ENTRIES) as u64
+        );
         let prepared = PreparedBudget::new(&chat).unwrap();
         let mut budget = HistoryBudget::restored(Some(&prepared));
         let mut metadata = materialized.clone();

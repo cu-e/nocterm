@@ -1,17 +1,4 @@
-//! Path-checked fallbacks: Windows browse handles and platforms without held directories.
 use super::*;
-pub(crate) fn is_link(metadata: &std::fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        metadata.file_attributes() & 0x400 != 0
-    }
-    #[cfg(not(windows))]
-    {
-        metadata.is_symlink()
-    }
-}
-#[cfg(not(windows))]
 pub(super) fn strict(path: &Path) -> LocalResult<DirectoryCapability> {
     let mut current = PathBuf::new();
     for component in path.components() {
@@ -37,12 +24,9 @@ pub(super) fn browse(path: &Path) -> LocalResult<DirectoryCapability> {
     }
     Ok(DirectoryCapability {
         path: path.to_owned(),
-        #[cfg(windows)]
-        held: None,
         identity: DirectoryIdentity::portable(path.to_owned()),
     })
 }
-#[cfg(not(windows))]
 pub(super) fn child(
     directory: &DirectoryCapability,
     name: &OsStr,
@@ -77,7 +61,6 @@ pub(super) fn metadata(
 pub(super) fn target_is_directory(directory: &DirectoryCapability, name: &OsStr) -> bool {
     std::fs::metadata(directory.path.join(name)).is_ok_and(|metadata| metadata.is_dir())
 }
-#[cfg(not(windows))]
 pub(super) fn remove_file(directory: &DirectoryCapability, name: &OsStr) -> LocalResult<()> {
     strict(directory.path())?;
     let path = directory.path.join(name);

@@ -40,7 +40,10 @@ pub(crate) fn open_relative(
         })?;
         fd.into()
     };
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    let file =
+        crate::windows::open::entry(directory, name, crate::windows::open::EntryAccess::Source)?;
+    #[cfg(not(any(unix, windows)))]
     let file = {
         if directory.inspect(name)?.is_none_or(|metadata| {
             metadata.is_symlink || metadata.kind != nocterm_session::EntryKind::File
@@ -49,13 +52,6 @@ pub(crate) fn open_relative(
         }
         let mut options = std::fs::OpenOptions::new();
         options.read(true);
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::OpenOptionsExt;
-            options.custom_flags(
-                windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT,
-            );
-        }
         options
             .open(path)
             .map_err(|error| LocalFsError::from_io(path, error))?

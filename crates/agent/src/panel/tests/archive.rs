@@ -1,10 +1,26 @@
 //! Lazy history, authority and metadata operations cross the runtime/UI boundary.
 use super::*;
+use nocterm_agent_runtime::history_admission::{HistoryBytesPermit, MAX_NORMAL_HISTORY_BYTES};
 use nocterm_ai::{
     history::{SavedChat, SavedPrompt},
     metadata::ChatMetadataSource as _,
     thread::Entry,
 };
+
+fn leave_history_capacity(
+    f: &Fixture,
+    bytes: usize,
+    cx: &mut TestAppContext,
+) -> HistoryBytesPermit {
+    cx.update(|cx| {
+        f.installation
+            .installed
+            .runtime()
+            .history_admission(cx)
+            .reserve_unowned_bytes(MAX_NORMAL_HISTORY_BYTES - bytes, cx)
+            .unwrap()
+    })
+}
 pub(super) fn archived(
     f: &Fixture,
     chat: &SavedChat,
@@ -203,6 +219,8 @@ fn restored_root_controls_process_sandbox_restore_and_fresh_fallback(cx: &mut Te
 fn hydration_waits_for_shared_permit_and_clean_archives_are_evicted(cx: &mut TestAppContext) {
     let f = fixture(cx);
     cx.run_until_parked();
+    // Keep the workload small while exercising eviction at the actual installation cap.
+    let _other_windows = leave_history_capacity(&f, 63 * 1024 * 1024, cx);
     let mut chats = Vec::new();
     for index in 0..15 {
         let mut chat = saved(&f);
@@ -653,6 +671,7 @@ fn installation_capacity_refuses_restore_before_mutation_and_keeps_shown_project
     let f = fixture(cx);
     // Capacity refusal is independent of warm-start connections.
     lazy_start(&f, cx);
+    let _other_windows = leave_history_capacity(&f, 63 * 1024 * 1024, cx);
     let mut retained = Vec::new();
     let mut threads = Vec::new();
     cx.update_window(f.handle, |_, window, cx| {
