@@ -1,5 +1,24 @@
 # Changelog
 
+## [4.2.0](https://github.com/cu-e/nocterm/compare/v4.1.1...v4.2.0) (2026-11-15)
+
+
+### Features
+
+* **agent:** copy conversations from the chat title menu ([ee01c68](https://github.com/cu-e/nocterm/commit/ee01c686d0834a810ac2590359d39d6d09e7b018))
+
+
+### Bug Fixes
+
+* **acp:** clear authentication timeout on the retained reader ([c4f298c](https://github.com/cu-e/nocterm/commit/c4f298c9f0f1dab6f7cf75baa54ddd717f465d9a))
+* **agent-runtime:** retain larger conversation histories ([3b000e9](https://github.com/cu-e/nocterm/commit/3b000e9f261031306969fe98065d5b936ea3be6a))
+* **agent:** contain nested transcript scrolling ([547598d](https://github.com/cu-e/nocterm/commit/547598dd5d050491bd4361f3293fb237a0fb9b7b))
+* **agent:** keep attachment choices stable across session updates ([70e5c23](https://github.com/cu-e/nocterm/commit/70e5c2373307e45f7d931727fe650678f7c179eb))
+* **deps:** use patched native transport dependencies ([#65](https://github.com/cu-e/nocterm/issues/65)) ([98e48bf](https://github.com/cu-e/nocterm/commit/98e48bf4c834d03b64f5a89e7ab5b83aff84b263))
+* **gpui:** preserve relative wheel geometry in virtual lists ([9faa00b](https://github.com/cu-e/nocterm/commit/9faa00bf513b03e408d133617bed57b9f8daba1b))
+* **localfs:** retain native Windows directory capabilities ([55074a8](https://github.com/cu-e/nocterm/commit/55074a84655a14dc57483901af7d3a476afbe5af))
+* stabilize agent chats across native sessions ([765be46](https://github.com/cu-e/nocterm/commit/765be46d57011f1e2e645ec0eaf378643591cc30))
+
 ## [4.1.1](https://github.com/cu-e/nocterm/compare/v4.1.0...v4.1.1) (2026-11-10)
 
 
